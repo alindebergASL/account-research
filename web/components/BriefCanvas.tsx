@@ -23,6 +23,10 @@ import {
   Award,
   ScrollText,
   ShieldCheck,
+  PieChart,
+  BarChart2,
+  Download,
+  Loader2,
 } from "lucide-react";
 import type {
   Brief,
@@ -43,6 +47,7 @@ type DrillKind =
   | { kind: "initiatives"; index?: number }
   | { kind: "tech" }
   | { kind: "programs" }
+  | { kind: "confidence" }
   | { kind: "personas"; index?: number }
   | { kind: "buying" }
   | { kind: "angle" }
@@ -99,6 +104,30 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
             <span className="ml-auto text-xs text-muted">{brief.recent_signals.length}</span>
           </TileLabel>
           <SignalsTimeline signals={brief.recent_signals.slice(0, 4)} />
+        </Tile>
+
+        {/* Row 2.5: Charts — evidence confidence + initiative landscape */}
+        <Tile
+          className="col-span-12 md:col-span-5"
+          onClick={() => setDrill({ kind: "confidence" })}
+        >
+          <TileLabel icon={<PieChart className="size-4" />}>
+            Evidence confidence
+          </TileLabel>
+          <ConfidenceDonut brief={brief} />
+        </Tile>
+
+        <Tile
+          className="col-span-12 md:col-span-7 hover:!translate-y-0 hover:!cursor-default hover:!shadow-none"
+          onClick={() => {}}
+        >
+          <TileLabel icon={<BarChart2 className="size-4" />}>
+            Initiative landscape
+          </TileLabel>
+          <InitiativeBars
+            initiatives={brief.top_initiatives}
+            onPick={(i) => setDrill({ kind: "initiatives", index: i })}
+          />
         </Tile>
 
         {/* Row 3: Initiatives grid */}
@@ -218,7 +247,7 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
 
         {/* Row 7: Next action callout */}
         <Tile
-          className="col-span-12 bg-ink !text-white border-ink hover:!border-ink"
+          className="col-span-12 !bg-ink !text-white !border-ink"
           onClick={() => setDrill({ kind: "next" })}
         >
           <div className="flex items-start gap-4">
@@ -260,6 +289,8 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
           </div>
         </Tile>
       </div>
+
+      <DownloadBar brief={brief} />
 
       {/* Drill modals */}
       <DrillModal
@@ -328,6 +359,15 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
             </li>
           ))}
         </ul>
+      </DrillModal>
+
+      <DrillModal
+        open={drill?.kind === "confidence"}
+        onClose={() => setDrill(null)}
+        title="Evidence confidence breakdown"
+        subtitle="Every cited signal, initiative, and persona, grouped by confidence"
+      >
+        <ConfidenceDetail brief={brief} />
       </DrillModal>
 
       <DrillModal
@@ -976,4 +1016,335 @@ function DetailField({
 function isMissing(s: string) {
   const v = (s || "").trim().toLowerCase();
   return v === "" || v.startsWith("not found");
+}
+
+/* ---------- Download bar ---------- */
+
+function DownloadBar({ brief }: { brief: Brief }) {
+  const [busy, setBusy] = useState<"pdf" | "docx" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function download(format: "pdf" | "docx") {
+    if (busy) return;
+    setBusy(format);
+    setError(null);
+    try {
+      const res = await fetch("/api/export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ brief, format }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(
+          data?.error || `Export failed (${res.status})`,
+        );
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const disp = res.headers.get("content-disposition") || "";
+      const m = /filename="([^"]+)"/.exec(disp);
+      a.href = url;
+      a.download = m?.[1] || `brief.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e?.message ?? "Export failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mt-6 flex flex-col items-center gap-3">
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => download("pdf")}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-ink text-white text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy === "pdf" ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Download className="size-4" />
+          )}
+          Download PDF
+        </button>
+        <button
+          type="button"
+          onClick={() => download("docx")}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-ink border border-[var(--line)] text-sm font-medium hover:border-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy === "docx" ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Download className="size-4" />
+          )}
+          Download DOCX
+        </button>
+      </div>
+      {error && (
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 max-w-md text-center">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Charts ---------- */
+
+const CONF_LABELS = ["High", "Medium", "Low", "Not found"] as const;
+type ConfLabel = (typeof CONF_LABELS)[number];
+
+function confColor(label: string): string {
+  const v = (label || "").toLowerCase();
+  if (v === "high") return "#16a34a";
+  if (v === "medium") return "#2f6df6";
+  if (v === "low") return "#f59e0b";
+  return "#9ca3af";
+}
+
+function aggregateConfidence(brief: Brief): Record<ConfLabel, number> {
+  const counts: Record<ConfLabel, number> = {
+    High: 0,
+    Medium: 0,
+    Low: 0,
+    "Not found": 0,
+  };
+  const bump = (c: string) => {
+    const k = (CONF_LABELS as readonly string[]).includes(c)
+      ? (c as ConfLabel)
+      : "Not found";
+    counts[k] += 1;
+  };
+  brief.recent_signals.forEach((s) => bump(s.confidence));
+  brief.top_initiatives.forEach((i) => bump(i.confidence));
+  brief.personas.forEach((p) => bump(p.confidence));
+  return counts;
+}
+
+function ConfidenceDonut({ brief }: { brief: Brief }) {
+  const counts = aggregateConfidence(brief);
+  const total = CONF_LABELS.reduce((acc, k) => acc + counts[k], 0);
+  const size = 130;
+  const stroke = 16;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+
+  // build dasharray segments
+  let offset = 0;
+  const segments = CONF_LABELS.map((label) => {
+    const fraction = total > 0 ? counts[label] / total : 0;
+    const dash = fraction * c;
+    const seg = { label, dash, offset, color: confColor(label), count: counts[label] };
+    offset += dash;
+    return seg;
+  });
+
+  const dominant = CONF_LABELS.reduce<ConfLabel>(
+    (best, k) => (counts[k] > counts[best] ? k : best),
+    "Not found",
+  );
+
+  return (
+    <div className="flex items-center gap-5">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="#eef0f3"
+          strokeWidth={stroke}
+        />
+        {total > 0 &&
+          segments.map((s, i) => (
+            <circle
+              key={i}
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={stroke}
+              strokeDasharray={`${s.dash} ${c - s.dash}`}
+              strokeDashoffset={-s.offset}
+              transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            />
+          ))}
+        <text
+          x="50%"
+          y="46%"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={26}
+          fontWeight={600}
+          fill="var(--ink)"
+          fontFamily="Fraunces, Georgia, serif"
+        >
+          {total}
+        </text>
+        <text
+          x="50%"
+          y="62%"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={9}
+          fill="var(--muted)"
+          letterSpacing="0.08em"
+        >
+          ITEMS
+        </text>
+      </svg>
+      <div className="flex-1 min-w-0 space-y-1.5">
+        {CONF_LABELS.map((label) => {
+          const n = counts[label];
+          const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+          return (
+            <div key={label} className="flex items-center gap-2 text-sm">
+              <span
+                className="inline-block size-2.5 rounded-sm shrink-0"
+                style={{ background: confColor(label) }}
+              />
+              <span className="text-muted text-xs flex-1">{label}</span>
+              <span className="font-mono tabular-nums text-xs w-7 text-right">
+                {n}
+              </span>
+              <span className="text-xs text-muted w-9 text-right">{pct}%</span>
+            </div>
+          );
+        })}
+        <div className="text-[11px] text-muted pt-1">
+          Most: <span className="text-ink font-medium">{dominant}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfidenceDetail({ brief }: { brief: Brief }) {
+  const buckets: Record<ConfLabel, { kind: string; text: string; source?: string }[]> = {
+    High: [],
+    Medium: [],
+    Low: [],
+    "Not found": [],
+  };
+  const place = (
+    label: string,
+    kind: string,
+    text: string,
+    source?: string,
+  ) => {
+    const k: ConfLabel = (CONF_LABELS as readonly string[]).includes(label)
+      ? (label as ConfLabel)
+      : "Not found";
+    buckets[k].push({ kind, text, source });
+  };
+  brief.recent_signals.forEach((s) =>
+    place(s.confidence, "Signal", s.text, s.source),
+  );
+  brief.top_initiatives.forEach((i) =>
+    place(i.confidence, "Initiative", i.title, i.source),
+  );
+  brief.personas.forEach((p) =>
+    place(p.confidence, "Persona", `${p.name || "Role-based"} — ${p.title}`, p.source),
+  );
+
+  return (
+    <div className="space-y-6">
+      {CONF_LABELS.map((label) => {
+        const items = buckets[label];
+        if (items.length === 0) return null;
+        return (
+          <section key={label}>
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                className="size-2.5 rounded-sm"
+                style={{ background: confColor(label) }}
+              />
+              <h3 className="text-sm font-medium">{label}</h3>
+              <span className="text-xs text-muted">· {items.length}</span>
+            </div>
+            <ul className="space-y-2">
+              {items.map((it, i) => (
+                <li key={i} className="text-sm">
+                  <span className="text-[10px] uppercase tracking-wider text-muted mr-2">
+                    {it.kind}
+                  </span>
+                  {it.text}
+                  {it.source && (
+                    <span className="block text-xs text-muted mt-0.5 ml-12">
+                      {it.source}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function InitiativeBars({
+  initiatives,
+  onPick,
+}: {
+  initiatives: Initiative[];
+  onPick: (index: number) => void;
+}) {
+  if (initiatives.length === 0) {
+    return <p className="text-sm text-muted">No initiatives found.</p>;
+  }
+  const widthFor = (c: string) => {
+    const v = (c || "").toLowerCase();
+    if (v === "high") return 100;
+    if (v === "medium") return 66;
+    if (v === "low") return 33;
+    return 12;
+  };
+  const ordered = [...initiatives]
+    .map((it, originalIndex) => ({ it, originalIndex, w: widthFor(it.confidence) }))
+    .sort((a, b) => b.w - a.w)
+    .slice(0, 6);
+  return (
+    <div className="space-y-2.5">
+      {ordered.map(({ it, originalIndex, w }) => {
+        const color = confColor(it.confidence);
+        return (
+          <button
+            key={originalIndex}
+            type="button"
+            onClick={() => onPick(originalIndex)}
+            className="w-full text-left group"
+          >
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <span className="text-sm font-medium truncate group-hover:text-accent transition-colors">
+                {it.title}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">
+                {it.confidence}
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-[var(--bg)] border border-[var(--line)] overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${w}%`, background: color }}
+              />
+            </div>
+          </button>
+        );
+      })}
+      <p className="text-[11px] text-muted pt-1">
+        Bar width tracks confidence. Click any row to drill in.
+      </p>
+    </div>
+  );
 }
