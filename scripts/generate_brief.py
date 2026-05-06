@@ -36,6 +36,8 @@ SECTIONS = [
     ("Recent Strategic Signals", "recent_signals"),
     ("AI / Technology Maturity Rating", "ai_tech_maturity"),
     ("Top Business or Technology Initiatives", "top_initiatives"),
+    ("Technical Footprint", "technical_footprint"),
+    ("Programs & Procurement Signals", "programs_procurement"),
     ("Key Personas and Conversation Openers", "personas"),
     ("Buying / Procurement / Decision Path", "buying_path"),
     ("Recommended First Conversation Angle", "first_angle"),
@@ -44,6 +46,33 @@ SECTIONS = [
     ("Recommended Next Action", "next_action"),
     ("Key Sources", "sources"),
 ]
+
+TECH_ROWS = [
+    ("AI / automation in production", "ai_in_production", "list"),
+    ("Active pilots / POCs", "active_pilots", "list"),
+    ("Cloud platforms", "cloud_platforms", "list"),
+    ("Data infrastructure", "data_infrastructure", "text"),
+    ("Clinical platforms / EHR", "clinical_platforms", "text"),
+    ("Analytics / BI stack", "analytics_bi_stack", "text"),
+    ("Build vs. buy posture", "build_vs_buy_posture", "text"),
+    ("Competitive incumbents", "competitive_incumbents", "list"),
+]
+
+PROGRAM_ROWS = [
+    ("Modernization grants", "modernization_grants", "list"),
+    ("Consortium / cooperative purchasing", "consortium_purchasing", "list"),
+    ("Active RFPs / contracts (12-18 mo)", "active_rfps_contracts", "list"),
+    ("AI governance / responsible AI policy", "ai_governance_policy", "text"),
+    ("Publicly stated AI use cases", "public_ai_use_cases", "list"),
+]
+
+
+def _format_value(value, kind):
+    if kind == "list":
+        items = [clean(x) for x in (value or []) if clean(x)]
+        return "; ".join(items) if items else "Not found in public sources."
+    text = clean(value)
+    return text if text else "Not found in public sources."
 
 
 _MD_ARTIFACTS = re.compile(r"(\*\*|`{1,3}|^#{1,6}\s+)", re.MULTILINE)
@@ -130,6 +159,30 @@ def render_docx(brief: dict, path: Path) -> None:
                 row[1].text = clean(item.get("detail"))
                 row[2].text = clean(item.get("confidence"))
                 row[3].text = clean(item.get("source"))
+
+        elif key == "technical_footprint" and isinstance(value, dict):
+            tbl = doc.add_table(rows=1, cols=2)
+            tbl.style = "Light Grid Accent 1"
+            hdr = tbl.rows[0].cells
+            hdr[0].text = "Dimension"
+            hdr[1].text = "Detail"
+            for label, fld, kind in TECH_ROWS:
+                if fld == "clinical_platforms" and not clean(value.get(fld)):
+                    continue
+                row = tbl.add_row().cells
+                row[0].text = label
+                row[1].text = _format_value(value.get(fld), kind)
+
+        elif key == "programs_procurement" and isinstance(value, dict):
+            tbl = doc.add_table(rows=1, cols=2)
+            tbl.style = "Light Grid Accent 1"
+            hdr = tbl.rows[0].cells
+            hdr[0].text = "Program area"
+            hdr[1].text = "Detail"
+            for label, fld, kind in PROGRAM_ROWS:
+                row = tbl.add_row().cells
+                row[0].text = label
+                row[1].text = _format_value(value.get(fld), kind)
 
         elif key == "personas" and isinstance(value, list):
             tbl = doc.add_table(rows=1, cols=6)
@@ -246,6 +299,20 @@ def render_pdf(brief: dict, path: Path) -> None:
             for it in value:
                 data.append([cell(it.get("title")), cell(it.get("detail")), cell(it.get("confidence")), cell(it.get("source"))])
             story.append(_table(data, [page_w * 0.22, page_w * 0.45, page_w * 0.13, page_w * 0.20]))
+
+        elif key == "technical_footprint" and isinstance(value, dict):
+            data = [["Dimension", "Detail"]]
+            for label, fld, kind in TECH_ROWS:
+                if fld == "clinical_platforms" and not clean(value.get(fld)):
+                    continue
+                data.append([cell(label), cell(_format_value(value.get(fld), kind))])
+            story.append(_table(data, [page_w * 0.32, page_w * 0.68]))
+
+        elif key == "programs_procurement" and isinstance(value, dict):
+            data = [["Program area", "Detail"]]
+            for label, fld, kind in PROGRAM_ROWS:
+                data.append([cell(label), cell(_format_value(value.get(fld), kind))])
+            story.append(_table(data, [page_w * 0.32, page_w * 0.68]))
 
         elif key == "personas" and isinstance(value, list):
             data = [["Name", "Title", "Priority", "Opener", "Conf.", "Source"]]

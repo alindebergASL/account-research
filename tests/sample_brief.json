@@ -17,6 +17,43 @@
     {"title": "Cybersecurity modernization", "detail": "New CISO mandate; identity and segmentation investments.", "confidence": "High", "source": "Becker's, Feb 2026"},
     {"title": "Data platform consolidation", "detail": "Stated goal to unify analytics on a cloud lakehouse.", "confidence": "Medium", "source": "Job postings"}
   ],
+  "technical_footprint": {
+    "ai_in_production": [
+      "Microsoft Copilot for clinical documentation, rolling out system-wide (per Mar 2026 press release)",
+      "Optum Pay analytics for revenue cycle (per Q4 vendor case study)"
+    ],
+    "active_pilots": [
+      "Abridge ambient AI in primary care (per CIO keynote, Apr 2026)",
+      "Hippocratic AI for patient outreach (job posting reference)"
+    ],
+    "cloud_platforms": ["Azure (primary)", "AWS (analytics workloads)"],
+    "data_infrastructure": "Cloud lakehouse evaluation underway; current state is on-prem SQL Server + departmental data marts (per job postings)",
+    "clinical_platforms": "Epic system-wide; Cerner remains in two recently acquired ambulatory clinics",
+    "analytics_bi_stack": "Power BI + Epic Cogito; pilot of ThoughtSpot in finance",
+    "build_vs_buy_posture": "Mixed; recently posted ML engineering and data platform roles, but most AI deployments to date are vendor-led",
+    "competitive_incumbents": ["Microsoft", "Epic", "Optum", "Databricks (under evaluation)"]
+  },
+  "programs_procurement": {
+    "modernization_grants": [
+      "ARPA-H Health Equity Innovation grant — applied (per Jan 2026 announcement)",
+      "HRSA telehealth modernization grant — awarded $4.2M FY2025"
+    ],
+    "consortium_purchasing": [
+      "Vizient GPO member (clinical and IT contracts)",
+      "Regional state hospital association cooperative for cybersecurity services"
+    ],
+    "active_rfps_contracts": [
+      "Cybersecurity managed detection & response RFP — closes Q3 2026",
+      "Existing data analytics platform contract expires Mar 2027"
+    ],
+    "ai_governance_policy": "Published a Responsible AI Framework in Feb 2026 covering clinical safety, bias review, and patient consent (per board meeting minutes).",
+    "public_ai_use_cases": [
+      "Ambient clinical documentation for primary care",
+      "Prior authorization automation",
+      "Patient outreach and appointment recall",
+      "Sepsis early warning (validation phase)"
+    ]
+  },
   "personas": [
     {"name": "Dr. Jane Smith", "title": "Chief Medical Information Officer", "priority": "Reduce documentation burden, improve clinician satisfaction", "opener": "Open with ambient AI rollout learnings from peer IDNs.", "confidence": "Medium", "source": "Public bio on acmehealth.org"},
     {"name": "", "title": "Chief Information Officer", "priority": "Platform consolidation, cost takeout", "opener": "Discuss reference architectures from similar IDNs.", "confidence": "Low", "source": "Inferred from org structure"},

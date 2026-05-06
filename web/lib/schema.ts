@@ -30,6 +30,25 @@ export const Source = z.object({
   accessed: z.string(),
 });
 
+export const TechnicalFootprint = z.object({
+  ai_in_production: z.array(z.string()),
+  active_pilots: z.array(z.string()),
+  cloud_platforms: z.array(z.string()),
+  data_infrastructure: z.string(),
+  clinical_platforms: z.string(),
+  analytics_bi_stack: z.string(),
+  build_vs_buy_posture: z.string(),
+  competitive_incumbents: z.array(z.string()),
+});
+
+export const ProgramsProcurement = z.object({
+  modernization_grants: z.array(z.string()),
+  consortium_purchasing: z.array(z.string()),
+  active_rfps_contracts: z.array(z.string()),
+  ai_governance_policy: z.string(),
+  public_ai_use_cases: z.array(z.string()),
+});
+
 export const Brief = z.object({
   account_name: z.string(),
   segment: z.string(),
@@ -43,6 +62,8 @@ export const Brief = z.object({
     rationale: z.string(),
   }),
   top_initiatives: z.array(Initiative),
+  technical_footprint: TechnicalFootprint,
+  programs_procurement: ProgramsProcurement,
   personas: z.array(Persona),
   buying_path: z.string(),
   first_angle: z.string(),
@@ -57,6 +78,8 @@ export type Signal = z.infer<typeof Signal>;
 export type Initiative = z.infer<typeof Initiative>;
 export type Persona = z.infer<typeof Persona>;
 export type Source = z.infer<typeof Source>;
+export type TechnicalFootprint = z.infer<typeof TechnicalFootprint>;
+export type ProgramsProcurement = z.infer<typeof ProgramsProcurement>;
 
 // JSON Schema form for Anthropic structured outputs (no zod helpers needed).
 export const briefJsonSchema = {
@@ -105,6 +128,48 @@ export const briefJsonSchema = {
         required: ["title", "detail", "confidence", "source"],
       },
     },
+    technical_footprint: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ai_in_production: { type: "array", items: { type: "string" } },
+        active_pilots: { type: "array", items: { type: "string" } },
+        cloud_platforms: { type: "array", items: { type: "string" } },
+        data_infrastructure: { type: "string" },
+        clinical_platforms: { type: "string" },
+        analytics_bi_stack: { type: "string" },
+        build_vs_buy_posture: { type: "string" },
+        competitive_incumbents: { type: "array", items: { type: "string" } },
+      },
+      required: [
+        "ai_in_production",
+        "active_pilots",
+        "cloud_platforms",
+        "data_infrastructure",
+        "clinical_platforms",
+        "analytics_bi_stack",
+        "build_vs_buy_posture",
+        "competitive_incumbents",
+      ],
+    },
+    programs_procurement: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        modernization_grants: { type: "array", items: { type: "string" } },
+        consortium_purchasing: { type: "array", items: { type: "string" } },
+        active_rfps_contracts: { type: "array", items: { type: "string" } },
+        ai_governance_policy: { type: "string" },
+        public_ai_use_cases: { type: "array", items: { type: "string" } },
+      },
+      required: [
+        "modernization_grants",
+        "consortium_purchasing",
+        "active_rfps_contracts",
+        "ai_governance_policy",
+        "public_ai_use_cases",
+      ],
+    },
     personas: {
       type: "array",
       items: {
@@ -143,7 +208,8 @@ export const briefJsonSchema = {
   required: [
     "account_name", "segment", "generated_at", "audience",
     "snapshot", "priority_summary", "recent_signals", "ai_tech_maturity",
-    "top_initiatives", "personas", "buying_path", "first_angle",
+    "top_initiatives", "technical_footprint", "programs_procurement",
+    "personas", "buying_path", "first_angle",
     "risks", "competitive_signals", "next_action", "sources",
   ],
 } as const;

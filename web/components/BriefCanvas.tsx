@@ -14,8 +14,25 @@ import {
   Swords,
   Target,
   Link2,
+  Server,
+  FileSearch,
+  Cloud,
+  Database,
+  BarChart3,
+  Wrench,
+  Award,
+  ScrollText,
+  ShieldCheck,
 } from "lucide-react";
-import type { Brief, Initiative, Persona, Signal, Source } from "@/lib/schema";
+import type {
+  Brief,
+  Initiative,
+  Persona,
+  ProgramsProcurement,
+  Signal,
+  Source,
+  TechnicalFootprint,
+} from "@/lib/schema";
 import DrillModal, { ConfidenceChip, SourceLink } from "./DrillModal";
 
 type DrillKind =
@@ -24,6 +41,8 @@ type DrillKind =
   | { kind: "signals" }
   | { kind: "maturity" }
   | { kind: "initiatives"; index?: number }
+  | { kind: "tech" }
+  | { kind: "programs" }
   | { kind: "personas"; index?: number }
   | { kind: "buying" }
   | { kind: "angle" }
@@ -95,6 +114,25 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
             ))}
           </div>
         </div>
+
+        {/* Row 3.5: Technical footprint + Programs & procurement */}
+        <Tile
+          className="col-span-12 md:col-span-6"
+          onClick={() => setDrill({ kind: "tech" })}
+        >
+          <TileLabel icon={<Server className="size-4" />}>Technical footprint</TileLabel>
+          <TechFootprintPreview tf={brief.technical_footprint} />
+        </Tile>
+
+        <Tile
+          className="col-span-12 md:col-span-6"
+          onClick={() => setDrill({ kind: "programs" })}
+        >
+          <TileLabel icon={<FileSearch className="size-4" />}>
+            Programs &amp; procurement
+          </TileLabel>
+          <ProgramsPreview pp={brief.programs_procurement} />
+        </Tile>
 
         {/* Row 4: Personas */}
         <div className="col-span-12">
@@ -290,6 +328,22 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
             </li>
           ))}
         </ul>
+      </DrillModal>
+
+      <DrillModal
+        open={drill?.kind === "tech"}
+        onClose={() => setDrill(null)}
+        title="Technical footprint"
+      >
+        <TechFootprintDetail tf={brief.technical_footprint} />
+      </DrillModal>
+
+      <DrillModal
+        open={drill?.kind === "programs"}
+        onClose={() => setDrill(null)}
+        title="Programs & procurement signals"
+      >
+        <ProgramsDetail pp={brief.programs_procurement} />
       </DrillModal>
 
       <DrillModal
@@ -654,4 +708,272 @@ function PersonaCard({
       </div>
     </div>
   );
+}
+
+/* ---------- Technical footprint ---------- */
+
+function TechFootprintPreview({ tf }: { tf: TechnicalFootprint }) {
+  const chips: { icon: React.ReactNode; label: string; value: string }[] = [];
+  if (tf.cloud_platforms.length > 0)
+    chips.push({
+      icon: <Cloud className="size-3.5" />,
+      label: "Cloud",
+      value: tf.cloud_platforms.join(", "),
+    });
+  if (tf.data_infrastructure && !isMissing(tf.data_infrastructure))
+    chips.push({
+      icon: <Database className="size-3.5" />,
+      label: "Data",
+      value: tf.data_infrastructure,
+    });
+  if (tf.analytics_bi_stack && !isMissing(tf.analytics_bi_stack))
+    chips.push({
+      icon: <BarChart3 className="size-3.5" />,
+      label: "BI",
+      value: tf.analytics_bi_stack,
+    });
+  if (tf.clinical_platforms && !isMissing(tf.clinical_platforms))
+    chips.push({
+      icon: <ShieldCheck className="size-3.5" />,
+      label: "EHR",
+      value: tf.clinical_platforms,
+    });
+
+  const ai = tf.ai_in_production[0] || tf.active_pilots[0];
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {chips.length === 0 ? (
+          <span className="text-sm text-muted">No public footprint signals found.</span>
+        ) : (
+          chips.map((c, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-[var(--bg)] border border-[var(--line)]"
+            >
+              {c.icon}
+              <span className="text-muted">{c.label}</span>
+              <span className="font-medium truncate max-w-[140px]">{c.value}</span>
+            </span>
+          ))
+        )}
+      </div>
+      {ai && (
+        <p className="text-sm leading-snug line-clamp-2">
+          <span className="text-muted text-xs uppercase tracking-wider mr-2">
+            {tf.ai_in_production.length > 0 ? "In production" : "Pilots"}
+          </span>
+          {ai}
+        </p>
+      )}
+      {tf.competitive_incumbents.length > 0 && (
+        <p className="text-xs text-muted line-clamp-1">
+          <Wrench className="size-3 inline mr-1 -mt-0.5" />
+          Incumbents: {tf.competitive_incumbents.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TechFootprintDetail({ tf }: { tf: TechnicalFootprint }) {
+  return (
+    <div className="space-y-5">
+      <DetailList
+        icon={<Cpu className="size-4" />}
+        title="AI / automation in production"
+        items={tf.ai_in_production}
+      />
+      <DetailList
+        icon={<Lightbulb className="size-4" />}
+        title="Active pilots / POCs"
+        items={tf.active_pilots}
+      />
+      <DetailList
+        icon={<Cloud className="size-4" />}
+        title="Cloud platforms"
+        items={tf.cloud_platforms}
+        inline
+      />
+      <DetailField
+        icon={<Database className="size-4" />}
+        title="Data infrastructure"
+        value={tf.data_infrastructure}
+      />
+      {tf.clinical_platforms && tf.clinical_platforms.trim() && (
+        <DetailField
+          icon={<ShieldCheck className="size-4" />}
+          title="Clinical platforms / EHR"
+          value={tf.clinical_platforms}
+        />
+      )}
+      <DetailField
+        icon={<BarChart3 className="size-4" />}
+        title="Analytics / BI stack"
+        value={tf.analytics_bi_stack}
+      />
+      <DetailField
+        icon={<Wrench className="size-4" />}
+        title="Build vs. buy posture"
+        value={tf.build_vs_buy_posture}
+      />
+      <DetailList
+        icon={<Swords className="size-4" />}
+        title="Competitive incumbents / vendors under evaluation"
+        items={tf.competitive_incumbents}
+      />
+    </div>
+  );
+}
+
+/* ---------- Programs & procurement ---------- */
+
+function ProgramsPreview({ pp }: { pp: ProgramsProcurement }) {
+  const counts = [
+    { label: "Grants", n: pp.modernization_grants.length },
+    { label: "Consortia", n: pp.consortium_purchasing.length },
+    { label: "RFPs", n: pp.active_rfps_contracts.length },
+    { label: "Use cases", n: pp.public_ai_use_cases.length },
+  ];
+  const hasGov = pp.ai_governance_policy && !isMissing(pp.ai_governance_policy);
+  const total = counts.reduce((acc, c) => acc + c.n, 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-4 gap-2">
+        {counts.map((c) => (
+          <div
+            key={c.label}
+            className="text-center bg-[var(--bg)] border border-[var(--line)] rounded-lg py-2"
+          >
+            <div className="text-2xl font-display leading-none">{c.n}</div>
+            <div className="text-[10px] uppercase tracking-wider text-muted mt-1">
+              {c.label}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-start gap-2 text-sm">
+        <ScrollText className="size-4 text-muted shrink-0 mt-0.5" />
+        <span className={hasGov ? "" : "text-muted"}>
+          {hasGov ? pp.ai_governance_policy : "No public AI governance policy found."}
+        </span>
+      </div>
+      {total === 0 && !hasGov && (
+        <p className="text-xs text-muted">No public procurement signals found.</p>
+      )}
+    </div>
+  );
+}
+
+function ProgramsDetail({ pp }: { pp: ProgramsProcurement }) {
+  return (
+    <div className="space-y-5">
+      <DetailList
+        icon={<Award className="size-4" />}
+        title="Modernization grants (received / applied)"
+        items={pp.modernization_grants}
+        emptyHint="IIJA, CHIPS Act, Title IV, ARPA-H, state and foundation grants — none found in public sources."
+      />
+      <DetailList
+        icon={<Users className="size-4" />}
+        title="Consortium / cooperative purchasing"
+        items={pp.consortium_purchasing}
+        emptyHint="NASPO ValuePoint, Sourcewell, OMNIA Partners, GPOs — none found in public sources."
+      />
+      <DetailList
+        icon={<FileSearch className="size-4" />}
+        title="Active RFPs / contracts expiring 12–18 months"
+        items={pp.active_rfps_contracts}
+      />
+      <DetailField
+        icon={<ScrollText className="size-4" />}
+        title="AI governance / responsible AI policy"
+        value={pp.ai_governance_policy}
+      />
+      <DetailList
+        icon={<Cpu className="size-4" />}
+        title="Publicly stated AI use cases"
+        items={pp.public_ai_use_cases}
+      />
+    </div>
+  );
+}
+
+/* ---------- Reusable detail blocks ---------- */
+
+function DetailList({
+  icon,
+  title,
+  items,
+  inline = false,
+  emptyHint,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  items: string[];
+  inline?: boolean;
+  emptyHint?: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted mb-2">
+        {icon}
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <p className="text-sm text-muted">
+          {emptyHint || "Not found in public sources."}
+        </p>
+      ) : inline ? (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((it, i) => (
+            <span
+              key={i}
+              className="text-sm px-2.5 py-1 rounded-md bg-[var(--bg)] border border-[var(--line)]"
+            >
+              {it}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <ul className="space-y-1.5 text-sm">
+          {items.map((it, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="text-muted shrink-0">›</span>
+              <span>{it}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function DetailField({
+  icon,
+  title,
+  value,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  value: string;
+}) {
+  const missing = !value || isMissing(value);
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted mb-1.5">
+        {icon}
+        {title}
+      </div>
+      <p className={`text-sm leading-snug ${missing ? "text-muted" : ""}`}>
+        {missing ? "Not found in public sources." : value}
+      </p>
+    </div>
+  );
+}
+
+function isMissing(s: string) {
+  const v = (s || "").trim().toLowerCase();
+  return v === "" || v.startsWith("not found");
 }

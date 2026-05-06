@@ -11,18 +11,33 @@ CORE RULES
    - Leadership and relevant executives
    - Technology, digital transformation, cloud, data, AI, cybersecurity, modernization signals
    - Financial / budget / funding signals where available
-   - Procurement or buying signals where relevant
-   - Known vendors, partners, platforms, ecosystem signals
    - Risks, regulatory considerations, market pressures
 
-   Prefer official sources first: company website, annual reports, investor relations, government filings, procurement portals, press releases, leadership bios, public strategy documents, trusted news/trade publications, job postings, conference talks.
+   Specifically map TECHNICAL FOOTPRINT:
+   - What AI or automation tools are currently in production? (named vendor + use case where possible)
+   - Active pilots or POCs, especially with named vendors
+   - Cloud platform(s): AWS, Azure, GCP, OCI, on-prem
+   - Data infrastructure: lakehouse / warehouse (Snowflake, Databricks, BigQuery, Redshift, Synapse, Fabric, etc.)
+   - For healthcare accounts: clinical platforms and EHR integrations (Epic, Oracle Health/Cerner, Meditech, Athena, etc.)
+   - Analytics / BI stack (Power BI, Tableau, Looker, Qlik, ThoughtSpot, etc.)
+   - Build vs. buy posture on AI (in-house ML team, prefers vendors, mixed)
+   - Known competitive incumbents or vendors under evaluation
 
-2. AI / Technology maturity rating (1-5):
-   1 = No public AI or advanced tech signals
-   2 = Adjacent modernization only (cloud, data, security, RPA)
-   3 = Early pilots, hiring/governance/procurement signals
-   4 = Multiple active tech / AI / data / automation initiatives
-   5 = Mature program: public strategy, production use cases, governance, funding, leadership ownership
+   Specifically map PROGRAMS & PROCUREMENT SIGNALS:
+   - Modernization grants received or applied for: IIJA, CHIPS Act, Title IV, ARPA-H, state digital-equity grants, foundation/health-system grants
+   - Shared services or consortium purchasing arrangements: NASPO ValuePoint, Sourcewell, OMNIA Partners, GPOs, state/regional cooperatives, cooperative-purchasing organizations
+   - Active RFPs or contracts expiring in the next 12-18 months
+   - Whether they have published an AI governance policy or responsible AI framework
+   - Publicly stated AI use cases
+
+   Prefer official sources first: company website, annual reports, investor relations, government filings, procurement portals (SAM.gov, state procurement sites), press releases, leadership bios, public strategy documents, trusted news/trade publications, job postings, conference talks.
+
+2. AI Maturity Rating (1-5). Rate based on the evidence gathered, and provide a one-line rationale:
+   1 = No AI activity      — No published strategy, no known tools, no AI-related job postings or RFPs
+   2 = Exploring           — AI mentioned in plans or speeches; no confirmed tools or budget
+   3 = Piloting            — One or more active POCs; budget earmarked but not fully committed
+   4 = Deploying           — AI in production for at least one use case; vendor relationships established
+   5 = Scaling             — Multiple AI programs in production; dedicated AI leadership; active expansion roadmap
 
 3. Personas: use real named people only when credible public sources support the name. Otherwise leave name "" and mark confidence "Low".
 
@@ -51,6 +66,8 @@ Field guidance:
 - recent_signals: 3–6 items, recent (within ~12 months when possible).
 - ai_tech_maturity: rating + 1–2 sentence rationale.
 - top_initiatives: 3–6 items.
+- technical_footprint: each list field — empty array when nothing is found in public sources. For string fields (data_infrastructure, clinical_platforms, analytics_bi_stack, build_vs_buy_posture), use "Not found in public sources." when unknown. clinical_platforms applies to healthcare accounts; leave "" for non-healthcare. Inline brief source attribution where it adds credibility (e.g. "Snowflake (per Q3 earnings call)").
+- programs_procurement: each list field — empty array when nothing is found. For ai_governance_policy, write a 1-2 sentence summary if a policy is public; otherwise "Not found in public sources." Inline source attribution where useful.
 - personas: 3–6 items, ranked by likely relevance.
 - buying_path: how decisions get made — centralization, gates, board involvement.
 - first_angle: the conversation lead-with for the first meeting.

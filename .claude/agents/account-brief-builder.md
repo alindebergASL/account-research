@@ -47,12 +47,32 @@ Identify public evidence of: AI/GenAI initiatives, automation programs, data mod
 
 If public evidence is missing, write **"Not found in public sources."** Do not invent initiatives.
 
-**AI / Technology Maturity scale (1–5):**
-1. No public AI or advanced technology signals found
-2. Adjacent modernization only (cloud, data, security, process automation)
-3. Early pilots, governance activity, hiring signals, or procurement signals
-4. Multiple active technology / AI / data / automation initiatives
-5. Mature program with public strategy, production use cases, governance, funding, and leadership ownership
+**Technical footprint to map** (populate the `technical_footprint` JSON section):
+- `ai_in_production` — AI/automation tools currently in production, with named vendor + use case where possible.
+- `active_pilots` — active pilots or POCs, especially with named vendors.
+- `cloud_platforms` — AWS / Azure / GCP / OCI / on-prem.
+- `data_infrastructure` — lakehouse, warehouse (Snowflake, Databricks, BigQuery, Redshift, Synapse, Fabric, etc.).
+- `clinical_platforms` — healthcare only: EHR + clinical platform integrations (Epic, Oracle Health/Cerner, Meditech, Athena, etc.). Leave "" for non-healthcare.
+- `analytics_bi_stack` — Power BI, Tableau, Looker, Qlik, ThoughtSpot, etc.
+- `build_vs_buy_posture` — in-house ML team, prefers vendors, mixed.
+- `competitive_incumbents` — known incumbents or vendors under evaluation.
+
+**Programs & procurement signals to map** (populate the `programs_procurement` JSON section):
+- `modernization_grants` — IIJA, CHIPS Act, Title IV, ARPA-H, state digital-equity grants, foundation/health-system grants — received or applied for.
+- `consortium_purchasing` — NASPO ValuePoint, Sourcewell, OMNIA Partners, GPOs, state/regional cooperatives.
+- `active_rfps_contracts` — active RFPs or contracts expiring in the next 12–18 months.
+- `ai_governance_policy` — 1–2 sentence summary if a published AI governance / responsible-AI framework exists, otherwise "Not found in public sources."
+- `public_ai_use_cases` — publicly stated AI use cases.
+
+**AI Maturity Rating (1–5).** Rate the account based on evidence gathered. Provide a one-line rationale:
+
+| Rating | Level | Description |
+|---|---|---|
+| 1 | No AI activity | No published strategy, no known tools, no AI-related job postings or RFPs |
+| 2 | Exploring | AI mentioned in plans or speeches; no confirmed tools or budget |
+| 3 | Piloting | One or more active POCs; budget earmarked but not fully committed |
+| 4 | Deploying | AI in production for at least one use case; vendor relationships established |
+| 5 | Scaling | Multiple AI programs in production; dedicated AI leadership; active expansion roadmap |
 
 ## 4. Persona and stakeholder mapping
 
@@ -109,6 +129,23 @@ Default: produce **both** PDF and DOCX.
   "recent_signals": [{"text": str, "source": str, "confidence": str}],
   "ai_tech_maturity": {"rating": 1-5, "rationale": str},
   "top_initiatives": [{"title": str, "detail": str, "confidence": str, "source": str}],
+  "technical_footprint": {
+    "ai_in_production": [str],
+    "active_pilots": [str],
+    "cloud_platforms": [str],
+    "data_infrastructure": str,
+    "clinical_platforms": str,
+    "analytics_bi_stack": str,
+    "build_vs_buy_posture": str,
+    "competitive_incumbents": [str]
+  },
+  "programs_procurement": {
+    "modernization_grants": [str],
+    "consortium_purchasing": [str],
+    "active_rfps_contracts": [str],
+    "ai_governance_policy": str,
+    "public_ai_use_cases": [str]
+  },
   "personas": [{"name": str, "title": str, "priority": str, "opener": str, "confidence": str, "source": str}],
   "buying_path": str,
   "first_angle": str,
@@ -132,13 +169,15 @@ Target **900–1,300 words** total across these sections (also the renderer's se
 4. Recent Strategic Signals
 5. AI / Technology Maturity Rating
 6. Top Business or Technology Initiatives
-7. Key Personas and Conversation Openers
-8. Buying / Procurement / Decision Path
-9. Recommended First Conversation Angle
-10. Risks and Watch-Outs
-11. Competitive / Partner / Vendor Signals (if found)
-12. Recommended Next Action
-13. Key Sources
+7. Technical Footprint
+8. Programs & Procurement Signals
+9. Key Personas and Conversation Openers
+10. Buying / Procurement / Decision Path
+11. Recommended First Conversation Angle
+12. Risks and Watch-Outs
+13. Competitive / Partner / Vendor Signals (if found)
+14. Recommended Next Action
+15. Key Sources
 
 Use short headings, compact tables (handled by renderer), no nested bullets in tables, no raw HTML, no code blocks, no overly long paragraphs.
 
