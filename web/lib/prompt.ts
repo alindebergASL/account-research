@@ -79,4 +79,60 @@ Field guidance:
 If web_search returns nothing usable for a given account, still emit the JSON; mark unknown fields with "Not found in public sources." text and confidence "Not found", and keep the sources array short or empty.
 
 OUTPUT FORMAT — STRICT
-Return EXACTLY ONE JSON object as your final message. No prose before or after. No code fences. No markdown. Every required field must be present. Use "Not found in public sources." for unknown strings and [] for unknown arrays — never omit a key.`;
+
+Return EXACTLY ONE JSON object as your final message. No prose before or after. No code fences. No markdown. Use this exact shape — exact key names, exact nesting, exact value types. Every required key must be present. Use "Not found in public sources." for unknown string fields and [] for unknown arrays — never omit a key, never invent alternative key names.
+
+{
+  "account_name": "string",
+  "segment": "string",
+  "generated_at": "YYYY-MM-DD",
+  "audience": "internal" | "shareable",
+  "snapshot": "string",
+  "priority_summary": "string",
+  "recent_signals": [
+    { "text": "string", "source": "string", "confidence": "High" | "Medium" | "Low" | "Not found" }
+  ],
+  "ai_tech_maturity": { "rating": 1, "rationale": "string" },
+  "top_initiatives": [
+    { "title": "string", "detail": "string", "confidence": "High" | "Medium" | "Low" | "Not found", "source": "string" }
+  ],
+  "technical_footprint": {
+    "ai_in_production": ["string"],
+    "active_pilots": ["string"],
+    "cloud_platforms": ["string"],
+    "data_infrastructure": "string",
+    "clinical_platforms": "string",
+    "analytics_bi_stack": "string",
+    "build_vs_buy_posture": "string",
+    "competitive_incumbents": ["string"]
+  },
+  "programs_procurement": {
+    "modernization_grants": ["string"],
+    "consortium_purchasing": ["string"],
+    "active_rfps_contracts": ["string"],
+    "ai_governance_policy": "string",
+    "public_ai_use_cases": ["string"]
+  },
+  "personas": [
+    { "name": "string", "title": "string", "priority": "string", "opener": "string", "confidence": "High" | "Medium" | "Low" | "Not found", "source": "string" }
+  ],
+  "buying_path": "string",
+  "first_angle": "string",
+  "risks": ["string"],
+  "competitive_signals": ["string"],
+  "next_action": "string",
+  "sources": [
+    { "title": "string", "url": "string", "accessed": "YYYY-MM-DD" }
+  ]
+}
+
+HARD RULES — these are past failure modes; do not repeat them:
+- recent_signals MUST be an array of objects with text + source + confidence. Never an array of strings.
+- top_initiatives MUST be an array of objects with title + detail + confidence + source. Never an array of strings.
+- personas MUST include priority, opener, and source on every item.
+- programs_procurement keys MUST be EXACTLY: modernization_grants, consortium_purchasing, active_rfps_contracts, ai_governance_policy, public_ai_use_cases. Do not invent alternates like "shared_services_consortia" or "active_rfps_or_expiring_contracts".
+- sources MUST be an array of objects with title + url + accessed.
+- audience MUST be exactly "internal" or "shareable".
+- confidence MUST be exactly "High", "Medium", "Low", or "Not found".
+- rating MUST be an integer 1-5.
+- generated_at and accessed MUST be ISO YYYY-MM-DD.`;
