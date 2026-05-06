@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { Brief, briefJsonSchema } from "@/lib/schema";
+import { Brief } from "@/lib/schema";
 import { SYSTEM_PROMPT } from "@/lib/prompt";
 
 export const runtime = "nodejs";
@@ -14,6 +14,16 @@ type Intake = {
   notes?: string;
   audience?: "internal" | "shareable";
 };
+
+function extractJson(text: string): string {
+  const trimmed = text.trim();
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fence) return fence[1].trim();
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end > start) return trimmed.slice(start, end + 1);
+  return trimmed;
+}
 
 export async function POST(req: NextRequest) {
   let body: Intake;
@@ -57,9 +67,6 @@ export async function POST(req: NextRequest) {
         { type: "web_search_20260209" as const, name: "web_search" } as any,
         { type: "web_fetch_20260209" as const, name: "web_fetch" } as any,
       ],
-      output_config: {
-        format: { type: "json_schema", schema: briefJsonSchema },
-      } as any,
       messages: [{ role: "user", content: userMessage }],
     });
 
@@ -77,7 +84,7 @@ export async function POST(req: NextRequest) {
 
     let parsed: unknown;
     try {
-      parsed = JSON.parse(textBlock.text);
+      parsed = JSON.parse(extractJson(textBlock.text));
     } catch (e) {
       return NextResponse.json(
         { error: "Model output was not valid JSON", text: textBlock.text },

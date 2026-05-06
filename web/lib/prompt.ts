@@ -76,4 +76,7 @@ Field guidance:
 - next_action: a single concrete recommended next step with timing.
 - sources: every credible URL referenced, with accessed=today.
 
-If web_search returns nothing usable for a given account, still emit the JSON; mark unknown fields with "Not found in public sources." text and confidence "Not found", and keep the sources array short or empty.`;
+If web_search returns nothing usable for a given account, still emit the JSON; mark unknown fields with "Not found in public sources." text and confidence "Not found", and keep the sources array short or empty.
+
+OUTPUT FORMAT — STRICT
+Return EXACTLY ONE JSON object as your final message. No prose before or after. No code fences. No markdown. Every required field must be present. Use "Not found in public sources." for unknown strings and [] for unknown arrays — never omit a key.`;
