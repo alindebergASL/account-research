@@ -1,0 +1,42 @@
+{
+  "account_name": "Acme Health System",
+  "segment": "Healthcare — Integrated Delivery Network",
+  "generated_at": "2026-05-06",
+  "audience": "internal",
+  "snapshot": "Acme Health System is a regional integrated delivery network operating 12 hospitals and ~140 ambulatory sites across the Midwest. Roughly 28,000 employees and ~$6.2B in annual revenue. Mission centers on community health and clinical excellence.",
+  "priority_summary": "Acme is investing in clinician burnout reduction, ambient documentation, and revenue cycle automation. EHR-anchored on Epic with growing emphasis on data platform consolidation. Likely high-priority account for any vendor selling clinician-facing AI, analytics, or cybersecurity.",
+  "recent_signals": [
+    {"text": "Announced 3-year digital and AI strategy with focus on ambient clinical documentation.", "source": "Acme press release, Mar 2026", "confidence": "High"},
+    {"text": "Selected new CISO from a top academic medical center.", "source": "Becker's Hospital Review, Feb 2026", "confidence": "High"},
+    {"text": "Job postings for ML engineers and data platform leads on the careers site.", "source": "acmehealth.org/careers", "confidence": "Medium"}
+  ],
+  "ai_tech_maturity": {"rating": 4, "rationale": "Multiple active programs (ambient AI, revenue cycle automation, data platform), public strategy, named executive sponsorship, but limited evidence of production-scale governance."},
+  "top_initiatives": [
+    {"title": "Ambient clinical documentation", "detail": "System-wide rollout to reduce clinician documentation burden; pilots underway in primary care.", "confidence": "High", "source": "CIO conference keynote, Apr 2026"},
+    {"title": "Revenue cycle automation", "detail": "RPA and ML-assisted prior authorization to recover margin.", "confidence": "Medium", "source": "Annual report 2025"},
+    {"title": "Cybersecurity modernization", "detail": "New CISO mandate; identity and segmentation investments.", "confidence": "High", "source": "Becker's, Feb 2026"},
+    {"title": "Data platform consolidation", "detail": "Stated goal to unify analytics on a cloud lakehouse.", "confidence": "Medium", "source": "Job postings"}
+  ],
+  "personas": [
+    {"name": "Dr. Jane Smith", "title": "Chief Medical Information Officer", "priority": "Reduce documentation burden, improve clinician satisfaction", "opener": "Open with ambient AI rollout learnings from peer IDNs.", "confidence": "Medium", "source": "Public bio on acmehealth.org"},
+    {"name": "", "title": "Chief Information Officer", "priority": "Platform consolidation, cost takeout", "opener": "Discuss reference architectures from similar IDNs.", "confidence": "Low", "source": "Inferred from org structure"},
+    {"name": "Mark Patel", "title": "Chief Information Security Officer", "priority": "Identity, segmentation, third-party risk", "opener": "Reference recent ransomware trends in healthcare.", "confidence": "High", "source": "Becker's hire announcement, Feb 2026"}
+  ],
+  "buying_path": "Centralized IT and security purchasing through CIO and CISO, with clinical co-sponsorship from CMIO. Procurement office handles RFPs above $500K. Major platform decisions involve board-level technology committee.",
+  "first_angle": "Lead with clinician burnout and ambient AI ROI. Bring 1–2 IDN reference customers with similar EHR footprint. Pair with a security conversation given the new CISO and recent regional ransomware activity.",
+  "risks": [
+    "Heavy Epic-anchored ecosystem may limit point-solution appetite.",
+    "Margin pressure could slow net-new commitments without clear ROI.",
+    "Active CISO transition may delay security purchases by 1–2 quarters."
+  ],
+  "competitive_signals": [
+    "Existing Epic and Microsoft footprint.",
+    "Public mention of cloud lakehouse evaluation — likely Databricks vs. Snowflake."
+  ],
+  "next_action": "Request a 30-minute meeting with the CMIO via warm intro from the regional advisory board. Prepare a 1-page point of view on ambient AI rollout for IDNs.",
+  "sources": [
+    {"title": "Acme Health 2025 Annual Report", "url": "https://acmehealth.org/about/annual-report-2025", "accessed": "2026-05-06"},
+    {"title": "Becker's Hospital Review — CISO hire", "url": "https://beckershospitalreview.com/example", "accessed": "2026-05-06"},
+    {"title": "Acme press release — Digital & AI Strategy", "url": "https://acmehealth.org/news/digital-ai-strategy", "accessed": "2026-05-06"}
+  ]
+}
