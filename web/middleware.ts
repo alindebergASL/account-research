@@ -29,8 +29,9 @@ export function middleware(req: NextRequest) {
     );
   }
 
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
+  const proto = req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "") || "https";
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl.host;
+  const url = new URL(`${proto}://${host}/login`);
   url.searchParams.set("from", pathname);
   return NextResponse.redirect(url);
 }
