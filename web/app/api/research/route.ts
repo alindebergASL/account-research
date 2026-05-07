@@ -15,6 +15,9 @@ type Intake = {
   audience?: "internal" | "shareable";
 };
 
+const MAX_CONTINUATIONS = 5;
+const MAX_OUTPUT_TOKENS = 32000;
+
 function extractJson(text: string): string {
   const trimmed = text.trim();
   const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -23,6 +26,81 @@ function extractJson(text: string): string {
   const end = trimmed.lastIndexOf("}");
   if (start !== -1 && end > start) return trimmed.slice(start, end + 1);
   return trimmed;
+}
+
+// Server-side tool loops can stop with `pause_turn` after hitting their
+// internal iteration cap. Per the API docs, re-send [user, assistant] and the
+// server resumes — do NOT inject another user "continue" message.
+async function runResearchLoop(
+  client: Anthropic,
+  userMessage: string,
+): Promise<Anthropic.Messages.Message> {
+  let messages: Anthropic.Messages.MessageParam[] = [
+    { role: "user", content: userMessage },
+  ];
+
+  for (let i = 0; i <= MAX_CONTINUATIONS; i++) {
+    const stream = await client.messages.stream({
+      model: "claude-opus-4-7",
+      max_tokens: MAX_OUTPUT_TOKENS,
+      thinking: { type: "adaptive" },
+      system: SYSTEM_PROMPT,
+      tools: [
+        { type: "web_search_20260209" as const, name: "web_search" } as any,
+        { type: "web_fetch_20260209" as const, name: "web_fetch" } as any,
+      ],
+      messages,
+    });
+    const final = await stream.finalMessage();
+
+    if (final.stop_reason === "pause_turn" && i < MAX_CONTINUATIONS) {
+      messages = [
+        { role: "user", content: userMessage },
+        { role: "assistant", content: final.content as any },
+      ];
+      continue;
+    }
+    return final;
+  }
+  throw new Error(
+    `Server-side tool loop did not finish in ${MAX_CONTINUATIONS} continuations`,
+  );
+}
+
+// Repair pass: tool-less call that re-uses the system prompt's schema +
+// hard-rules, asks the model to complete or fix the partial output without
+// running new searches. Returns null on any failure.
+async function repairJson(
+  client: Anthropic,
+  partialText: string,
+  parseOrValidationError: string,
+): Promise<unknown | null> {
+  try {
+    const response = await client.messages.create({
+      model: "claude-opus-4-7",
+      max_tokens: 16000,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content:
+            `Repair task — no new research. The previous response failed validation. ` +
+            `Return ONE complete valid JSON object that matches the OUTPUT FORMAT schema in the system prompt. ` +
+            `Recover whatever you can from the partial output and fill the rest with "Not found in public sources." or [] as appropriate. ` +
+            `Do not search the web. Do not add prose. Return only the JSON.\n\n` +
+            `Validation error:\n${parseOrValidationError}\n\n` +
+            `Partial / invalid output:\n${partialText}`,
+        },
+      ],
+    });
+    const text = response.content.find((b: any) => b.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
+    if (!text) return null;
+    return JSON.parse(extractJson(text.text));
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -58,44 +136,73 @@ export async function POST(req: NextRequest) {
   const userMessage = `Research this account and return the JSON brief.\n\n${intake}\n\nToday's date: ${new Date().toISOString().slice(0, 10)}.`;
 
   try {
-    const stream = await client.messages.stream({
-      model: "claude-opus-4-7",
-      max_tokens: 16000,
-      thinking: { type: "adaptive" },
-      system: SYSTEM_PROMPT,
-      tools: [
-        { type: "web_search_20260209" as const, name: "web_search" } as any,
-        { type: "web_fetch_20260209" as const, name: "web_fetch" } as any,
-      ],
-      messages: [{ role: "user", content: userMessage }],
-    });
-
-    const final = await stream.finalMessage();
+    const final = await runResearchLoop(client, userMessage);
 
     const textBlock = final.content.find((b: any) => b.type === "text") as
       | { type: "text"; text: string }
       | undefined;
+
+    const errorContext = {
+      stop_reason: final.stop_reason,
+      stop_sequence: final.stop_sequence,
+      usage: final.usage,
+    };
+
     if (!textBlock) {
       return NextResponse.json(
-        { error: "Model returned no text block", raw: final },
+        { error: "Model returned no text block", ...errorContext },
         { status: 502 },
       );
     }
 
     let parsed: unknown;
+    let parseError: string | null = null;
     try {
       parsed = JSON.parse(extractJson(textBlock.text));
-    } catch (e) {
-      return NextResponse.json(
-        { error: "Model output was not valid JSON", text: textBlock.text },
-        { status: 502 },
-      );
+    } catch (e: any) {
+      parseError = e?.message ?? String(e);
     }
 
-    const result = Brief.safeParse(parsed);
+    if (parseError) {
+      const repaired = await repairJson(client, textBlock.text, parseError);
+      if (repaired !== null) {
+        parsed = repaired;
+      } else {
+        return NextResponse.json(
+          {
+            error: "Model output was not valid JSON",
+            parse_error: parseError,
+            text: textBlock.text,
+            ...errorContext,
+          },
+          { status: 502 },
+        );
+      }
+    }
+
+    let result = Brief.safeParse(parsed);
+    if (!result.success) {
+      // One repair attempt on validation failures too
+      const repaired = await repairJson(
+        client,
+        JSON.stringify(parsed),
+        result.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("\n"),
+      );
+      if (repaired !== null) {
+        const second = Brief.safeParse(repaired);
+        if (second.success) result = second;
+      }
+    }
     if (!result.success) {
       return NextResponse.json(
-        { error: "Brief failed schema validation", issues: result.error.issues, raw: parsed },
+        {
+          error: "Brief failed schema validation",
+          issues: result.error.issues,
+          raw: parsed,
+          ...errorContext,
+        },
         { status: 502 },
       );
     }
