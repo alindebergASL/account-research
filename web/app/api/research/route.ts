@@ -74,7 +74,13 @@ async function findSources(
         cache_control: { type: "ephemeral" } as any,
         system: SOURCE_DISCOVERY_PROMPT,
         tools: [
-          { type: "web_search_20260209" as const, name: "web_search" } as any,
+          {
+            type: "web_search_20260209" as const,
+            name: "web_search",
+            // Haiku 4.5 does not support programmatic server-tool calling.
+            // direct lets the model call web_search from its own turn.
+            allowed_callers: ["direct"],
+          } as any,
         ],
         messages,
       });
