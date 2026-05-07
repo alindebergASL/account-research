@@ -10,6 +10,7 @@ type Me = {
   email: string;
   role: "admin" | "member";
   display_name: string | null;
+  must_change_password: boolean;
 } | null;
 
 export default function Header() {
@@ -21,11 +22,22 @@ export default function Header() {
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { user: null }))
-      .then((d) => setMe(d.user))
+      .then((d) => {
+        setMe(d.user);
+        if (
+          d.user?.must_change_password &&
+          pathname !== "/change-password" &&
+          pathname !== "/login"
+        ) {
+          router.replace(
+            `/change-password?from=${encodeURIComponent(pathname || "/")}`,
+          );
+        }
+      })
       .catch(() => setMe(null));
-  }, [pathname]);
+  }, [pathname, router]);
 
-  if (pathname === "/login") return null;
+  if (pathname === "/login" || pathname === "/change-password") return null;
 
   async function logout() {
     if (loading) return;

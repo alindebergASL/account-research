@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Copy, Loader2, Plus, Trash2, UserPlus } from "lucide-react";
+import {
+  Ban,
+  CheckCircle2,
+  Copy,
+  KeyRound,
+  Loader2,
+  Plus,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
 
 type AdminUser = {
   id: string;
@@ -11,6 +21,8 @@ type AdminUser = {
   role: "admin" | "member";
   display_name: string | null;
   created_at: number;
+  disabled_at: number | null;
+  must_change_password: number;
   brief_count: number;
 };
 
@@ -28,6 +40,7 @@ type AdminBrief = {
 export default function AdminPage() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [me, setMe] = useState<{ id: string } | null>(null);
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [briefs, setBriefs] = useState<AdminBrief[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -35,6 +48,7 @@ export default function AdminPage() {
     email: string;
     password: string;
   } | null>(null);
+  const [busyUser, setBusyUser] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -44,6 +58,7 @@ export default function AdminPage() {
           router.replace("/");
           return;
         }
+        setMe({ id: d.user.id });
         setAuthorized(true);
         loadAll();
       })
@@ -61,14 +76,94 @@ export default function AdminPage() {
   }
 
   async function deleteUser(id: string, email: string) {
-    if (!confirm(`Delete user ${email}? Their briefs will be reassigned to you.`)) {
+    if (
+      !confirm(
+        `Permanently delete ${email}? Their briefs will be reassigned to you. ` +
+          `Use Disable instead to keep their data intact.`,
+      )
+    ) {
       return;
     }
-    const r = await fetch(`/api/admin/users/${id}`, { method: "DELETE" });
-    if (r.ok) loadAll();
-    else {
+    setBusyUser(id);
+    try {
+      const r = await fetch(`/api/admin/users/${id}`, { method: "DELETE" });
+      if (r.ok) loadAll();
+      else {
+        const d = await r.json().catch(() => ({}));
+        alert(d?.error || "Delete failed");
+      }
+    } finally {
+      setBusyUser(null);
+    }
+  }
+
+  async function toggleDisabled(u: AdminUser) {
+    const path = u.disabled_at
+      ? `/api/admin/users/${u.id}/enable`
+      : `/api/admin/users/${u.id}/disable`;
+    setBusyUser(u.id);
+    try {
+      const r = await fetch(path, { method: "POST" });
+      if (r.ok) loadAll();
+      else {
+        const d = await r.json().catch(() => ({}));
+        alert(d?.error || "Failed");
+      }
+    } finally {
+      setBusyUser(null);
+    }
+  }
+
+  async function toggleRole(u: AdminUser) {
+    const next = u.role === "admin" ? "member" : "admin";
+    if (
+      !confirm(
+        next === "admin"
+          ? `Promote ${u.email} to admin?`
+          : `Demote ${u.email} to member?`,
+      )
+    )
+      return;
+    setBusyUser(u.id);
+    try {
+      const r = await fetch(`/api/admin/users/${u.id}/role`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: next }),
+      });
+      if (r.ok) loadAll();
+      else {
+        const d = await r.json().catch(() => ({}));
+        alert(d?.error || "Failed");
+      }
+    } finally {
+      setBusyUser(null);
+    }
+  }
+
+  async function resetPassword(u: AdminUser) {
+    if (
+      !confirm(
+        `Reset ${u.email}'s password? They'll be signed out everywhere ` +
+          `and forced to set a new password on next login.`,
+      )
+    )
+      return;
+    setBusyUser(u.id);
+    try {
+      const r = await fetch(
+        `/api/admin/users/${u.id}/reset-password`,
+        { method: "POST" },
+      );
       const d = await r.json().catch(() => ({}));
-      alert(d?.error || "Delete failed");
+      if (r.ok && d.temp_password) {
+        setTempCred({ email: d.email, password: d.temp_password });
+        loadAll();
+      } else {
+        alert(d?.error || "Failed");
+      }
+    } finally {
+      setBusyUser(null);
     }
   }
 
@@ -143,36 +238,104 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody>
-              {users?.map((u) => (
-                <tr key={u.id} className="border-t border-[var(--line)]">
-                  <td className="px-4 py-2">{u.email}</td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full border ${
-                        u.role === "admin"
-                          ? "bg-ink text-white border-ink"
-                          : "bg-white border-[var(--line)] text-muted"
-                      }`}
-                    >
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-muted">
-                    {new Date(u.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-2 text-muted">{u.brief_count}</td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => deleteUser(u.id, u.email)}
-                      className="text-muted hover:text-red-600 p-1.5 rounded"
-                      aria-label={`Delete ${u.email}`}
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {users?.map((u) => {
+                const isSelf = me?.id === u.id;
+                const busy = busyUser === u.id;
+                return (
+                  <tr
+                    key={u.id}
+                    className={`border-t border-[var(--line)] ${u.disabled_at ? "opacity-60" : ""}`}
+                  >
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <span>{u.email}</span>
+                        {u.disabled_at && (
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
+                            Disabled
+                          </span>
+                        )}
+                        {!u.disabled_at && u.must_change_password ? (
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                            Pending password change
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2">
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full border ${
+                          u.role === "admin"
+                            ? "bg-ink text-white border-ink"
+                            : "bg-white border-[var(--line)] text-muted"
+                        }`}
+                      >
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-muted">
+                      {new Date(u.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-2 text-muted">{u.brief_count}</td>
+                    <td className="px-4 py-2 text-right">
+                      <div className="inline-flex items-center gap-1">
+                        {busy && (
+                          <Loader2 className="size-4 animate-spin text-muted" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => resetPassword(u)}
+                          disabled={busy}
+                          className="text-muted hover:text-ink p-1.5 rounded disabled:opacity-40"
+                          aria-label={`Reset password for ${u.email}`}
+                          title="Reset password"
+                        >
+                          <KeyRound className="size-4" />
+                        </button>
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={() => toggleRole(u)}
+                            disabled={busy}
+                            className="text-muted hover:text-ink p-1.5 rounded disabled:opacity-40"
+                            aria-label={`Toggle role for ${u.email}`}
+                            title={u.role === "admin" ? "Demote to member" : "Promote to admin"}
+                          >
+                            <ShieldCheck className="size-4" />
+                          </button>
+                        )}
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={() => toggleDisabled(u)}
+                            disabled={busy}
+                            className="text-muted hover:text-ink p-1.5 rounded disabled:opacity-40"
+                            aria-label={u.disabled_at ? `Enable ${u.email}` : `Disable ${u.email}`}
+                            title={u.disabled_at ? "Enable" : "Disable"}
+                          >
+                            {u.disabled_at ? (
+                              <CheckCircle2 className="size-4" />
+                            ) : (
+                              <Ban className="size-4" />
+                            )}
+                          </button>
+                        )}
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={() => deleteUser(u.id, u.email)}
+                            disabled={busy}
+                            className="text-muted hover:text-red-600 p-1.5 rounded disabled:opacity-40"
+                            aria-label={`Delete ${u.email}`}
+                            title="Permanently delete"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {users && users.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-6 text-muted text-center">

@@ -12,6 +12,7 @@ export type PublicUser = {
   email: string;
   role: "admin" | "member";
   display_name: string | null;
+  must_change_password: boolean;
 };
 
 export type SessionInfo = {
@@ -25,23 +26,33 @@ export function publicUser(row: UserRow): PublicUser {
     email: row.email,
     role: row.role,
     display_name: row.display_name,
+    must_change_password: !!row.must_change_password,
   };
 }
 
-export function findUserByEmail(email: string): UserRow | null {
+// Returns the row regardless of disabled state — used by the login route to
+// distinguish "no such user" from "disabled".
+export function findUserByEmailIncludingDisabled(email: string): UserRow | null {
   const row = db()
-    .prepare(
-      `SELECT * FROM users WHERE email = ? COLLATE NOCASE`,
-    )
+    .prepare(`SELECT * FROM users WHERE email = ? COLLATE NOCASE`)
     .get(email.trim().toLowerCase()) as UserRow | undefined;
   return row ?? null;
+}
+
+// Active-only lookups used everywhere else. Disabled users behave as if they
+// don't exist so all session/share/permission paths fail closed.
+export function findUserByEmail(email: string): UserRow | null {
+  const row = findUserByEmailIncludingDisabled(email);
+  if (!row || row.disabled_at !== null) return null;
+  return row;
 }
 
 export function findUserById(id: string): UserRow | null {
   const row = db()
     .prepare(`SELECT * FROM users WHERE id = ?`)
     .get(id) as UserRow | undefined;
-  return row ?? null;
+  if (!row || row.disabled_at !== null) return null;
+  return row;
 }
 
 export function createSession(userId: string): SessionRow {
@@ -124,9 +135,18 @@ export class HttpError extends Error {
   }
 }
 
-export function requireUser(req: NextRequest): PublicUser {
+export function requireUser(
+  req: NextRequest,
+  opts?: { allowMustChange?: boolean },
+): PublicUser {
   const s = getSession(req);
   if (!s) throw new HttpError(401, { error: "Authentication required" });
+  if (s.user.must_change_password && !opts?.allowMustChange) {
+    throw new HttpError(403, {
+      error: "Password change required",
+      code: "must_change_password",
+    });
+  }
   return s.user;
 }
 

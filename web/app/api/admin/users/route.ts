@@ -22,6 +22,8 @@ type AdminUserRow = {
   role: "admin" | "member";
   display_name: string | null;
   created_at: number;
+  disabled_at: number | null;
+  must_change_password: number;
   brief_count: number;
 };
 
@@ -36,6 +38,7 @@ export async function GET(req: NextRequest) {
   const rows = db()
     .prepare(
       `SELECT u.id, u.email, u.role, u.display_name, u.created_at,
+              u.disabled_at, u.must_change_password,
               COUNT(b.id) AS brief_count
        FROM users u
        LEFT JOIN briefs b ON b.user_id = u.id
@@ -89,8 +92,9 @@ export async function POST(req: NextRequest) {
 
   db()
     .prepare(
-      `INSERT INTO users (id, email, password_hash, role, display_name, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users
+        (id, email, password_hash, role, display_name, created_at, created_by, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
     )
     .run(id, email, hashPassword(tempPassword), role, display, now, admin.id);
 

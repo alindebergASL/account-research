@@ -38,7 +38,13 @@ function Login() {
         setLoading(false);
         return;
       }
-      router.replace(from);
+      if (data?.must_change_password) {
+        router.replace(
+          `/change-password?from=${encodeURIComponent(from)}`,
+        );
+      } else {
+        router.replace(from);
+      }
       router.refresh();
     } catch (err: any) {
       setError(err?.message || "Network error");

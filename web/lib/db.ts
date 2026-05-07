@@ -74,8 +74,35 @@ export function db(): Database.Database {
   `);
 
   _db = conn;
+  applyMigrations(conn);
   bootstrapAdmin(conn);
   return _db;
+}
+
+function applyMigrations(conn: Database.Database) {
+  // Idempotent ALTER TABLEs — better-sqlite3 throws on duplicate column,
+  // so we swallow that specific error and continue.
+  const addCol = (sql: string) => {
+    try {
+      conn.exec(sql);
+    } catch (e: any) {
+      if (!/duplicate column name/i.test(String(e?.message ?? e))) throw e;
+    }
+  };
+  addCol(
+    "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+  );
+  addCol("ALTER TABLE users ADD COLUMN disabled_at INTEGER");
+  addCol("ALTER TABLE users ADD COLUMN password_changed_at INTEGER");
+
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      email           TEXT PRIMARY KEY COLLATE NOCASE,
+      failed_count    INTEGER NOT NULL DEFAULT 0,
+      last_failed_at  INTEGER,
+      locked_until    INTEGER
+    );
+  `);
 }
 
 function bootstrapAdmin(conn: Database.Database) {
@@ -151,6 +178,16 @@ export type UserRow = {
   display_name: string | null;
   created_at: number;
   created_by: string | null;
+  must_change_password: number;
+  disabled_at: number | null;
+  password_changed_at: number | null;
+};
+
+export type LoginAttemptRow = {
+  email: string;
+  failed_count: number;
+  last_failed_at: number | null;
+  locked_until: number | null;
 };
 
 export type SessionRow = {

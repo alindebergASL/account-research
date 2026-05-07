@@ -35,10 +35,12 @@ export default function BriefChat({
   briefId,
   brief,
   onBriefUpdate,
+  readOnly = false,
 }: {
   briefId: string;
   brief: Brief;
-  onBriefUpdate: (next: Brief) => void;
+  onBriefUpdate?: (next: Brief) => void;
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -120,7 +122,7 @@ export default function BriefChat({
                 : null,
           }),
       );
-      if (data.brief) {
+      if (data.brief && onBriefUpdate) {
         onBriefUpdate(data.brief);
       }
     } catch (e: any) {
@@ -226,8 +228,9 @@ export default function BriefChat({
                 {historyLoaded && messages.length === 0 && (
                   <div className="space-y-3 pt-2">
                     <p className="text-sm text-muted leading-snug">
-                      Ask about anything in the brief, or have me find more and
-                      add it to the canvas.
+                      {readOnly
+                        ? "Ask questions about anything in the brief. Read-only — your replies won't change the brief."
+                        : "Ask about anything in the brief, or have me find more and add it to the canvas."}
                     </p>
                     <div className="space-y-1.5">
                       {SAMPLE_PROMPTS.map((p) => (
@@ -276,7 +279,7 @@ export default function BriefChat({
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Ask or instruct…"
+                    placeholder={readOnly ? "Ask a question…" : "Ask or instruct…"}
                     rows={1}
                     disabled={sending}
                     className="flex-1 resize-none bg-white border border-[var(--line)] rounded-xl px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50 max-h-32"

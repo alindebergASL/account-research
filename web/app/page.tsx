@@ -383,6 +383,21 @@ function Home() {
           </motion.section>
         )}
 
+        {!loading &&
+          recents !== null &&
+          shared !== null &&
+          recents.length === 0 &&
+          shared.length === 0 && (
+            <motion.section
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.1 }}
+              className="mt-12 text-center text-sm text-muted"
+            >
+              No briefs yet. Run your first research above.
+            </motion.section>
+          )}
+
         {!loading && shared && shared.length > 0 && (
           <motion.section
             initial={{ opacity: 0, y: 8 }}

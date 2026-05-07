@@ -92,11 +92,12 @@ export default function BriefCanvas({
         onShareClick={() => setShowShare(true)}
       />
 
-      {currentBriefId && onBriefUpdate && canWrite && (
+      {currentBriefId && onBriefUpdate && (
         <BriefChat
           briefId={currentBriefId}
           brief={brief}
           onBriefUpdate={onBriefUpdate}
+          readOnly={!canWrite}
         />
       )}
 

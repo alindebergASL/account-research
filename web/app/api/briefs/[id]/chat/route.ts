@@ -168,6 +168,59 @@ function authError(e: unknown) {
   return null;
 }
 
+const READ_ONLY_VIEWER_ADDENDUM =
+  "\n\nNote: you are answering on behalf of a read-only viewer. Do NOT call update_brief or any tool. Do NOT propose edits. Only answer questions using the brief content above. Cite specific brief fields where helpful.";
+
+async function handleReadOnlyChat({
+  briefId,
+  userId,
+  brief,
+  userMessage,
+}: {
+  briefId: string;
+  userId: string;
+  brief: BriefT;
+  userMessage: string;
+}): Promise<Response> {
+  const history = loadHistory(briefId);
+  const client = new Anthropic();
+  const system =
+    BRIEF_CHAT_SYSTEM_PROMPT.replace(
+      "{{BRIEF_JSON}}",
+      JSON.stringify(brief, null, 2),
+    ) + READ_ONLY_VIEWER_ADDENDUM;
+  const messages = buildMessages(history, userMessage);
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4000,
+      cache_control: { type: "ephemeral" } as any,
+      system,
+      messages,
+    });
+    const finalText =
+      response.content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("\n")
+        .trim() || "(no reply)";
+
+    appendChat(briefId, userId, "user", userMessage);
+    appendChat(briefId, userId, "assistant", finalText);
+
+    return NextResponse.json({
+      reply: finalText,
+      patches_applied: [],
+      patch_errors: [],
+    });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: friendlyError(err) },
+      { status: 500 },
+    );
+  }
+}
+
 // ---- GET: history ----------------------------------------------------------
 
 export async function GET(
@@ -252,20 +305,25 @@ export async function POST(
     );
   }
 
-  if (!canWriteBrief(user, params.id)) {
-    // Distinguish: if the user can read but not write, 403; otherwise 404.
-    if (canReadBrief(user, params.id)) {
-      return NextResponse.json(
-        { error: "Read-only access — chat is disabled for shared briefs" },
-        { status: 403 },
-      );
-    }
+  const writer = canWriteBrief(user, params.id);
+  if (!writer && !canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const brief = loadBrief(params.id);
   if (!brief) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Sharees get a tools-less, no-patches branch — they can ask questions but
+  // can't run web search or mutate the brief.
+  if (!writer) {
+    return handleReadOnlyChat({
+      briefId: params.id,
+      userId: user.id,
+      brief,
+      userMessage,
+    });
   }
 
   const history = loadHistory(params.id);

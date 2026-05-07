@@ -7,7 +7,7 @@ export const config = {
   ],
 };
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/logout", "/api/auth/me"];
+const PUBLIC_PATHS = ["/login", "/change-password", "/api/auth"];
 
 // Lightweight gate. The cookie's mere presence is enough to let traffic through;
 // each route validates the session against the DB. The goal here is just to keep

@@ -12,6 +12,7 @@ type BriefSummary = {
   audience: string;
   generated_at: string;
   created_at: number;
+  shared_by_email?: string | null;
 };
 
 export default function BriefSwitcher({
@@ -169,25 +170,31 @@ export default function BriefSwitcher({
                           {formatDate(b.created_at)}
                         </div>
                       </div>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => deleteBrief(b.id, e)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            deleteBrief(b.id, e as any);
-                          }
-                        }}
-                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted hover:text-red-600 p-1 rounded cursor-pointer"
-                        aria-label={`Delete ${b.account_name}`}
-                      >
-                        {deleting === b.id ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="size-3.5" />
-                        )}
-                      </span>
+                      {b.shared_by_email ? (
+                        <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg)] text-muted self-center">
+                          Shared
+                        </span>
+                      ) : (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => deleteBrief(b.id, e)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              deleteBrief(b.id, e as any);
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted hover:text-red-600 p-1 rounded cursor-pointer"
+                          aria-label={`Delete ${b.account_name}`}
+                        >
+                          {deleting === b.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-3.5" />
+                          )}
+                        </span>
+                      )}
                     </div>
                   </button>
                 ))}

@@ -93,7 +93,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
       <BriefCanvas
         brief={brief}
         currentBriefId={params.id}
-        onBriefUpdate={access.can_write ? setBrief : undefined}
+        onBriefUpdate={setBrief}
         canWrite={access.can_write}
         isOwner={access.is_owner}
       />
