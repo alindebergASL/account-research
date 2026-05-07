@@ -24,6 +24,37 @@ function isTruncationError(msg: string): boolean {
   return /unterminated|unexpected end|EOF/i.test(msg);
 }
 
+// Map raw Anthropic SDK errors to clean user-facing messages so the UI never
+// shows the raw 400 body. Returns {error, status} the caller can JSON.serialize.
+function friendlyError(err: any): { error: string; status: number } {
+  const msg = String(err?.message ?? err ?? "");
+  const status = typeof err?.status === "number" ? err.status : 500;
+
+  // Anthropic billing exhaustion — comes through as a 400 invalid_request_error
+  // with a "credit balance" message. Surface as 503 service-unavailable.
+  if (/credit balance/i.test(msg) && /too low|insufficient/i.test(msg)) {
+    return {
+      error:
+        "Research is temporarily unavailable — the Anthropic account is out of credits. Top up at https://console.anthropic.com/billing and try again.",
+      status: 503,
+    };
+  }
+  if (err instanceof Anthropic.RateLimitError) {
+    return {
+      error: "Anthropic rate limit reached — please retry in a moment.",
+      status: 429,
+    };
+  }
+  if (err instanceof Anthropic.AuthenticationError) {
+    return {
+      error:
+        "Server is misconfigured (invalid Anthropic API key). Contact the operator.",
+      status: 500,
+    };
+  }
+  return { error: msg, status };
+}
+
 // Score a brief on substantive content. Below ~5/8 indicators it's almost
 // certainly the result of truncation+repair-padding rather than real research.
 function completenessScore(b: import("@/lib/schema").Brief) {
@@ -370,8 +401,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err: any) {
-    const msg = err?.message ?? String(err);
-    const status = err?.status ?? 500;
-    return NextResponse.json({ error: msg }, { status });
+    const { error, status } = friendlyError(err);
+    return NextResponse.json({ error }, { status });
   }
 }
