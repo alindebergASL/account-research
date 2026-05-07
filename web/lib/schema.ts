@@ -73,6 +73,26 @@ export const Brief = z.object({
   sources: z.array(Source),
 });
 
+// Heuristic completeness check for a saved brief.
+// Returns a sparse-fields count and an isLow flag the canvas uses to
+// surface a warning banner ("research came back thin — re-run").
+export function briefCompleteness(b: z.infer<typeof Brief>) {
+  const isMissing = (s: string) =>
+    !s || s.trim().toLowerCase().startsWith("not found");
+  const checks = [
+    !isMissing(b.snapshot),
+    !isMissing(b.priority_summary),
+    !isMissing(b.buying_path),
+    !isMissing(b.first_angle),
+    !isMissing(b.next_action),
+    b.recent_signals.length > 0,
+    b.top_initiatives.length > 0,
+    b.personas.length > 0,
+  ];
+  const filled = checks.filter(Boolean).length;
+  return { filled, total: checks.length, isLow: filled < 4 };
+}
+
 export type Brief = z.infer<typeof Brief>;
 export type Signal = z.infer<typeof Signal>;
 export type Initiative = z.infer<typeof Initiative>;

@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Clock, Loader2, Search, Trash2 } from "lucide-react";
 
@@ -32,15 +32,28 @@ const SECTORS = [
   "SMB",
 ];
 
-export default function Home() {
+export default function Page() {
+  return (
+    <Suspense fallback={<main className="min-h-screen" />}>
+      <Home />
+    </Suspense>
+  );
+}
+
+function Home() {
   const router = useRouter();
-  const [account, setAccount] = useState("");
-  const [segment, setSegment] = useState("");
-  const [region, setRegion] = useState("");
-  const [goal, setGoal] = useState("");
+  const search = useSearchParams();
+  const [account, setAccount] = useState(search.get("account") ?? "");
+  const [segment, setSegment] = useState(search.get("segment") ?? "");
+  const [region, setRegion] = useState(search.get("region") ?? "");
+  const [goal, setGoal] = useState(search.get("goal") ?? "");
   const [notes, setNotes] = useState("");
-  const [audience, setAudience] = useState<"internal" | "shareable">("internal");
-  const [advanced, setAdvanced] = useState(false);
+  const [audience, setAudience] = useState<"internal" | "shareable">(
+    search.get("audience") === "shareable" ? "shareable" : "internal",
+  );
+  const [advanced, setAdvanced] = useState(
+    !!(search.get("segment") || search.get("region") || search.get("goal")),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);

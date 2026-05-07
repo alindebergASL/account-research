@@ -37,6 +37,9 @@ import type {
   Source,
   TechnicalFootprint,
 } from "@/lib/schema";
+import { briefCompleteness } from "@/lib/schema";
+import Link from "next/link";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import DrillModal, { ConfidenceChip, SourceLink } from "./DrillModal";
 import BriefSwitcher from "./BriefSwitcher";
 
@@ -67,9 +70,15 @@ export default function BriefCanvas({
 }) {
   const [drill, setDrill] = useState<DrillKind>(null);
 
+  const completeness = briefCompleteness(brief);
+
   return (
     <div className="max-w-7xl mx-auto px-6 pb-24">
       <Header brief={brief} currentBriefId={currentBriefId} />
+
+      {completeness.isLow && (
+        <LowQualityBanner brief={brief} completeness={completeness} />
+      )}
 
       <div className="grid grid-cols-12 gap-4">
         {/* Row 1: Snapshot wide + Maturity gauge */}
@@ -1367,5 +1376,46 @@ function InitiativeBars({
         Bar width tracks confidence. Click any row to drill in.
       </p>
     </div>
+  );
+}
+
+/* ---------- Low-quality warning ---------- */
+
+function LowQualityBanner({
+  brief,
+  completeness,
+}: {
+  brief: Brief;
+  completeness: { filled: number; total: number };
+}) {
+  const params = new URLSearchParams();
+  params.set("account", brief.account_name);
+  if (brief.segment) params.set("segment", brief.segment);
+  params.set("audience", brief.audience);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3"
+    >
+      <AlertCircle className="size-5 text-amber-700 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0 text-sm text-amber-900">
+        <div className="font-medium mb-0.5">
+          This brief came back sparse ({completeness.filled} of{" "}
+          {completeness.total} core sections populated).
+        </div>
+        <p className="text-amber-800/90">
+          The model may have been cut short during research. Re-running will
+          start fresh with a higher token budget.
+        </p>
+      </div>
+      <Link
+        href={`/?${params.toString()}`}
+        className="shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-900 text-white hover:bg-ink transition-colors"
+      >
+        <RefreshCw className="size-3.5" />
+        Re-run
+      </Link>
+    </motion.div>
   );
 }
