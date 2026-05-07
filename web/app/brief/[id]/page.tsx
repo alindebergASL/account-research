@@ -70,7 +70,11 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           <ArrowLeft className="size-4" /> New research
         </Link>
       </nav>
-      <BriefCanvas brief={brief} currentBriefId={params.id} />
+      <BriefCanvas
+        brief={brief}
+        currentBriefId={params.id}
+        onBriefUpdate={setBrief}
+      />
     </main>
   );
 }

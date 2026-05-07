@@ -28,10 +28,32 @@ export function db(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_briefs_user_created
       ON briefs (user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS brief_chats (
+      id TEXT PRIMARY KEY,
+      brief_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      patches TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chats_brief_created
+      ON brief_chats (brief_id, created_at);
   `);
   _db = conn;
   return _db;
 }
+
+export type BriefChatRow = {
+  id: string;
+  brief_id: string;
+  user_id: string;
+  role: "user" | "assistant";
+  content: string;
+  patches: string | null;
+  created_at: number;
+};
 
 export type BriefRow = {
   id: string;

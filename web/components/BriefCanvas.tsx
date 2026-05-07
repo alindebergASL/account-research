@@ -42,6 +42,7 @@ import Link from "next/link";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import DrillModal, { ConfidenceChip, SourceLink } from "./DrillModal";
 import BriefSwitcher from "./BriefSwitcher";
+import BriefChat from "./BriefChat";
 
 type DrillKind =
   | { kind: "snapshot" }
@@ -64,9 +65,11 @@ type DrillKind =
 export default function BriefCanvas({
   brief,
   currentBriefId,
+  onBriefUpdate,
 }: {
   brief: Brief;
   currentBriefId?: string;
+  onBriefUpdate?: (next: Brief) => void;
 }) {
   const [drill, setDrill] = useState<DrillKind>(null);
 
@@ -75,6 +78,14 @@ export default function BriefCanvas({
   return (
     <div className="max-w-7xl mx-auto px-6 pb-24">
       <Header brief={brief} currentBriefId={currentBriefId} />
+
+      {currentBriefId && onBriefUpdate && (
+        <BriefChat
+          briefId={currentBriefId}
+          brief={brief}
+          onBriefUpdate={onBriefUpdate}
+        />
+      )}
 
       {completeness.isLow && (
         <LowQualityBanner brief={brief} completeness={completeness} />
