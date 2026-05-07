@@ -51,6 +51,10 @@ function Home() {
   const [audience, setAudience] = useState<"internal" | "shareable">(
     search.get("audience") === "shareable" ? "shareable" : "internal",
   );
+  const [mode, setMode] = useState<"quick" | "standard" | "deep">(() => {
+    const m = search.get("mode");
+    return m === "quick" || m === "deep" ? m : "standard";
+  });
   const [advanced, setAdvanced] = useState(
     !!(search.get("segment") || search.get("region") || search.get("goal")),
   );
@@ -114,6 +118,7 @@ function Home() {
           goal: goal || undefined,
           notes: notes || undefined,
           audience,
+          mode,
         }),
       });
       const data = await res.json();
@@ -200,6 +205,8 @@ function Home() {
               )}
             </button>
           </div>
+
+          <ModeSelector mode={mode} setMode={setMode} disabled={loading} />
 
           <div className="flex items-center justify-between text-sm text-muted">
             <button
@@ -387,6 +394,69 @@ function Home() {
         }
       `}</style>
     </main>
+  );
+}
+
+const MODE_OPTIONS: Array<{
+  id: "quick" | "standard" | "deep";
+  label: string;
+  caption: string;
+}> = [
+  { id: "quick", label: "Quick", caption: "~30s · ~$0.10" },
+  { id: "standard", label: "Standard", caption: "~70s · ~$0.35" },
+  { id: "deep", label: "Deep", caption: "~2-3 min · ~$1+" },
+];
+
+const MODE_HINT: Record<"quick" | "standard" | "deep", string> = {
+  quick: "Fast snapshot — Sonnet, single pass, web search only. Good for low-stakes accounts.",
+  standard: "Balanced depth — Opus + Haiku scout, web search + fetch. Default.",
+  deep: "Exhaustive — Opus at maximum effort, full source list. Use for high-stakes meetings.",
+};
+
+function ModeSelector({
+  mode,
+  setMode,
+  disabled,
+}: {
+  mode: "quick" | "standard" | "deep";
+  setMode: (m: "quick" | "standard" | "deep") => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div
+        role="radiogroup"
+        aria-label="Research depth"
+        className="inline-flex p-1 gap-1 bg-white border border-[var(--line)] rounded-xl"
+      >
+        {MODE_OPTIONS.map((opt) => {
+          const active = mode === opt.id;
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => setMode(opt.id)}
+              disabled={disabled}
+              className={`relative flex flex-col items-start gap-0.5 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                active
+                  ? "bg-ink text-white"
+                  : "bg-transparent text-ink hover:bg-[var(--bg)]"
+              }`}
+            >
+              <span className="font-medium">{opt.label}</span>
+              <span
+                className={`text-[11px] ${active ? "text-white/70" : "text-muted"}`}
+              >
+                {opt.caption}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted">{MODE_HINT[mode]}</p>
+    </div>
   );
 }
 

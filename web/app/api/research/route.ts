@@ -8,6 +8,8 @@ type DiscoveredSource = { url: string; title?: string; type?: string; why?: stri
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+export type ResearchMode = "quick" | "standard" | "deep";
+
 type Intake = {
   account: string;
   segment?: string;
@@ -15,10 +17,68 @@ type Intake = {
   goal?: string;
   notes?: string;
   audience?: "internal" | "shareable";
+  mode?: ResearchMode;
 };
 
-const MAX_CONTINUATIONS = 5;
-const MAX_OUTPUT_TOKENS = 64000;
+type ResearchConfig = {
+  model: string;
+  maxOutputTokens: number;
+  thinking: { type: "adaptive" } | { type: "disabled" };
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  maxContinuations: number;
+  useWebFetch: boolean;
+};
+
+type ModeConfig = {
+  runScout: boolean;
+  scoutCap: number;
+  research: ResearchConfig;
+  // Short hint injected into the user message so the model knows the breadth target.
+  breadthTarget: string;
+};
+
+const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
+  quick: {
+    runScout: false,
+    scoutCap: 0,
+    research: {
+      model: "claude-sonnet-4-6",
+      maxOutputTokens: 16_000,
+      thinking: { type: "disabled" },
+      maxContinuations: 2,
+      useWebFetch: false,
+    },
+    breadthTarget:
+      "Quick mode — single-pass snapshot. Issue at most ~3 web_search queries. Aim for 4-6 sources. Keep prose tight.",
+  },
+  standard: {
+    runScout: true,
+    scoutCap: 12,
+    research: {
+      model: "claude-opus-4-7",
+      maxOutputTokens: 32_000,
+      thinking: { type: "adaptive" },
+      maxContinuations: 5,
+      useWebFetch: true,
+    },
+    breadthTarget:
+      "Standard mode — balanced depth. Aim for 10-15 sources spread across categories.",
+  },
+  deep: {
+    runScout: true,
+    scoutCap: 25,
+    research: {
+      model: "claude-opus-4-7",
+      maxOutputTokens: 64_000,
+      thinking: { type: "adaptive" },
+      effort: "xhigh",
+      maxContinuations: 8,
+      useWebFetch: true,
+    },
+    breadthTarget:
+      "Deep mode — exhaustive research. Aim for 18-25 sources. Drill into every category, including niche ones (modernization grants, consortium purchasing, AI governance, leadership bios).",
+  },
+};
 
 function isTruncationError(msg: string): boolean {
   return /unterminated|unexpected end|EOF/i.test(msg);
@@ -93,6 +153,7 @@ const SOURCE_DISCOVERY_MAX_CONTINUATIONS = 2;
 async function findSources(
   client: Anthropic,
   intake: string,
+  cap: number,
 ): Promise<DiscoveredSource[]> {
   let messages: Anthropic.Messages.MessageParam[] = [
     { role: "user", content: intake },
@@ -148,7 +209,7 @@ async function findSources(
             !seen.has(s.url) &&
             (seen.add(s.url) || true),
         )
-        .slice(0, 30) as DiscoveredSource[];
+        .slice(0, Math.max(1, cap)) as DiscoveredSource[];
     }
     return [];
   } catch {
@@ -162,29 +223,40 @@ async function findSources(
 async function runResearchLoop(
   client: Anthropic,
   userMessage: string,
+  cfg: ResearchConfig,
 ): Promise<Anthropic.Messages.Message> {
   let messages: Anthropic.Messages.MessageParam[] = [
     { role: "user", content: userMessage },
   ];
 
-  for (let i = 0; i <= MAX_CONTINUATIONS; i++) {
+  const tools: any[] = [
+    { type: "web_search_20260209" as const, name: "web_search" } as any,
+  ];
+  if (cfg.useWebFetch) {
+    tools.push(
+      { type: "web_fetch_20260209" as const, name: "web_fetch" } as any,
+    );
+  }
+
+  const outputConfig =
+    cfg.effort !== undefined ? ({ effort: cfg.effort } as any) : undefined;
+
+  for (let i = 0; i <= cfg.maxContinuations; i++) {
     const stream = await client.messages.stream({
-      model: "claude-opus-4-7",
-      max_tokens: MAX_OUTPUT_TOKENS,
-      thinking: { type: "adaptive" },
+      model: cfg.model,
+      max_tokens: cfg.maxOutputTokens,
+      thinking: cfg.thinking as any,
       // Auto-cache the largest stable prefix (tools + system prompt). Saves
       // ~90% on the cached portion across repeat requests within ~5 min.
       cache_control: { type: "ephemeral" } as any,
+      ...(outputConfig ? { output_config: outputConfig } : {}),
       system: SYSTEM_PROMPT,
-      tools: [
-        { type: "web_search_20260209" as const, name: "web_search" } as any,
-        { type: "web_fetch_20260209" as const, name: "web_fetch" } as any,
-      ],
+      tools,
       messages,
     });
     const final = await stream.finalMessage();
 
-    if (final.stop_reason === "pause_turn" && i < MAX_CONTINUATIONS) {
+    if (final.stop_reason === "pause_turn" && i < cfg.maxContinuations) {
       messages = [
         { role: "user", content: userMessage },
         { role: "assistant", content: final.content as any },
@@ -194,7 +266,7 @@ async function runResearchLoop(
     return final;
   }
   throw new Error(
-    `Server-side tool loop did not finish in ${MAX_CONTINUATIONS} continuations`,
+    `Server-side tool loop did not finish in ${cfg.maxContinuations} continuations`,
   );
 }
 
@@ -268,12 +340,20 @@ export async function POST(req: NextRequest) {
     .join("\n");
 
   const today = new Date().toISOString().slice(0, 10);
+
+  // Resolve mode + config. Unknown modes fall back to standard.
+  const mode: ResearchMode =
+    body.mode === "quick" || body.mode === "deep" ? body.mode : "standard";
+  const cfg = MODE_CONFIG[mode];
+
   const sourceDiscoveryIntake = `Find candidate sources for this account.\n\n${intake}\n\nToday's date: ${today}.`;
 
   try {
-    // Stage 1 — Haiku scouts for sources. Failures are non-blocking; the Opus
-    // stage will rediscover sources via web_search if this returns [].
-    const discovered = await findSources(client, sourceDiscoveryIntake);
+    // Stage 1 — Haiku scouts for sources (skipped in Quick mode).
+    // Failures are non-blocking; the research stage will rediscover via web_search.
+    const discovered = cfg.runScout
+      ? await findSources(client, sourceDiscoveryIntake, cfg.scoutCap)
+      : [];
 
     const sourcesPreamble =
       discovered.length > 0
@@ -287,9 +367,10 @@ export async function POST(req: NextRequest) {
             .join("\n")}\n`
         : "";
 
-    const userMessage = `Research this account and return the JSON brief.\n\n${intake}${sourcesPreamble}\nToday's date: ${today}.`;
+    const modeLine = `Research mode: ${mode}. ${cfg.breadthTarget}`;
+    const userMessage = `Research this account and return the JSON brief.\n\n${modeLine}\n\n${intake}${sourcesPreamble}\nToday's date: ${today}.`;
 
-    let final = await runResearchLoop(client, userMessage);
+    let final = await runResearchLoop(client, userMessage, cfg.research);
     let researchAttempts = 1;
     const sourceCandidates = discovered.length;
 
@@ -318,7 +399,7 @@ export async function POST(req: NextRequest) {
     if (parseError && isTruncationError(parseError)) {
       // Truncation — repair-padding would silently discard the model's
       // actual research. Re-run the research loop once instead.
-      final = await runResearchLoop(client, userMessage);
+      final = await runResearchLoop(client, userMessage, cfg.research);
       researchAttempts = 2;
       text = getText(final);
       ({ parsed, err: parseError } = tryParse(text));
@@ -398,6 +479,7 @@ export async function POST(req: NextRequest) {
         repaired,
         research_attempts: researchAttempts,
         source_candidates: sourceCandidates,
+        mode,
       },
     });
   } catch (err: any) {

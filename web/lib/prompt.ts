@@ -55,6 +55,8 @@ CORE RULES
 
    If a "Starter sources" list is provided in the user message, treat it as a head start: use web_fetch on the most relevant URLs (especially official sites, strategic plans, recent press releases, leadership bios, procurement filings) to extract concrete facts, then use web_search to fill any category that's still thin. The starter list is not exhaustive — supplement liberally where the brief needs more evidence.
 
+   Tool-call discipline: cap yourself at roughly 6 web_search queries and 5 web_fetch calls per turn. Prefer the starter source list before issuing your own queries, and prioritize web_fetch on the highest-value URLs (official strategy / annual report / leadership bio) over breadth. If a "Research mode" line is present in the user message, respect its breadth target.
+
 OUTPUT
 
 Emit a single JSON object matching the provided schema exactly. Target the brief at 900–1300 words of substantive content distributed across the fields. Keep prose plain — no markdown bold/italic, no code fences, no HTML, no placeholders. The renderer handles formatting.
