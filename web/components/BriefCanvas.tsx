@@ -43,6 +43,8 @@ import { AlertCircle, RefreshCw } from "lucide-react";
 import DrillModal, { ConfidenceChip, SourceLink } from "./DrillModal";
 import BriefSwitcher from "./BriefSwitcher";
 import BriefChat from "./BriefChat";
+import ShareDialog from "./ShareDialog";
+import { Share2 } from "lucide-react";
 
 type DrillKind =
   | { kind: "snapshot" }
@@ -66,24 +68,43 @@ export default function BriefCanvas({
   brief,
   currentBriefId,
   onBriefUpdate,
+  canWrite = true,
+  isOwner = true,
 }: {
   brief: Brief;
   currentBriefId?: string;
   onBriefUpdate?: (next: Brief) => void;
+  canWrite?: boolean;
+  isOwner?: boolean;
 }) {
   const [drill, setDrill] = useState<DrillKind>(null);
+  const [showShare, setShowShare] = useState(false);
 
   const completeness = briefCompleteness(brief);
 
   return (
     <div className="max-w-7xl mx-auto px-6 pb-24">
-      <Header brief={brief} currentBriefId={currentBriefId} />
+      <Header
+        brief={brief}
+        currentBriefId={currentBriefId}
+        canWrite={canWrite}
+        isOwner={isOwner}
+        onShareClick={() => setShowShare(true)}
+      />
 
-      {currentBriefId && onBriefUpdate && (
+      {currentBriefId && onBriefUpdate && canWrite && (
         <BriefChat
           briefId={currentBriefId}
           brief={brief}
           onBriefUpdate={onBriefUpdate}
+        />
+      )}
+
+      {showShare && currentBriefId && (
+        <ShareDialog
+          briefId={currentBriefId}
+          briefName={brief.account_name}
+          onClose={() => setShowShare(false)}
         />
       )}
 
@@ -530,9 +551,15 @@ export default function BriefCanvas({
 function Header({
   brief,
   currentBriefId,
+  canWrite,
+  isOwner,
+  onShareClick,
 }: {
   brief: Brief;
   currentBriefId?: string;
+  canWrite: boolean;
+  isOwner: boolean;
+  onShareClick: () => void;
 }) {
   return (
     <motion.div
@@ -545,12 +572,24 @@ function Header({
         <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted">
           <span className="size-1.5 rounded-full bg-accent" /> Account brief
         </div>
-        {currentBriefId && (
-          <BriefSwitcher
-            currentBriefId={currentBriefId}
-            currentName={brief.account_name}
-          />
-        )}
+        <div className="flex items-center gap-2">
+          {currentBriefId && canWrite && isOwner && (
+            <button
+              type="button"
+              onClick={onShareClick}
+              className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition-colors px-3 py-1.5 rounded-lg hover:bg-white border border-transparent hover:border-[var(--line)]"
+            >
+              <Share2 className="size-4" />
+              <span className="hidden sm:inline">Share</span>
+            </button>
+          )}
+          {currentBriefId && (
+            <BriefSwitcher
+              currentBriefId={currentBriefId}
+              currentName={brief.account_name}
+            />
+          )}
+        </div>
       </div>
       <h1 className="font-display text-5xl tracking-tight leading-[1.05]">
         {brief.account_name}

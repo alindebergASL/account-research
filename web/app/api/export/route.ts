@@ -4,6 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { Brief } from "@/lib/schema";
+import { HttpError, requireUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -57,6 +58,15 @@ function runRenderer(briefPath: string, outDir: string, format: ExportFormat) {
 }
 
 export async function POST(req: NextRequest) {
+  try {
+    requireUser(req);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return NextResponse.json(e.body, { status: e.status });
+    }
+    throw e;
+  }
+
   let body: { brief?: unknown; format?: string };
   try {
     body = await req.json();

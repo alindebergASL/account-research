@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import { hashPassword, newId } from "./password";
 
 const DB_PATH =
   process.env.BRIEF_DB_PATH ||
@@ -40,9 +41,76 @@ export function db(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_chats_brief_created
       ON brief_chats (brief_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id            TEXT PRIMARY KEY,
+      email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      role          TEXT NOT NULL DEFAULT 'member',
+      display_name  TEXT,
+      created_at    INTEGER NOT NULL,
+      created_by    TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id          TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+    CREATE TABLE IF NOT EXISTS brief_shares (
+      brief_id    TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      granted_by  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      PRIMARY KEY (brief_id, user_id),
+      FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_shares_user ON brief_shares(user_id);
   `);
+
   _db = conn;
+  bootstrapAdmin(conn);
   return _db;
+}
+
+function bootstrapAdmin(conn: Database.Database) {
+  const row = conn
+    .prepare("SELECT COUNT(*) AS n FROM users")
+    .get() as { n: number };
+  if (row.n > 0) return;
+
+  const email = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD || "";
+  if (!email || !password) {
+    throw new Error(
+      "No users in DB and ADMIN_EMAIL / ADMIN_PASSWORD are not set. " +
+        "Set both env vars on first run to seed the admin account.",
+    );
+  }
+
+  const adminId = newId();
+  const now = Date.now();
+  const tx = conn.transaction(() => {
+    conn
+      .prepare(
+        `INSERT INTO users (id, email, password_hash, role, display_name, created_at)
+         VALUES (?, ?, ?, 'admin', ?, ?)`,
+      )
+      .run(adminId, email, hashPassword(password), email, now);
+    conn.prepare("UPDATE briefs SET user_id = ?").run(adminId);
+    conn.prepare("UPDATE brief_chats SET user_id = ?").run(adminId);
+  });
+  tx();
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[db] seeded admin user ${email} and reassigned existing briefs to it`,
+  );
 }
 
 export type BriefChatRow = {
@@ -73,4 +141,21 @@ export type BriefSummary = {
   audience: string;
   generated_at: string;
   created_at: number;
+};
+
+export type UserRow = {
+  id: string;
+  email: string;
+  password_hash: string;
+  role: "admin" | "member";
+  display_name: string | null;
+  created_at: number;
+  created_by: string | null;
+};
+
+export type SessionRow = {
+  id: string;
+  user_id: string;
+  created_at: number;
+  expires_at: number;
 };

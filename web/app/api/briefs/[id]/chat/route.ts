@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "crypto";
 import { db, type BriefChatRow, type BriefRow } from "@/lib/db";
-import { getUserId, setUserCookie } from "@/lib/user";
+import {
+  HttpError,
+  canReadBrief,
+  canWriteBrief,
+  requireUser,
+} from "@/lib/auth";
 import { Brief, type Brief as BriefT } from "@/lib/schema";
 import { BRIEF_CHAT_SYSTEM_PROMPT } from "@/lib/prompt";
 
@@ -95,21 +100,21 @@ function friendlyError(err: any): string {
   return msg || "Chat failed";
 }
 
-function loadBrief(briefId: string, userId: string): BriefT | null {
+function loadBrief(briefId: string): BriefT | null {
   const row = db()
-    .prepare(`SELECT * FROM briefs WHERE id = ? AND user_id = ?`)
-    .get(briefId, userId) as BriefRow | undefined;
+    .prepare(`SELECT * FROM briefs WHERE id = ?`)
+    .get(briefId) as BriefRow | undefined;
   if (!row) return null;
   const parsed = Brief.safeParse(JSON.parse(row.brief_json));
   return parsed.success ? parsed.data : null;
 }
 
-function loadHistory(briefId: string, userId: string): BriefChatRow[] {
+function loadHistory(briefId: string): BriefChatRow[] {
   return db()
     .prepare(
-      `SELECT * FROM brief_chats WHERE brief_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT 100`,
+      `SELECT * FROM brief_chats WHERE brief_id = ? ORDER BY created_at ASC LIMIT 100`,
     )
-    .all(briefId, userId) as BriefChatRow[];
+    .all(briefId) as BriefChatRow[];
 }
 
 function appendChat(
@@ -135,22 +140,15 @@ function appendChat(
     );
 }
 
-function saveBrief(briefId: string, userId: string, brief: BriefT) {
+function saveBrief(briefId: string, brief: BriefT) {
   db()
     .prepare(
       `UPDATE briefs SET brief_json = ?, segment = ?, audience = ?
-       WHERE id = ? AND user_id = ?`,
+       WHERE id = ?`,
     )
-    .run(
-      JSON.stringify(brief),
-      brief.segment,
-      brief.audience,
-      briefId,
-      userId,
-    );
+    .run(JSON.stringify(brief), brief.segment, brief.audience, briefId);
 }
 
-// Build the messages array Claude sees: prior history + new user message.
 function buildMessages(
   history: BriefChatRow[],
   userMessage: string,
@@ -163,23 +161,31 @@ function buildMessages(
   return messages;
 }
 
+function authError(e: unknown) {
+  if (e instanceof HttpError) {
+    return NextResponse.json(e.body, { status: e.status });
+  }
+  return null;
+}
+
 // ---- GET: history ----------------------------------------------------------
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const { userId, isNew } = getUserId(req);
-  if (isNew) {
-    const res = NextResponse.json({ messages: [] });
-    setUserCookie(res, userId);
-    return res;
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    const r = authError(e);
+    if (r) return r;
+    throw e;
   }
-  const brief = loadBrief(params.id, userId);
-  if (!brief) {
+  if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const rows = loadHistory(params.id, userId);
+  const rows = loadHistory(params.id);
   return NextResponse.json({
     messages: rows.map((r) => ({
       id: r.id,
@@ -197,19 +203,20 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const { userId, isNew } = getUserId(req);
-  if (isNew) {
-    const res = NextResponse.json({ deleted: 0 });
-    setUserCookie(res, userId);
-    return res;
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    const r = authError(e);
+    if (r) return r;
+    throw e;
   }
-  const brief = loadBrief(params.id, userId);
-  if (!brief) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!canWriteBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const result = db()
-    .prepare(`DELETE FROM brief_chats WHERE brief_id = ? AND user_id = ?`)
-    .run(params.id, userId);
+    .prepare(`DELETE FROM brief_chats WHERE brief_id = ?`)
+    .run(params.id);
   return NextResponse.json({ deleted: result.changes });
 }
 
@@ -219,7 +226,14 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const { userId, isNew } = getUserId(req);
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    const r = authError(e);
+    if (r) return r;
+    throw e;
+  }
 
   let body: { message?: string };
   try {
@@ -238,14 +252,23 @@ export async function POST(
     );
   }
 
-  const brief = loadBrief(params.id, userId);
-  if (!brief) {
-    const res = NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (isNew) setUserCookie(res, userId);
-    return res;
+  if (!canWriteBrief(user, params.id)) {
+    // Distinguish: if the user can read but not write, 403; otherwise 404.
+    if (canReadBrief(user, params.id)) {
+      return NextResponse.json(
+        { error: "Read-only access — chat is disabled for shared briefs" },
+        { status: 403 },
+      );
+    }
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const history = loadHistory(params.id, userId);
+  const brief = loadBrief(params.id);
+  if (!brief) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const history = loadHistory(params.id);
   const client = new Anthropic();
   const system = BRIEF_CHAT_SYSTEM_PROMPT.replace(
     "{{BRIEF_JSON}}",
@@ -259,8 +282,6 @@ export async function POST(
   let finalText = "";
 
   try {
-    // Manual tool-use loop for the custom update_brief tool. web_search runs
-    // server-side and doesn't enter this loop. Cap iterations to avoid runaway.
     for (let i = 0; i < 6; i++) {
       const response = await client.messages.create({
         model: "claude-sonnet-4-6",
@@ -279,7 +300,6 @@ export async function POST(
         (b: any) => b.type === "tool_use" && b.name === "update_brief",
       ) as any[];
 
-      // Always append the assistant turn to history before resolving tools
       messages = [
         ...messages,
         { role: "assistant", content: response.content as any },
@@ -318,10 +338,9 @@ export async function POST(
           });
         }
         messages = [...messages, { role: "user", content: toolResults }];
-        continue; // give the model a chance to write its final reply
+        continue;
       }
 
-      // end_turn (or pause_turn we don't continue) — collect the text and exit
       const text = response.content
         .filter((b: any) => b.type === "text")
         .map((b: any) => b.text)
@@ -333,29 +352,25 @@ export async function POST(
 
     if (!finalText) finalText = "(no reply)";
 
-    // Persist any brief changes
     if (appliedPatches.length > 0) {
-      saveBrief(params.id, userId, workingBrief);
+      saveBrief(params.id, workingBrief);
     }
 
-    // Persist chat turns
-    appendChat(params.id, userId, "user", userMessage);
+    appendChat(params.id, user.id, "user", userMessage);
     appendChat(
       params.id,
-      userId,
+      user.id,
       "assistant",
       finalText,
       appliedPatches.length > 0 ? appliedPatches : undefined,
     );
 
-    const res = NextResponse.json({
+    return NextResponse.json({
       reply: finalText,
       patches_applied: appliedPatches,
       patch_errors: patchErrors,
       brief: appliedPatches.length > 0 ? workingBrief : undefined,
     });
-    if (isNew) setUserCookie(res, userId);
-    return res;
   } catch (err: any) {
     const msg = friendlyError(err);
     return NextResponse.json({ error: msg }, { status: 500 });

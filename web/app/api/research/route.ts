@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { Brief } from "@/lib/schema";
 import { SOURCE_DISCOVERY_PROMPT, SYSTEM_PROMPT } from "@/lib/prompt";
+import { HttpError, requireUser } from "@/lib/auth";
 
 type DiscoveredSource = { url: string; title?: string; type?: string; why?: string };
 
@@ -310,6 +311,15 @@ async function repairJson(
 }
 
 export async function POST(req: NextRequest) {
+  try {
+    requireUser(req);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return NextResponse.json(e.body, { status: e.status });
+    }
+    throw e;
+  }
+
   let body: Intake;
   try {
     body = await req.json();

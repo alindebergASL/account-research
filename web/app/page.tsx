@@ -14,6 +14,8 @@ type RecentBrief = {
   created_at: number;
 };
 
+type SharedBrief = RecentBrief & { shared_by_email: string };
+
 const SECTORS = [
   "Public sector / government",
   "Healthcare",
@@ -62,6 +64,7 @@ function Home() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [recents, setRecents] = useState<RecentBrief[] | null>(null);
+  const [shared, setShared] = useState<SharedBrief[] | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   async function loadRecents() {
@@ -69,12 +72,15 @@ function Home() {
       const r = await fetch("/api/briefs", { cache: "no-store" });
       if (r.ok) {
         const data = await r.json();
-        setRecents(data.briefs ?? []);
+        setRecents(data.owned ?? data.briefs ?? []);
+        setShared(data.shared ?? []);
       } else {
         setRecents([]);
+        setShared([]);
       }
     } catch {
       setRecents([]);
+      setShared([]);
     }
   }
 
@@ -325,7 +331,7 @@ function Home() {
           >
             <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-widest text-muted">
               <Clock className="size-3.5" />
-              <span>Your recent briefs</span>
+              <span>My briefs</span>
               <span className="ml-auto text-muted/70">{recents.length}</span>
             </div>
             <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -370,6 +376,44 @@ function Home() {
                         <Trash2 className="size-3.5" />
                       )}
                     </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </motion.section>
+        )}
+
+        {!loading && shared && shared.length > 0 && (
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.15 }}
+            className="mt-10"
+          >
+            <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-widest text-muted">
+              <Clock className="size-3.5" />
+              <span>Shared with me</span>
+              <span className="ml-auto text-muted/70">{shared.length}</span>
+            </div>
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {shared.slice(0, 8).map((b) => (
+                <li
+                  key={b.id}
+                  className="card p-3 group !cursor-pointer"
+                  onClick={() => router.push(`/brief/${b.id}`)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {b.account_name}
+                      </div>
+                      <div className="text-xs text-muted truncate">
+                        {b.segment || "—"}
+                      </div>
+                      <div className="text-[11px] text-muted mt-0.5">
+                        Shared by {b.shared_by_email} · {formatRelative(b.created_at)}
+                      </div>
+                    </div>
                   </div>
                 </li>
               ))}

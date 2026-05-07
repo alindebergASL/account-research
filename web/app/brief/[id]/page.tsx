@@ -6,13 +6,21 @@ import { ArrowLeft } from "lucide-react";
 import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
 
+type Access = {
+  is_owner: boolean;
+  can_write: boolean;
+  shared_by_email: string | null;
+};
+
 export default function BriefPage({ params }: { params: { id: string } }) {
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [access, setAccess] = useState<Access | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setBrief(null);
+    setAccess(null);
     setError(null);
     fetch(`/api/briefs/${params.id}`, { cache: "no-store" })
       .then(async (r) => {
@@ -26,6 +34,11 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         if (cancelled) return;
         const parsed = Brief.parse(data.brief);
         setBrief(parsed);
+        setAccess({
+          is_owner: !!data.is_owner,
+          can_write: !!data.can_write,
+          shared_by_email: data.shared_by_email ?? null,
+        });
       })
       .catch((e: any) => {
         if (cancelled) return;
@@ -52,7 +65,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
     );
   }
 
-  if (!brief) {
+  if (!brief || !access) {
     return (
       <main className="min-h-screen flex items-center justify-center text-muted">
         Loading brief…
@@ -70,10 +83,19 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           <ArrowLeft className="size-4" /> New research
         </Link>
       </nav>
+      {!access.can_write && access.shared_by_email && (
+        <div className="max-w-7xl mx-auto px-6 mt-4">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            Shared with you by {access.shared_by_email} · read-only
+          </div>
+        </div>
+      )}
       <BriefCanvas
         brief={brief}
         currentBriefId={params.id}
-        onBriefUpdate={setBrief}
+        onBriefUpdate={access.can_write ? setBrief : undefined}
+        canWrite={access.can_write}
+        isOwner={access.is_owner}
       />
     </main>
   );
