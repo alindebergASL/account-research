@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { Brief } from "@/lib/schema";
-import { SYSTEM_PROMPT } from "@/lib/prompt";
+import { SOURCE_DISCOVERY_PROMPT, SYSTEM_PROMPT } from "@/lib/prompt";
+
+type DiscoveredSource = { url: string; title?: string; type?: string; why?: string };
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -49,6 +51,72 @@ function extractJson(text: string): string {
   const end = trimmed.lastIndexOf("}");
   if (start !== -1 && end > start) return trimmed.slice(start, end + 1);
   return trimmed;
+}
+
+// Stage 1 — Haiku source-discovery scout.
+// Cheap, broad pass with web_search to surface 15-25 candidate URLs across all
+// the categories the brief covers. Returns [] on any failure so the Opus stage
+// still runs; missing sources just means Opus rediscovers them itself.
+const SOURCE_DISCOVERY_MAX_CONTINUATIONS = 2;
+
+async function findSources(
+  client: Anthropic,
+  intake: string,
+): Promise<DiscoveredSource[]> {
+  let messages: Anthropic.Messages.MessageParam[] = [
+    { role: "user", content: intake },
+  ];
+  try {
+    for (let i = 0; i <= SOURCE_DISCOVERY_MAX_CONTINUATIONS; i++) {
+      const response = await client.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 8000,
+        cache_control: { type: "ephemeral" } as any,
+        system: SOURCE_DISCOVERY_PROMPT,
+        tools: [
+          { type: "web_search_20260209" as const, name: "web_search" } as any,
+        ],
+        messages,
+      });
+      if (
+        response.stop_reason === "pause_turn" &&
+        i < SOURCE_DISCOVERY_MAX_CONTINUATIONS
+      ) {
+        messages = [
+          { role: "user", content: intake },
+          { role: "assistant", content: response.content as any },
+        ];
+        continue;
+      }
+      const text = (
+        response.content.find((b: any) => b.type === "text") as
+          | { text: string }
+          | undefined
+      )?.text;
+      if (!text) return [];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(extractJson(text));
+      } catch {
+        return [];
+      }
+      if (!Array.isArray(parsed)) return [];
+      const seen = new Set<string>();
+      return parsed
+        .filter(
+          (s: any) =>
+            s &&
+            typeof s.url === "string" &&
+            /^https?:\/\//i.test(s.url) &&
+            !seen.has(s.url) &&
+            (seen.add(s.url) || true),
+        )
+        .slice(0, 30) as DiscoveredSource[];
+    }
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 // Server-side tool loops can stop with `pause_turn` after hitting their
@@ -162,11 +230,31 @@ export async function POST(req: NextRequest) {
     .filter(Boolean)
     .join("\n");
 
-  const userMessage = `Research this account and return the JSON brief.\n\n${intake}\n\nToday's date: ${new Date().toISOString().slice(0, 10)}.`;
+  const today = new Date().toISOString().slice(0, 10);
+  const sourceDiscoveryIntake = `Find candidate sources for this account.\n\n${intake}\n\nToday's date: ${today}.`;
 
   try {
+    // Stage 1 — Haiku scouts for sources. Failures are non-blocking; the Opus
+    // stage will rediscover sources via web_search if this returns [].
+    const discovered = await findSources(client, sourceDiscoveryIntake);
+
+    const sourcesPreamble =
+      discovered.length > 0
+        ? `\n\nStarter sources from initial scan (${discovered.length} candidate URLs across categories — verify, web_fetch the most relevant, supplement with your own web_search to fill gaps):\n${discovered
+            .map(
+              (s) =>
+                `- [${s.type || "other"}] ${s.title || s.url} — ${s.url}${
+                  s.why ? `\n  ${s.why}` : ""
+                }`,
+            )
+            .join("\n")}\n`
+        : "";
+
+    const userMessage = `Research this account and return the JSON brief.\n\n${intake}${sourcesPreamble}\nToday's date: ${today}.`;
+
     let final = await runResearchLoop(client, userMessage);
     let researchAttempts = 1;
+    const sourceCandidates = discovered.length;
 
     function getText(msg: Anthropic.Messages.Message): string | null {
       const tb = msg.content.find((b: any) => b.type === "text") as
@@ -272,6 +360,7 @@ export async function POST(req: NextRequest) {
         ...quality,
         repaired,
         research_attempts: researchAttempts,
+        source_candidates: sourceCandidates,
       },
     });
   } catch (err: any) {
