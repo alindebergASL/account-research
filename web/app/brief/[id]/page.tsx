@@ -6,23 +6,35 @@ import { ArrowLeft } from "lucide-react";
 import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
 
-export default function BriefPage() {
+export default function BriefPage({ params }: { params: { id: string } }) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem("brief");
-    if (!raw) {
-      setError("No brief found. Start a new research from the home page.");
-      return;
-    }
-    try {
-      const parsed = Brief.parse(JSON.parse(raw));
-      setBrief(parsed);
-    } catch (e: any) {
-      setError("Stored brief failed validation: " + (e?.message ?? String(e)));
-    }
-  }, []);
+    let cancelled = false;
+    setBrief(null);
+    setError(null);
+    fetch(`/api/briefs/${params.id}`, { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          throw new Error(data?.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const parsed = Brief.parse(data.brief);
+        setBrief(parsed);
+      })
+      .catch((e: any) => {
+        if (cancelled) return;
+        setError(e?.message || "Failed to load brief");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
 
   if (error) {
     return (
@@ -58,7 +70,7 @@ export default function BriefPage() {
           <ArrowLeft className="size-4" /> New research
         </Link>
       </nav>
-      <BriefCanvas brief={brief} />
+      <BriefCanvas brief={brief} currentBriefId={params.id} />
     </main>
   );
 }

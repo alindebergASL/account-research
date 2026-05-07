@@ -1,9 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Loader2, Search } from "lucide-react";
+import { ArrowRight, Clock, Loader2, Search, Trash2 } from "lucide-react";
+
+type RecentBrief = {
+  id: string;
+  account_name: string;
+  segment: string | null;
+  audience: string;
+  generated_at: string;
+  created_at: number;
+};
 
 const SECTORS = [
   "Public sector / government",
@@ -35,6 +44,40 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [recents, setRecents] = useState<RecentBrief[] | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function loadRecents() {
+    try {
+      const r = await fetch("/api/briefs", { cache: "no-store" });
+      if (r.ok) {
+        const data = await r.json();
+        setRecents(data.briefs ?? []);
+      } else {
+        setRecents([]);
+      }
+    } catch {
+      setRecents([]);
+    }
+  }
+
+  useEffect(() => {
+    loadRecents();
+  }, []);
+
+  async function deleteRecent(id: string) {
+    if (deleting) return;
+    if (!confirm("Delete this brief?")) return;
+    setDeleting(id);
+    try {
+      const r = await fetch(`/api/briefs/${id}`, { method: "DELETE" });
+      if (r.ok) {
+        setRecents((prev) => (prev ? prev.filter((b) => b.id !== id) : prev));
+      }
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -68,8 +111,21 @@ export default function Home() {
         return;
       }
       setProgress(100);
-      sessionStorage.setItem("brief", JSON.stringify(data.brief));
-      router.push("/brief");
+
+      // Persist for the user, then navigate to the canonical id-based URL.
+      const saveRes = await fetch("/api/briefs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ brief: data.brief }),
+      });
+      if (!saveRes.ok) {
+        const saveData = await saveRes.json().catch(() => ({}));
+        setError(saveData.error || "Could not save brief");
+        setLoading(false);
+        return;
+      }
+      const { id } = await saveRes.json();
+      router.push(`/brief/${id}`);
     } catch (err: any) {
       clearInterval(tick);
       setError(err?.message ?? "Network error");
@@ -239,6 +295,67 @@ export default function Home() {
             </div>
           )}
         </form>
+
+        {!loading && recents && recents.length > 0 && (
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.1 }}
+            className="mt-12"
+          >
+            <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-widest text-muted">
+              <Clock className="size-3.5" />
+              <span>Your recent briefs</span>
+              <span className="ml-auto text-muted/70">{recents.length}</span>
+            </div>
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {recents.slice(0, 8).map((b) => (
+                <li
+                  key={b.id}
+                  className="card p-3 group !cursor-pointer"
+                  onClick={() => router.push(`/brief/${b.id}`)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {b.account_name}
+                      </div>
+                      <div className="text-xs text-muted truncate">
+                        {b.segment || "—"}
+                      </div>
+                      <div className="text-[11px] text-muted mt-0.5">
+                        {formatRelative(b.created_at)}
+                      </div>
+                    </div>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteRecent(b.id);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          deleteRecent(b.id);
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted hover:text-red-600 p-1.5 rounded cursor-pointer"
+                      aria-label={`Delete ${b.account_name}`}
+                    >
+                      {deleting === b.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </motion.section>
+        )}
       </div>
 
       <style jsx global>{`
@@ -269,4 +386,16 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
+}
+
+function formatRelative(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  const diffDays = Math.floor((now.getTime() - ts) / 86400000);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

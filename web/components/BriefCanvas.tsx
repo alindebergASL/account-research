@@ -38,6 +38,7 @@ import type {
   TechnicalFootprint,
 } from "@/lib/schema";
 import DrillModal, { ConfidenceChip, SourceLink } from "./DrillModal";
+import BriefSwitcher from "./BriefSwitcher";
 
 type DrillKind =
   | { kind: "snapshot" }
@@ -57,12 +58,18 @@ type DrillKind =
   | { kind: "sources" }
   | null;
 
-export default function BriefCanvas({ brief }: { brief: Brief }) {
+export default function BriefCanvas({
+  brief,
+  currentBriefId,
+}: {
+  brief: Brief;
+  currentBriefId?: string;
+}) {
   const [drill, setDrill] = useState<DrillKind>(null);
 
   return (
     <div className="max-w-7xl mx-auto px-6 pb-24">
-      <Header brief={brief} />
+      <Header brief={brief} currentBriefId={currentBriefId} />
 
       <div className="grid grid-cols-12 gap-4">
         {/* Row 1: Snapshot wide + Maturity gauge */}
@@ -500,7 +507,13 @@ export default function BriefCanvas({ brief }: { brief: Brief }) {
   );
 }
 
-function Header({ brief }: { brief: Brief }) {
+function Header({
+  brief,
+  currentBriefId,
+}: {
+  brief: Brief;
+  currentBriefId?: string;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -508,8 +521,16 @@ function Header({ brief }: { brief: Brief }) {
       transition={{ duration: 0.3 }}
       className="pt-10 pb-8"
     >
-      <div className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest text-muted">
-        <span className="size-1.5 rounded-full bg-accent" /> Account brief
+      <div className="flex items-start justify-between gap-4 mb-2">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted">
+          <span className="size-1.5 rounded-full bg-accent" /> Account brief
+        </div>
+        {currentBriefId && (
+          <BriefSwitcher
+            currentBriefId={currentBriefId}
+            currentName={brief.account_name}
+          />
+        )}
       </div>
       <h1 className="font-display text-5xl tracking-tight leading-[1.05]">
         {brief.account_name}
