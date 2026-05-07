@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 type SharedRow = BriefSummary & {
   user_id: string;
   shared_by_email: string;
+  role: "viewer" | "editor";
 };
 
 // GET /api/briefs — list current user's owned + shared briefs.
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
   const shared = db()
     .prepare(
       `SELECT b.id, b.account_name, b.segment, b.audience, b.generated_at,
-              b.created_at, owner.email AS shared_by_email
+              b.created_at, owner.email AS shared_by_email, s.role
        FROM brief_shares s
        JOIN briefs b ON b.id = s.brief_id
        JOIN users owner ON owner.id = b.user_id

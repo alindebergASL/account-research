@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   HttpError,
-  canWriteBrief,
+  canManageBrief,
   findUserByEmail,
   requireUser,
 } from "@/lib/auth";
@@ -21,7 +21,12 @@ type ShareListRow = {
   email: string;
   granted_by_email: string;
   created_at: number;
+  role: "viewer" | "editor";
 };
+
+function normalizeRole(input: unknown): "viewer" | "editor" {
+  return input === "editor" ? "editor" : "viewer";
+}
 
 export async function GET(
   req: NextRequest,
@@ -35,12 +40,13 @@ export async function GET(
     if (r) return r;
     throw e;
   }
-  if (!canWriteBrief(user, params.id)) {
+  if (!canManageBrief(user, params.id)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const rows = db()
     .prepare(
-      `SELECT s.user_id, u.email, granter.email AS granted_by_email, s.created_at
+      `SELECT s.user_id, u.email, granter.email AS granted_by_email,
+              s.created_at, s.role
        FROM brief_shares s
        JOIN users u ON u.id = s.user_id
        JOIN users granter ON granter.id = s.granted_by
@@ -63,11 +69,11 @@ export async function POST(
     if (r) return r;
     throw e;
   }
-  if (!canWriteBrief(user, params.id)) {
+  if (!canManageBrief(user, params.id)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
-  let body: { email?: string };
+  let body: { email?: string; role?: string };
   try {
     body = await req.json();
   } catch {
@@ -77,6 +83,7 @@ export async function POST(
   if (!email) {
     return NextResponse.json({ error: "Email required" }, { status: 400 });
   }
+  const role = normalizeRole(body.role);
 
   const target = findUserByEmail(email);
   if (!target) {
@@ -100,18 +107,23 @@ export async function POST(
     );
   }
 
+  // Insert the share if absent; if it already exists, update the role so the
+  // caller's request reflects on the existing row (matches the dialog's
+  // "share at editor" expectation when the user is already a viewer).
   db()
     .prepare(
-      `INSERT OR IGNORE INTO brief_shares (brief_id, user_id, granted_by, created_at)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO brief_shares (brief_id, user_id, granted_by, created_at, role)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(brief_id, user_id) DO UPDATE SET role = excluded.role`,
     )
-    .run(params.id, target.id, user.id, Date.now());
+    .run(params.id, target.id, user.id, Date.now(), role);
 
   return NextResponse.json({
     share: {
       user_id: target.id,
       email: target.email,
       granted_by_email: user.email,
+      role,
     },
   });
 }

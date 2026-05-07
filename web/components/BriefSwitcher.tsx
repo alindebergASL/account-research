@@ -13,6 +13,7 @@ type BriefSummary = {
   generated_at: string;
   created_at: number;
   shared_by_email?: string | null;
+  role?: "viewer" | "editor" | null;
 };
 
 export default function BriefSwitcher({
@@ -171,8 +172,15 @@ export default function BriefSwitcher({
                         </div>
                       </div>
                       {b.shared_by_email ? (
-                        <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg)] text-muted self-center">
-                          Shared
+                        <span
+                          className={
+                            "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded self-center " +
+                            (b.role === "editor"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-[var(--bg)] text-muted")
+                          }
+                        >
+                          {b.role === "editor" ? "Editor" : "Shared"}
                         </span>
                       ) : (
                         <span

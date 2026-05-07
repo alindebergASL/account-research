@@ -9,6 +9,7 @@ import BriefCanvas from "@/components/BriefCanvas";
 type Access = {
   is_owner: boolean;
   can_write: boolean;
+  role: "owner" | "viewer" | "editor" | null;
   shared_by_email: string | null;
 };
 
@@ -37,6 +38,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         setAccess({
           is_owner: !!data.is_owner,
           can_write: !!data.can_write,
+          role: data.role ?? null,
           shared_by_email: data.shared_by_email ?? null,
         });
       })
@@ -83,11 +85,17 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           <ArrowLeft className="size-4" /> New research
         </Link>
       </nav>
-      {!access.can_write && access.shared_by_email && (
+      {!access.is_owner && access.shared_by_email && (
         <div className="max-w-7xl mx-auto px-6 mt-4">
-          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-            Shared with you by {access.shared_by_email} · read-only
-          </div>
+          {access.role === "editor" ? (
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm text-emerald-900">
+              Shared with you by {access.shared_by_email} · editor
+            </div>
+          ) : (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+              Shared with you by {access.shared_by_email} · read-only
+            </div>
+          )}
         </div>
       )}
       <BriefCanvas

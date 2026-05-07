@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, BriefRow } from "@/lib/db";
 import {
   HttpError,
+  canManageBrief,
   canReadBrief,
   canWriteBrief,
+  getShareRole,
   requireUser,
 } from "@/lib/auth";
 import { Brief } from "@/lib/schema";
@@ -51,6 +53,9 @@ export async function GET(
 
   const isOwner = row.user_id === user.id;
   const canWrite = canWriteBrief(user, params.id);
+  const role: "owner" | "viewer" | "editor" | null = isOwner
+    ? "owner"
+    : (getShareRole(params.id, user.id) ?? null);
 
   let sharedByEmail: string | null = null;
   if (!isOwner) {
@@ -65,6 +70,7 @@ export async function GET(
     created_at: row.created_at,
     is_owner: isOwner,
     can_write: canWrite,
+    role,
     shared_by_email: sharedByEmail,
   });
 }
@@ -82,7 +88,7 @@ export async function DELETE(
     throw e;
   }
 
-  if (!canWriteBrief(user, params.id)) {
+  if (!canManageBrief(user, params.id)) {
     return NextResponse.json(
       { error: "Not authorized" },
       { status: 403 },

@@ -176,6 +176,21 @@ export function isSharedWith(briefId: string, userId: string): boolean {
   return !!row;
 }
 
+export type ShareRole = "viewer" | "editor";
+
+export function getShareRole(
+  briefId: string,
+  userId: string,
+): ShareRole | null {
+  const row = db()
+    .prepare(
+      `SELECT role FROM brief_shares WHERE brief_id = ? AND user_id = ?`,
+    )
+    .get(briefId, userId) as { role: string } | undefined;
+  if (!row) return null;
+  return row.role === "editor" ? "editor" : "viewer";
+}
+
 export function canReadBrief(user: PublicUser, briefId: string): boolean {
   const owner = getBriefOwner(briefId);
   if (!owner) return false;
@@ -184,10 +199,19 @@ export function canReadBrief(user: PublicUser, briefId: string): boolean {
   return isSharedWith(briefId, user.id);
 }
 
+// True only for the brief owner or an admin. Used to gate destructive /
+// share-management actions that editors should NOT have access to.
+export function canManageBrief(user: PublicUser, briefId: string): boolean {
+  const owner = getBriefOwner(briefId);
+  if (!owner) return false;
+  if (owner === user.id) return true;
+  return user.role === "admin";
+}
+
 export function canWriteBrief(user: PublicUser, briefId: string): boolean {
   const owner = getBriefOwner(briefId);
   if (!owner) return false;
   if (owner === user.id) return true;
   if (user.role === "admin") return true;
-  return false;
+  return getShareRole(briefId, user.id) === "editor";
 }

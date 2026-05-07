@@ -94,6 +94,9 @@ function applyMigrations(conn: Database.Database) {
   );
   addCol("ALTER TABLE users ADD COLUMN disabled_at INTEGER");
   addCol("ALTER TABLE users ADD COLUMN password_changed_at INTEGER");
+  addCol(
+    "ALTER TABLE brief_shares ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'",
+  );
 
   conn.exec(`
     CREATE TABLE IF NOT EXISTS login_attempts (

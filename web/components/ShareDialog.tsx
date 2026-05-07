@@ -3,11 +3,14 @@
 import { useEffect, useState } from "react";
 import { Loader2, Share2, X } from "lucide-react";
 
+type Role = "viewer" | "editor";
+
 type ShareRow = {
   user_id: string;
   email: string;
   granted_by_email: string;
   created_at: number;
+  role: Role;
 };
 
 export default function ShareDialog({
@@ -21,8 +24,10 @@ export default function ShareDialog({
 }) {
   const [shares, setShares] = useState<ShareRow[] | null>(null);
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState<Role>("viewer");
   const [submitting, setSubmitting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [updatingRole, setUpdatingRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -62,7 +67,7 @@ export default function ShareDialog({
       const r = await fetch(`/api/briefs/${briefId}/shares`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
+        body: JSON.stringify({ email: email.trim(), role }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -94,6 +99,31 @@ export default function ShareDialog({
     }
   }
 
+  async function changeRole(userId: string, next: Role) {
+    if (updatingRole) return;
+    const prev = shares;
+    setShares((cur) =>
+      cur
+        ? cur.map((s) => (s.user_id === userId ? { ...s, role: next } : s))
+        : cur,
+    );
+    setUpdatingRole(userId);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/shares/${userId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: next }),
+      });
+      if (!r.ok) {
+        setShares(prev);
+      }
+    } catch {
+      setShares(prev);
+    } finally {
+      setUpdatingRole(null);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
@@ -108,7 +138,7 @@ export default function ShareDialog({
           <div className="flex-1 min-w-0">
             <div className="font-medium">Share brief</div>
             <div className="text-xs text-muted truncate">
-              {briefName} · sharees get read-only access
+              {briefName} · viewers can read & ask, editors can also edit
             </div>
           </div>
           <button
@@ -135,6 +165,16 @@ export default function ShareDialog({
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={submitting}
               />
+              <select
+                className="field !w-auto"
+                value={role}
+                onChange={(e) => setRole(e.target.value as Role)}
+                disabled={submitting}
+                aria-label="Role"
+              >
+                <option value="viewer">Viewer</option>
+                <option value="editor">Editor</option>
+              </select>
               <button
                 type="submit"
                 disabled={submitting || !email.trim()}
@@ -173,6 +213,18 @@ export default function ShareDialog({
                   Shared by {s.granted_by_email}
                 </div>
               </div>
+              <select
+                value={s.role}
+                onChange={(e) =>
+                  changeRole(s.user_id, e.target.value as Role)
+                }
+                disabled={updatingRole === s.user_id}
+                className="text-xs border border-[var(--line)] rounded-lg px-2 py-1 bg-white disabled:opacity-50"
+                aria-label={`Role for ${s.email}`}
+              >
+                <option value="viewer">Viewer</option>
+                <option value="editor">Editor</option>
+              </select>
               <button
                 type="button"
                 onClick={() => remove(s.user_id)}
