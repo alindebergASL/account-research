@@ -67,6 +67,9 @@ async function runResearchLoop(
       model: "claude-opus-4-7",
       max_tokens: MAX_OUTPUT_TOKENS,
       thinking: { type: "adaptive" },
+      // Auto-cache the largest stable prefix (tools + system prompt). Saves
+      // ~90% on the cached portion across repeat requests within ~5 min.
+      cache_control: { type: "ephemeral" } as any,
       system: SYSTEM_PROMPT,
       tools: [
         { type: "web_search_20260209" as const, name: "web_search" } as any,
@@ -100,8 +103,11 @@ async function repairJson(
 ): Promise<unknown | null> {
   try {
     const response = await client.messages.create({
-      model: "claude-opus-4-7",
+      // Repair is mechanical reformatting against a known schema — Haiku 4.5
+      // handles it fine at ~5x lower input/output cost than Opus.
+      model: "claude-haiku-4-5",
       max_tokens: 16000,
+      cache_control: { type: "ephemeral" } as any,
       system: SYSTEM_PROMPT,
       messages: [
         {
