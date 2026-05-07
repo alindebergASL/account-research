@@ -95,7 +95,7 @@ async function findSources(
         continue;
       }
       const text = (
-        response.content.find((b: any) => b.type === "text") as
+        [...response.content].reverse().find((b: any) => b.type === "text") as
           | { text: string }
           | undefined
       )?.text;
@@ -263,7 +263,7 @@ export async function POST(req: NextRequest) {
     const sourceCandidates = discovered.length;
 
     function getText(msg: Anthropic.Messages.Message): string | null {
-      const tb = msg.content.find((b: any) => b.type === "text") as
+      const tb = [...msg.content].reverse().find((b: any) => b.type === "text") as
         | { type: "text"; text: string }
         | undefined;
       return tb?.text ?? null;
