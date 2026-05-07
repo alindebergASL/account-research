@@ -9,10 +9,13 @@ const DB_PATH =
 
 let _db: Database.Database | null = null;
 
-export function db(): Database.Database {
+export function initDb(): Database.Database {
   if (_db) return _db;
+  const start = Date.now();
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  // eslint-disable-next-line no-console
+  console.log(`[db] init start path=${DB_PATH}`);
   const conn = new Database(DB_PATH);
   conn.pragma("journal_mode = WAL");
   conn.pragma("foreign_keys = ON");
@@ -71,41 +74,113 @@ export function db(): Database.Database {
       FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_shares_user ON brief_shares(user_id);
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id          TEXT PRIMARY KEY,
+      applied_at  INTEGER NOT NULL
+    );
   `);
 
   _db = conn;
-  applyMigrations(conn);
+  const { applied, skipped } = runMigrations(conn);
   bootstrapAdmin(conn);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[db] init done ms=${Date.now() - start} applied=${applied} skipped=${skipped}`,
+  );
   return _db;
 }
 
-function applyMigrations(conn: Database.Database) {
-  // Idempotent ALTER TABLEs — better-sqlite3 throws on duplicate column,
-  // so we swallow that specific error and continue.
-  const addCol = (sql: string) => {
-    try {
-      conn.exec(sql);
-    } catch (e: any) {
-      if (!/duplicate column name/i.test(String(e?.message ?? e))) throw e;
-    }
-  };
-  addCol(
-    "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
-  );
-  addCol("ALTER TABLE users ADD COLUMN disabled_at INTEGER");
-  addCol("ALTER TABLE users ADD COLUMN password_changed_at INTEGER");
-  addCol(
-    "ALTER TABLE brief_shares ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'",
-  );
+export function db(): Database.Database {
+  return _db ?? initDb();
+}
 
-  conn.exec(`
-    CREATE TABLE IF NOT EXISTS login_attempts (
-      email           TEXT PRIMARY KEY COLLATE NOCASE,
-      failed_count    INTEGER NOT NULL DEFAULT 0,
-      last_failed_at  INTEGER,
-      locked_until    INTEGER
-    );
-  `);
+type Migration = { id: string; up: (c: Database.Database) => void };
+
+const MIGRATIONS: Migration[] = [
+  {
+    id: "001_users_must_change_password",
+    up: (c) =>
+      c.exec(
+        "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+      ),
+  },
+  {
+    id: "002_users_disabled_at",
+    up: (c) => c.exec("ALTER TABLE users ADD COLUMN disabled_at INTEGER"),
+  },
+  {
+    id: "003_users_password_changed_at",
+    up: (c) =>
+      c.exec("ALTER TABLE users ADD COLUMN password_changed_at INTEGER"),
+  },
+  {
+    id: "004_login_attempts_table",
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS login_attempts (
+          email           TEXT PRIMARY KEY COLLATE NOCASE,
+          failed_count    INTEGER NOT NULL DEFAULT 0,
+          last_failed_at  INTEGER,
+          locked_until    INTEGER
+        );
+      `),
+  },
+  {
+    id: "005_brief_shares_role",
+    up: (c) =>
+      c.exec(
+        "ALTER TABLE brief_shares ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'",
+      ),
+  },
+];
+
+function runMigrations(conn: Database.Database): {
+  applied: number;
+  skipped: number;
+} {
+  const seenStmt = conn.prepare(
+    "SELECT 1 FROM schema_migrations WHERE id = ?",
+  );
+  const recordStmt = conn.prepare(
+    "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+  );
+  let applied = 0;
+  let skipped = 0;
+  for (const m of MIGRATIONS) {
+    if (seenStmt.get(m.id)) {
+      skipped++;
+      continue;
+    }
+    try {
+      const tx = conn.transaction(() => {
+        m.up(conn);
+        recordStmt.run(m.id, Date.now());
+      });
+      tx();
+      applied++;
+      // eslint-disable-next-line no-console
+      console.log(`[db] migration applied id=${m.id}`);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      // Backfill case: schema was migrated out-of-band on prod DBs that
+      // pre-date the ledger. Record the id so subsequent boots are clean.
+      if (
+        /duplicate column name/i.test(msg) ||
+        /table .* already exists/i.test(msg)
+      ) {
+        recordStmt.run(m.id, Date.now());
+        skipped++;
+        // eslint-disable-next-line no-console
+        console.log(
+          `[db] migration backfilled id=${m.id} (already applied out-of-band)`,
+        );
+        continue;
+      }
+      throw e;
+    }
+  }
+  return { applied, skipped };
 }
 
 function bootstrapAdmin(conn: Database.Database) {
