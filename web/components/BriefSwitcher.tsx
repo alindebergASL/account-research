@@ -13,7 +13,7 @@ type BriefSummary = {
   generated_at: string;
   created_at: number;
   shared_by_email?: string | null;
-  role?: "viewer" | "editor" | null;
+  role?: "reader" | "editor" | null;
 };
 
 export default function BriefSwitcher({

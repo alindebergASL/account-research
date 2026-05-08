@@ -1,11 +1,12 @@
 "use client";
 
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Clock, Loader2, Search, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { motion } from "framer-motion";
+import { ArrowRight, Loader2, Plus, Trash2 } from "lucide-react";
 
-type RecentBrief = {
+type OwnedBrief = {
   id: string;
   account_name: string;
   segment: string | null;
@@ -14,25 +15,31 @@ type RecentBrief = {
   created_at: number;
 };
 
-type SharedBrief = RecentBrief & { shared_by_email: string };
+type SharedBrief = OwnedBrief & {
+  shared_by_email: string;
+  role: "reader" | "editor";
+};
 
-const SECTORS = [
-  "Public sector / government",
-  "Healthcare",
-  "Higher education",
-  "K-12 education",
-  "Financial services",
-  "Manufacturing",
-  "Retail",
-  "Technology",
-  "Telecommunications",
-  "Energy / utilities",
-  "Transportation",
-  "Nonprofit",
-  "Commercial enterprise",
-  "Mid-market",
-  "SMB",
-];
+type CardItem =
+  | (OwnedBrief & { kind: "mine" })
+  | (SharedBrief & { kind: "shared" });
+
+type Filter = "all" | "mine" | "shared";
+
+type Me = {
+  id: string;
+  email: string;
+  role: "admin" | "member" | "viewer";
+} | null;
+
+const LEGACY_FORM_PARAMS = [
+  "account",
+  "segment",
+  "region",
+  "goal",
+  "mode",
+  "audience",
+] as const;
 
 export default function Page() {
   return (
@@ -45,488 +52,289 @@ export default function Page() {
 function Home() {
   const router = useRouter();
   const search = useSearchParams();
-  const [account, setAccount] = useState(search.get("account") ?? "");
-  const [segment, setSegment] = useState(search.get("segment") ?? "");
-  const [region, setRegion] = useState(search.get("region") ?? "");
-  const [goal, setGoal] = useState(search.get("goal") ?? "");
-  const [notes, setNotes] = useState("");
-  const [audience, setAudience] = useState<"internal" | "shareable">(
-    search.get("audience") === "shareable" ? "shareable" : "internal",
-  );
-  const [mode, setMode] = useState<"quick" | "standard" | "deep">(() => {
-    const m = search.get("mode");
-    return m === "quick" || m === "deep" ? m : "standard";
-  });
-  const [advanced, setAdvanced] = useState(
-    !!(search.get("segment") || search.get("region") || search.get("goal")),
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [recents, setRecents] = useState<RecentBrief[] | null>(null);
+  const [me, setMe] = useState<Me>(null);
+  const [owned, setOwned] = useState<OwnedBrief[] | null>(null);
   const [shared, setShared] = useState<SharedBrief[] | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [denied, setDenied] = useState(search.get("denied") === "viewer");
 
-  async function loadRecents() {
-    try {
-      const r = await fetch("/api/briefs", { cache: "no-store" });
-      if (r.ok) {
-        const data = await r.json();
-        setRecents(data.owned ?? data.briefs ?? []);
-        setShared(data.shared ?? []);
-      } else {
-        setRecents([]);
-        setShared([]);
-      }
-    } catch {
-      setRecents([]);
-      setShared([]);
+  // Bookmark redirect: if any legacy form query params are present,
+  // forward to /new preserving them. Old URLs of the form
+  //   /?account=Acme&mode=deep
+  // continue to land on the form.
+  useEffect(() => {
+    const legacy = LEGACY_FORM_PARAMS.find((k) => search.get(k));
+    if (legacy) {
+      router.replace(`/new?${search.toString()}`);
     }
-  }
+  }, [router, search]);
 
   useEffect(() => {
-    loadRecents();
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((d) => setMe(d.user))
+      .catch(() => setMe(null));
   }, []);
 
-  async function deleteRecent(id: string) {
+  useEffect(() => {
+    fetch("/api/briefs", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { owned: [], shared: [] }))
+      .then((d) => {
+        setOwned(d.owned ?? []);
+        setShared(d.shared ?? []);
+      })
+      .catch(() => {
+        setOwned([]);
+        setShared([]);
+      });
+  }, []);
+
+  async function deleteBrief(id: string) {
     if (deleting) return;
     if (!confirm("Delete this brief?")) return;
     setDeleting(id);
     try {
       const r = await fetch(`/api/briefs/${id}`, { method: "DELETE" });
       if (r.ok) {
-        setRecents((prev) => (prev ? prev.filter((b) => b.id !== id) : prev));
+        setOwned((prev) => (prev ? prev.filter((b) => b.id !== id) : prev));
       }
     } finally {
       setDeleting(null);
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!account.trim() || loading) return;
-    setError(null);
-    setLoading(true);
-    setProgress(0);
+  const items = useMemo<CardItem[]>(() => {
+    const mine: CardItem[] = (owned ?? []).map((b) => ({ ...b, kind: "mine" }));
+    const shared_: CardItem[] = (shared ?? []).map((b) => ({
+      ...b,
+      kind: "shared",
+    }));
+    const merged = [...mine, ...shared_].sort(
+      (a, b) => b.created_at - a.created_at,
+    );
+    if (filter === "mine") return merged.filter((i) => i.kind === "mine");
+    if (filter === "shared") return merged.filter((i) => i.kind === "shared");
+    return merged;
+  }, [owned, shared, filter]);
 
-    const tick = setInterval(() => {
-      setProgress((p) => Math.min(p + 1.5, 92));
-    }, 800);
-
-    try {
-      const res = await fetch("/api/research", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          account: account.trim(),
-          segment: segment || undefined,
-          region: region || undefined,
-          goal: goal || undefined,
-          notes: notes || undefined,
-          audience,
-          mode,
-        }),
-      });
-      const data = await res.json();
-      clearInterval(tick);
-      if (!res.ok) {
-        setError(data.error || "Research failed");
-        setLoading(false);
-        return;
-      }
-      setProgress(100);
-
-      // Persist for the user, then navigate to the canonical id-based URL.
-      const saveRes = await fetch("/api/briefs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ brief: data.brief }),
-      });
-      if (!saveRes.ok) {
-        const saveData = await saveRes.json().catch(() => ({}));
-        setError(saveData.error || "Could not save brief");
-        setLoading(false);
-        return;
-      }
-      const { id } = await saveRes.json();
-      router.push(`/brief/${id}`);
-    } catch (err: any) {
-      clearInterval(tick);
-      setError(err?.message ?? "Network error");
-      setLoading(false);
-    }
-  }
+  const isLoading = owned === null || shared === null;
+  const isViewer = me?.role === "viewer";
+  const totalCount = (owned?.length ?? 0) + (shared?.length ?? 0);
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6 py-16">
-      <div className="w-full max-w-2xl">
+    <main className="min-h-screen px-6 py-10 md:py-14">
+      <div className="max-w-5xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="mb-10"
+          transition={{ duration: 0.3 }}
+          className="flex items-end justify-between gap-4 mb-8"
         >
-          <div className="inline-flex items-center gap-2 mb-4 text-xs uppercase tracking-widest text-muted">
-            <span className="size-1.5 rounded-full bg-accent" /> Live research
+          <div>
+            <h1 className="font-display text-3xl md:text-4xl tracking-tight">
+              Briefs
+            </h1>
+            <p className="text-sm text-muted mt-1">
+              {isViewer
+                ? "Briefs that have been shared with you."
+                : "Your account research, in one place."}
+            </p>
           </div>
-          <h1 className="font-display text-5xl md:text-6xl tracking-tight leading-[1.05]">
-            Research an account.
-            <br />
-            <span className="italic text-muted">Get a brief in minutes.</span>
-          </h1>
-          <p className="mt-4 text-muted max-w-lg">
-            Enter an organization. We&rsquo;ll gather public signals, map personas,
-            assess AI/tech maturity, and surface the conversation angle for your
-            next meeting.
-          </p>
+          {!isViewer && (
+            <Link
+              href="/new"
+              className="inline-flex items-center gap-2 bg-ink text-white rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-accent transition-colors"
+            >
+              <Plus className="size-4" /> Start research
+            </Link>
+          )}
         </motion.div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="card p-2 flex items-center gap-2 hover:!translate-y-0 hover:cursor-text">
-            <Search className="size-5 ml-3 text-muted shrink-0" />
-            <input
-              autoFocus
-              required
-              placeholder="Acme Corp, Mayo Clinic, City of Austin…"
-              className="flex-1 bg-transparent outline-none px-2 py-3 text-lg placeholder:text-muted/70"
-              value={account}
-              onChange={(e) => setAccount(e.target.value)}
-              disabled={loading}
-            />
-            <button
-              type="submit"
-              disabled={!account.trim() || loading}
-              className="m-1 inline-flex items-center gap-2 bg-ink text-white rounded-xl px-5 py-3 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent transition-colors"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Researching
-                </>
-              ) : (
-                <>
-                  Research
-                  <ArrowRight className="size-4" />
-                </>
-              )}
-            </button>
-          </div>
-
-          <ModeSelector mode={mode} setMode={setMode} disabled={loading} />
-
-          <div className="flex items-center justify-between text-sm text-muted">
+        {denied && (
+          <div
+            className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 flex items-center justify-between"
+            role="status"
+          >
+            <span>
+              Read-only access — starting new research isn&rsquo;t available
+              for your account.
+            </span>
             <button
               type="button"
-              onClick={() => setAdvanced((v) => !v)}
-              className="hover:text-ink transition-colors"
+              onClick={() => setDenied(false)}
+              className="text-xs text-amber-900/80 hover:text-amber-900"
             >
-              {advanced ? "Hide" : "Add"} context · industry, region, goal, notes
+              Dismiss
             </button>
-            <span>
-              <span className="kbd">Enter</span> to research
-            </span>
           </div>
-
-          <AnimatePresence>
-            {advanced && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <div className="card p-5 space-y-4 hover:!translate-y-0 hover:!cursor-default hover:!shadow-none">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Field label="Industry / segment">
-                      <select
-                        className="field"
-                        value={segment}
-                        onChange={(e) => setSegment(e.target.value)}
-                      >
-                        <option value="">Auto-detect</option>
-                        {SECTORS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Region">
-                      <input
-                        className="field"
-                        placeholder="Midwest US, EMEA, APAC…"
-                        value={region}
-                        onChange={(e) => setRegion(e.target.value)}
-                      />
-                    </Field>
-                  </div>
-                  <Field label="Goal for the brief">
-                    <input
-                      className="field"
-                      placeholder="Pre-meeting brief for next Tuesday's CIO call"
-                      value={goal}
-                      onChange={(e) => setGoal(e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Internal notes (optional)">
-                    <textarea
-                      className="field min-h-[80px]"
-                      placeholder="CRM notes, prior-call summary, internal context…"
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Audience">
-                    <div className="flex gap-2">
-                      {(["internal", "shareable"] as const).map((a) => (
-                        <button
-                          key={a}
-                          type="button"
-                          onClick={() => setAudience(a)}
-                          className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-                            audience === a
-                              ? "bg-ink text-white border-ink"
-                              : "bg-white border-[var(--line)] hover:border-ink"
-                          }`}
-                        >
-                          {a === "internal" ? "Internal only" : "Customer-shareable"}
-                        </button>
-                      ))}
-                    </div>
-                  </Field>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-              {error}
-            </div>
-          )}
-
-          {loading && (
-            <div className="space-y-2">
-              <div className="h-1.5 bg-[var(--line)] rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-accent"
-                  animate={{ width: `${progress}%` }}
-                  transition={{ duration: 0.6 }}
-                />
-              </div>
-              <div className="text-xs text-muted">
-                Searching public sources, mapping signals, ranking personas… (this can take 1–2 minutes)
-              </div>
-            </div>
-          )}
-        </form>
-
-        {!loading && recents && recents.length > 0 && (
-          <motion.section
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.1 }}
-            className="mt-12"
-          >
-            <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-widest text-muted">
-              <Clock className="size-3.5" />
-              <span>My briefs</span>
-              <span className="ml-auto text-muted/70">{recents.length}</span>
-            </div>
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {recents.slice(0, 8).map((b) => (
-                <li
-                  key={b.id}
-                  className="card p-3 group !cursor-pointer"
-                  onClick={() => router.push(`/brief/${b.id}`)}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">
-                        {b.account_name}
-                      </div>
-                      <div className="text-xs text-muted truncate">
-                        {b.segment || "—"}
-                      </div>
-                      <div className="text-[11px] text-muted mt-0.5">
-                        {formatRelative(b.created_at)}
-                      </div>
-                    </div>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteRecent(b.id);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          deleteRecent(b.id);
-                        }
-                      }}
-                      className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted hover:text-red-600 p-1.5 rounded cursor-pointer"
-                      aria-label={`Delete ${b.account_name}`}
-                    >
-                      {deleting === b.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-3.5" />
-                      )}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </motion.section>
         )}
 
-        {!loading &&
-          recents !== null &&
-          shared !== null &&
-          recents.length === 0 &&
-          shared.length === 0 && (
-            <motion.section
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.1 }}
-              className="mt-12 text-center text-sm text-muted"
-            >
-              No briefs yet. Run your first research above.
-            </motion.section>
-          )}
-
-        {!loading && shared && shared.length > 0 && (
-          <motion.section
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.15 }}
-            className="mt-10"
-          >
-            <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-widest text-muted">
-              <Clock className="size-3.5" />
-              <span>Shared with me</span>
-              <span className="ml-auto text-muted/70">{shared.length}</span>
-            </div>
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {shared.slice(0, 8).map((b) => (
-                <li
-                  key={b.id}
-                  className="card p-3 group !cursor-pointer"
-                  onClick={() => router.push(`/brief/${b.id}`)}
+        {!isLoading && totalCount > 0 && (
+          <div className="flex items-center gap-2 mb-4 text-xs">
+            {(["all", "mine", "shared"] as const).map((f) => {
+              const active = filter === f;
+              const count =
+                f === "all"
+                  ? totalCount
+                  : f === "mine"
+                    ? owned?.length ?? 0
+                    : shared?.length ?? 0;
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  className={`px-3 py-1.5 rounded-full border transition-colors capitalize ${
+                    active
+                      ? "bg-ink text-white border-ink"
+                      : "bg-white border-[var(--line)] text-muted hover:border-ink hover:text-ink"
+                  }`}
                 >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">
-                        {b.account_name}
-                      </div>
-                      <div className="text-xs text-muted truncate">
-                        {b.segment || "—"}
-                      </div>
-                      <div className="text-[11px] text-muted mt-0.5">
-                        Shared by {b.shared_by_email} · {formatRelative(b.created_at)}
-                      </div>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </motion.section>
+                  {f} <span className="opacity-70">· {count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="text-sm text-muted flex items-center gap-2 py-12 justify-center">
+            <Loader2 className="size-4 animate-spin" /> Loading…
+          </div>
+        )}
+
+        {!isLoading && items.length === 0 && (
+          <EmptyState isViewer={isViewer} totalCount={totalCount} />
+        )}
+
+        {!isLoading && items.length > 0 && (
+          <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {items.map((b) => (
+              <BriefCard
+                key={b.id}
+                item={b}
+                deleting={deleting === b.id}
+                onOpen={() => router.push(`/brief/${b.id}`)}
+                onDelete={
+                  b.kind === "mine" ? () => deleteBrief(b.id) : undefined
+                }
+              />
+            ))}
+          </ul>
         )}
       </div>
-
-      <style jsx global>{`
-        .field {
-          width: 100%;
-          background: white;
-          border: 1px solid var(--line);
-          border-radius: 10px;
-          padding: 10px 12px;
-          font-size: 14px;
-          outline: none;
-          transition: border-color 0.15s ease;
-        }
-        .field:focus {
-          border-color: var(--accent);
-        }
-      `}</style>
     </main>
   );
 }
 
-const MODE_OPTIONS: Array<{
-  id: "quick" | "standard" | "deep";
-  label: string;
-  caption: string;
-}> = [
-  { id: "quick", label: "Quick", caption: "~30s · ~$0.10" },
-  { id: "standard", label: "Standard", caption: "~70s · ~$0.35" },
-  { id: "deep", label: "Deep", caption: "~2-3 min · ~$1+" },
-];
-
-const MODE_HINT: Record<"quick" | "standard" | "deep", string> = {
-  quick: "Fast snapshot — Sonnet, single pass, web search only. Good for low-stakes accounts.",
-  standard: "Balanced depth — Opus + Haiku scout, web search + fetch. Default.",
-  deep: "Exhaustive — Opus at maximum effort, full source list. Use for high-stakes meetings.",
-};
-
-function ModeSelector({
-  mode,
-  setMode,
-  disabled,
+function EmptyState({
+  isViewer,
+  totalCount,
 }: {
-  mode: "quick" | "standard" | "deep";
-  setMode: (m: "quick" | "standard" | "deep") => void;
-  disabled: boolean;
+  isViewer: boolean;
+  totalCount: number;
 }) {
+  // totalCount is 0 in this branch; if filter hides items but data exists,
+  // we render nothing (no false empty-state). Caller already guards.
+  void totalCount;
   return (
-    <div className="space-y-1.5">
-      <div
-        role="radiogroup"
-        aria-label="Research depth"
-        className="inline-flex p-1 gap-1 bg-white border border-[var(--line)] rounded-xl"
-      >
-        {MODE_OPTIONS.map((opt) => {
-          const active = mode === opt.id;
-          return (
-            <button
-              key={opt.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => setMode(opt.id)}
-              disabled={disabled}
-              className={`relative flex flex-col items-start gap-0.5 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                active
-                  ? "bg-ink text-white"
-                  : "bg-transparent text-ink hover:bg-[var(--bg)]"
-              }`}
-            >
-              <span className="font-medium">{opt.label}</span>
-              <span
-                className={`text-[11px] ${active ? "text-white/70" : "text-muted"}`}
-              >
-                {opt.caption}
-              </span>
-            </button>
-          );
-        })}
+    <div className="border border-dashed border-[var(--line)] rounded-2xl px-8 py-12 text-center bg-white/40">
+      <div className="text-sm text-muted mb-4">
+        {isViewer
+          ? "No briefs have been shared with you yet."
+          : "No briefs yet. Run your first account research."}
       </div>
-      <p className="text-xs text-muted">{MODE_HINT[mode]}</p>
+      {!isViewer && (
+        <Link
+          href="/new"
+          className="inline-flex items-center gap-2 bg-ink text-white rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-accent transition-colors"
+        >
+          Start research <ArrowRight className="size-4" />
+        </Link>
+      )}
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function BriefCard({
+  item,
+  deleting,
+  onOpen,
+  onDelete,
+}: {
+  item: CardItem;
+  deleting: boolean;
+  onOpen: () => void;
+  onDelete?: () => void;
+}) {
   return (
-    <label className="block">
-      <span className="block text-xs font-medium text-muted uppercase tracking-wider mb-1.5">
-        {label}
+    <li
+      className="card p-3 sm:p-3.5 group !cursor-pointer flex flex-col gap-2"
+      onClick={onOpen}
+    >
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-sm truncate">{item.account_name}</div>
+          {item.segment && (
+            <div className="text-xs text-muted truncate">{item.segment}</div>
+          )}
+        </div>
+        {onDelete && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete();
+              }
+            }}
+            className="text-muted/50 hover:text-red-600 focus:text-red-600 transition-colors p-1 rounded cursor-pointer"
+            aria-label={`Delete ${item.account_name}`}
+          >
+            {deleting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="size-3.5" />
+            )}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2 text-[11px] text-muted">
+        <OriginChip item={item} />
+        <span>·</span>
+        <span>{formatRelative(item.created_at)}</span>
+      </div>
+    </li>
+  );
+}
+
+function OriginChip({ item }: { item: CardItem }) {
+  if (item.kind === "mine") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--bg)] text-muted border border-[var(--line)]">
+        Mine
       </span>
-      {children}
-    </label>
+    );
+  }
+  const editor = item.role === "editor";
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded border ${
+        editor
+          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+          : "bg-amber-50 text-amber-800 border-amber-200"
+      }`}
+      title={`Shared by ${item.shared_by_email}`}
+    >
+      Shared · {editor ? "editor" : "reader"}
+    </span>
   );
 }
 
@@ -535,7 +343,10 @@ function formatRelative(ts: number): string {
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   if (sameDay) {
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return d.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
   }
   const diffDays = Math.floor((now.getTime() - ts) / 86400000);
   if (diffDays < 7) return `${diffDays}d ago`;

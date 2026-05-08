@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, Share2, X } from "lucide-react";
 
-type Role = "viewer" | "editor";
+type Role = "reader" | "editor";
 
 type ShareRow = {
   user_id: string;
@@ -24,7 +24,7 @@ export default function ShareDialog({
 }) {
   const [shares, setShares] = useState<ShareRow[] | null>(null);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("viewer");
+  const [role, setRole] = useState<Role>("reader");
   const [submitting, setSubmitting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [updatingRole, setUpdatingRole] = useState<string | null>(null);
@@ -138,7 +138,7 @@ export default function ShareDialog({
           <div className="flex-1 min-w-0">
             <div className="font-medium">Share brief</div>
             <div className="text-xs text-muted truncate">
-              {briefName} · viewers can read & ask, editors can also edit
+              {briefName} · readers can read & ask, editors can also edit
             </div>
           </div>
           <button
@@ -172,7 +172,7 @@ export default function ShareDialog({
                 disabled={submitting}
                 aria-label="Role"
               >
-                <option value="viewer">Viewer</option>
+                <option value="reader">Reader</option>
                 <option value="editor">Editor</option>
               </select>
               <button
@@ -222,7 +222,7 @@ export default function ShareDialog({
                 className="text-xs border border-[var(--line)] rounded-lg px-2 py-1 bg-white disabled:opacity-50"
                 aria-label={`Role for ${s.email}`}
               >
-                <option value="viewer">Viewer</option>
+                <option value="reader">Reader</option>
                 <option value="editor">Editor</option>
               </select>
               <button

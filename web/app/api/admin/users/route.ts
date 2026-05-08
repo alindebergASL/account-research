@@ -19,7 +19,7 @@ function authError(e: unknown) {
 type AdminUserRow = {
   id: string;
   email: string;
-  role: "admin" | "member";
+  role: "admin" | "member" | "viewer";
   display_name: string | null;
   created_at: number;
   disabled_at: number | null;
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   let body: {
     email?: string;
     display_name?: string;
-    role?: "admin" | "member";
+    role?: "admin" | "member" | "viewer";
   };
   try {
     body = await req.json();
@@ -84,7 +84,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const role: "admin" | "member" = body.role === "admin" ? "admin" : "member";
+  const role: "admin" | "member" | "viewer" =
+    body.role === "admin" ? "admin"
+    : body.role === "viewer" ? "viewer"
+    : "member";
   const display = (body.display_name ?? "").trim() || null;
   const tempPassword = randomTempPassword(12);
   const id = newId();

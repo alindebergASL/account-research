@@ -169,7 +169,7 @@ function authError(e: unknown) {
 }
 
 const READ_ONLY_VIEWER_ADDENDUM =
-  "\n\nNote: you are answering on behalf of a read-only viewer. Do NOT call update_brief or any tool. Do NOT propose edits. Only answer questions using the brief content above. Cite specific brief fields where helpful.";
+  "\n\nNote: you are answering on behalf of a read-only reader. Do NOT call update_brief or any tool. Do NOT propose edits. Only answer questions using the brief content above. Cite specific brief fields where helpful.";
 
 async function handleReadOnlyChat({
   briefId,

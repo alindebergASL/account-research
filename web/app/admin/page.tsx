@@ -10,7 +10,6 @@ import {
   KeyRound,
   Loader2,
   Plus,
-  ShieldCheck,
   Trash2,
   UserPlus,
 } from "lucide-react";
@@ -18,12 +17,18 @@ import {
 type AdminUser = {
   id: string;
   email: string;
-  role: "admin" | "member";
+  role: "admin" | "member" | "viewer";
   display_name: string | null;
   created_at: number;
   disabled_at: number | null;
   must_change_password: number;
   brief_count: number;
+};
+
+const ROLE_LABEL: Record<AdminUser["role"], string> = {
+  admin: "Admin",
+  member: "Member",
+  viewer: "Viewer",
 };
 
 type AdminBrief = {
@@ -114,16 +119,9 @@ export default function AdminPage() {
     }
   }
 
-  async function toggleRole(u: AdminUser) {
-    const next = u.role === "admin" ? "member" : "admin";
-    if (
-      !confirm(
-        next === "admin"
-          ? `Promote ${u.email} to admin?`
-          : `Demote ${u.email} to member?`,
-      )
-    )
-      return;
+  async function changeRole(u: AdminUser, next: AdminUser["role"]) {
+    if (next === u.role) return;
+    if (next === "admin" && !confirm(`Promote ${u.email} to admin?`)) return;
     setBusyUser(u.id);
     try {
       const r = await fetch(`/api/admin/users/${u.id}/role`, {
@@ -262,15 +260,31 @@ export default function AdminPage() {
                       </div>
                     </td>
                     <td className="px-4 py-2">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full border ${
-                          u.role === "admin"
-                            ? "bg-ink text-white border-ink"
-                            : "bg-white border-[var(--line)] text-muted"
-                        }`}
-                      >
-                        {u.role}
-                      </span>
+                      {isSelf ? (
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full border ${
+                            u.role === "admin"
+                              ? "bg-ink text-white border-ink"
+                              : "bg-white border-[var(--line)] text-muted"
+                          }`}
+                        >
+                          {ROLE_LABEL[u.role]}
+                        </span>
+                      ) : (
+                        <select
+                          value={u.role}
+                          onChange={(e) =>
+                            changeRole(u, e.target.value as AdminUser["role"])
+                          }
+                          disabled={busy}
+                          aria-label={`Role for ${u.email}`}
+                          className="text-xs border border-[var(--line)] rounded-lg px-2 py-1 bg-white disabled:opacity-50"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-muted">
                       {new Date(u.created_at).toLocaleDateString()}
@@ -291,18 +305,6 @@ export default function AdminPage() {
                         >
                           <KeyRound className="size-4" />
                         </button>
-                        {!isSelf && (
-                          <button
-                            type="button"
-                            onClick={() => toggleRole(u)}
-                            disabled={busy}
-                            className="text-muted hover:text-ink p-1.5 rounded disabled:opacity-40"
-                            aria-label={`Toggle role for ${u.email}`}
-                            title={u.role === "admin" ? "Demote to member" : "Promote to admin"}
-                          >
-                            <ShieldCheck className="size-4" />
-                          </button>
-                        )}
                         {!isSelf && (
                           <button
                             type="button"
@@ -434,7 +436,7 @@ function CreateUserDialog({
 }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState<"admin" | "member">("member");
+  const [role, setRole] = useState<"admin" | "member" | "viewer">("member");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -511,14 +513,14 @@ function CreateUserDialog({
             <span className="block text-xs font-medium text-muted uppercase tracking-wider mb-1.5">
               Role
             </span>
-            <div className="flex gap-2">
-              {(["member", "admin"] as const).map((r) => (
+            <div className="flex gap-2 flex-wrap">
+              {(["member", "viewer", "admin"] as const).map((r) => (
                 <button
                   key={r}
                   type="button"
                   onClick={() => setRole(r)}
                   disabled={submitting}
-                  className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                  className={`px-3 py-1.5 rounded-lg text-sm border transition-colors capitalize ${
                     role === r
                       ? "bg-ink text-white border-ink"
                       : "bg-white border-[var(--line)] hover:border-ink"
@@ -528,6 +530,13 @@ function CreateUserDialog({
                 </button>
               ))}
             </div>
+            <span className="block text-xs text-muted mt-2">
+              {role === "viewer"
+                ? "Read-only: can open briefs shared with them but cannot start new research."
+                : role === "admin"
+                  ? "Full access: user management + every brief."
+                  : "Standard: can start research and own briefs."}
+            </span>
           </label>
           {error && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">

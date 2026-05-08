@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, BriefSummary } from "@/lib/db";
-import { HttpError, requireUser } from "@/lib/auth";
+import { HttpError, canStartResearch, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
 import { Brief } from "@/lib/schema";
 
@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 type SharedRow = BriefSummary & {
   user_id: string;
   shared_by_email: string;
-  role: "viewer" | "editor";
+  role: "reader" | "editor";
 };
 
 // GET /api/briefs — list current user's owned + shared briefs.
@@ -64,6 +64,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(e.body, { status: e.status });
     }
     throw e;
+  }
+  if (!canStartResearch(user)) {
+    return NextResponse.json(
+      { error: "Read-only users cannot create briefs" },
+      { status: 403 },
+    );
   }
 
   let body: any;

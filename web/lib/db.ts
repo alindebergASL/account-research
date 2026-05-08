@@ -128,10 +128,19 @@ const MIGRATIONS: Migration[] = [
   },
   {
     id: "005_brief_shares_role",
+    // Legacy: this added the column with DEFAULT 'viewer'. Migration 006
+    // renames live values to 'reader'; the column DEFAULT is left as
+    // 'viewer' (changing it requires a SQLite table rebuild and app
+    // code passes role explicitly on every insert).
     up: (c) =>
       c.exec(
         "ALTER TABLE brief_shares ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'",
       ),
+  },
+  {
+    id: "006_brief_shares_role_rename_viewer_to_reader",
+    up: (c) =>
+      c.exec("UPDATE brief_shares SET role = 'reader' WHERE role = 'viewer'"),
   },
 ];
 
@@ -252,7 +261,7 @@ export type UserRow = {
   id: string;
   email: string;
   password_hash: string;
-  role: "admin" | "member";
+  role: "admin" | "member" | "viewer";
   display_name: string | null;
   created_at: number;
   created_by: string | null;

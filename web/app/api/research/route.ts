@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { Brief } from "@/lib/schema";
 import { SOURCE_DISCOVERY_PROMPT, SYSTEM_PROMPT } from "@/lib/prompt";
-import { HttpError, requireUser } from "@/lib/auth";
+import { HttpError, canStartResearch, requireUser } from "@/lib/auth";
 
 type DiscoveredSource = { url: string; title?: string; type?: string; why?: string };
 
@@ -311,13 +311,20 @@ async function repairJson(
 }
 
 export async function POST(req: NextRequest) {
+  let user;
   try {
-    requireUser(req);
+    user = requireUser(req);
   } catch (e) {
     if (e instanceof HttpError) {
       return NextResponse.json(e.body, { status: e.status });
     }
     throw e;
+  }
+  if (!canStartResearch(user)) {
+    return NextResponse.json(
+      { error: "Read-only users cannot start research" },
+      { status: 403 },
+    );
   }
 
   let body: Intake;

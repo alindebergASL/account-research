@@ -10,10 +10,16 @@ const SESSION_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // refresh when <7d l
 export type PublicUser = {
   id: string;
   email: string;
-  role: "admin" | "member";
+  role: "admin" | "member" | "viewer";
   display_name: string | null;
   must_change_password: boolean;
 };
+
+// User-level gate. Returns false for the read-only 'viewer' role.
+// This is a separate axis from per-brief share roles ('reader' / 'editor').
+export function canStartResearch(user: PublicUser): boolean {
+  return user.role !== "viewer";
+}
 
 export type SessionInfo = {
   user: PublicUser;
@@ -176,7 +182,7 @@ export function isSharedWith(briefId: string, userId: string): boolean {
   return !!row;
 }
 
-export type ShareRole = "viewer" | "editor";
+export type ShareRole = "reader" | "editor";
 
 export function getShareRole(
   briefId: string,
@@ -188,7 +194,9 @@ export function getShareRole(
     )
     .get(briefId, userId) as { role: string } | undefined;
   if (!row) return null;
-  return row.role === "editor" ? "editor" : "viewer";
+  // Defensive: any non-'editor' value (including legacy 'viewer' rows
+  // that somehow survived migration 006) collapses to 'reader'.
+  return row.role === "editor" ? "editor" : "reader";
 }
 
 export function canReadBrief(user: PublicUser, briefId: string): boolean {

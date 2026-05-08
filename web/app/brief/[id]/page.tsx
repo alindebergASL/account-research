@@ -9,7 +9,7 @@ import BriefCanvas from "@/components/BriefCanvas";
 type Access = {
   is_owner: boolean;
   can_write: boolean;
-  role: "owner" | "viewer" | "editor" | null;
+  role: "owner" | "reader" | "editor" | null;
   shared_by_email: string | null;
 };
 
@@ -93,7 +93,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
             </div>
           ) : (
             <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-              Shared with you by {access.shared_by_email} · read-only
+              Shared with you by {access.shared_by_email} · reader
             </div>
           )}
         </div>

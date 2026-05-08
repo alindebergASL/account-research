@@ -53,7 +53,7 @@ export async function GET(
 
   const isOwner = row.user_id === user.id;
   const canWrite = canWriteBrief(user, params.id);
-  const role: "owner" | "viewer" | "editor" | null = isOwner
+  const role: "owner" | "reader" | "editor" | null = isOwner
     ? "owner"
     : (getShareRole(params.id, user.id) ?? null);
 

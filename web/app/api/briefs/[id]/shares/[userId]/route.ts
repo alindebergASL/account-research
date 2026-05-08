@@ -51,9 +51,14 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  if (body.role !== "viewer" && body.role !== "editor") {
+  // Accept legacy 'viewer' from clients defensively (translate to 'reader').
+  const role =
+    body.role === "editor" ? "editor"
+    : body.role === "reader" || body.role === "viewer" ? "reader"
+    : null;
+  if (!role) {
     return NextResponse.json(
-      { error: "role must be 'viewer' or 'editor'" },
+      { error: "role must be 'reader' or 'editor'" },
       { status: 400 },
     );
   }
@@ -61,9 +66,9 @@ export async function PATCH(
     .prepare(
       `UPDATE brief_shares SET role = ? WHERE brief_id = ? AND user_id = ?`,
     )
-    .run(body.role, params.id, params.userId);
+    .run(role, params.id, params.userId);
   if (result.changes === 0) {
     return NextResponse.json({ error: "Share not found" }, { status: 404 });
   }
-  return NextResponse.json({ ok: true, role: body.role });
+  return NextResponse.json({ ok: true, role });
 }

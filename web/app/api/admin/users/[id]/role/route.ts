@@ -24,10 +24,14 @@ export async function POST(
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const role = body.role === "admin" ? "admin" : body.role === "member" ? "member" : null;
+  const role =
+    body.role === "admin" ? "admin"
+    : body.role === "member" ? "member"
+    : body.role === "viewer" ? "viewer"
+    : null;
   if (!role) {
     return NextResponse.json(
-      { error: "role must be 'admin' or 'member'" },
+      { error: "role must be 'admin', 'member', or 'viewer'" },
       { status: 400 },
     );
   }

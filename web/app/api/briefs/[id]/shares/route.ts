@@ -21,11 +21,12 @@ type ShareListRow = {
   email: string;
   granted_by_email: string;
   created_at: number;
-  role: "viewer" | "editor";
+  role: "reader" | "editor";
 };
 
-function normalizeRole(input: unknown): "viewer" | "editor" {
-  return input === "editor" ? "editor" : "viewer";
+function normalizeRole(input: unknown): "reader" | "editor" {
+  // Accept legacy 'viewer' from clients defensively (translate to 'reader').
+  return input === "editor" ? "editor" : "reader";
 }
 
 export async function GET(
@@ -109,7 +110,7 @@ export async function POST(
 
   // Insert the share if absent; if it already exists, update the role so the
   // caller's request reflects on the existing row (matches the dialog's
-  // "share at editor" expectation when the user is already a viewer).
+  // "share at editor" expectation when the user is already a reader).
   db()
     .prepare(
       `INSERT INTO brief_shares (brief_id, user_id, granted_by, created_at, role)
