@@ -75,6 +75,69 @@ export async function GET(
   });
 }
 
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    const r = authError(e);
+    if (r) return r;
+    throw e;
+  }
+  if (!canManageBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
+
+  let body: { audience?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const audience =
+    body.audience === "shareable" || body.audience === "internal"
+      ? body.audience
+      : null;
+  if (!audience) {
+    return NextResponse.json(
+      { error: "audience must be 'shareable' or 'internal'" },
+      { status: 400 },
+    );
+  }
+
+  const row = db()
+    .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
+    .get(params.id) as { brief_json: string } | undefined;
+  if (!row) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Keep the column and the JSON blob in sync — the canvas reads
+  // `brief.audience` from the parsed JSON, while listings read the
+  // column.
+  let parsedJson: any;
+  try {
+    parsedJson = JSON.parse(row.brief_json);
+  } catch {
+    return NextResponse.json(
+      { error: "Stored brief JSON is corrupt" },
+      { status: 500 },
+    );
+  }
+  parsedJson.audience = audience;
+
+  db()
+    .prepare(
+      `UPDATE briefs SET audience = ?, brief_json = ? WHERE id = ?`,
+    )
+    .run(audience, JSON.stringify(parsedJson), params.id);
+
+  return NextResponse.json({ ok: true, audience });
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } },

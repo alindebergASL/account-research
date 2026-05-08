@@ -70,29 +70,40 @@ export default function BriefCanvas({
   onBriefUpdate,
   canWrite = true,
   isOwner = true,
+  mode = "private",
+  publicToken,
 }: {
   brief: Brief;
   currentBriefId?: string;
   onBriefUpdate?: (next: Brief) => void;
   canWrite?: boolean;
   isOwner?: boolean;
+  // 'public' renders the brief for an unauthenticated outsider via a
+  // share token: no header chrome, no chat, no share/edit affordances,
+  // and the strategy tile (next_action) is hidden.
+  mode?: "private" | "public";
+  publicToken?: string;
 }) {
   const [drill, setDrill] = useState<DrillKind>(null);
   const [showShare, setShowShare] = useState(false);
+  const isPublic = mode === "public";
 
   const completeness = briefCompleteness(brief);
 
   return (
     <div className="max-w-7xl mx-auto px-6 pb-24">
-      <Header
-        brief={brief}
-        currentBriefId={currentBriefId}
-        canWrite={canWrite}
-        isOwner={isOwner}
-        onShareClick={() => setShowShare(true)}
-      />
+      {!isPublic && (
+        <Header
+          brief={brief}
+          currentBriefId={currentBriefId}
+          canWrite={canWrite}
+          isOwner={isOwner}
+          onShareClick={() => setShowShare(true)}
+        />
+      )}
+      {isPublic && <PublicBriefHeader brief={brief} />}
 
-      {currentBriefId && onBriefUpdate && (
+      {!isPublic && currentBriefId && onBriefUpdate && (
         <BriefChat
           briefId={currentBriefId}
           brief={brief}
@@ -101,10 +112,11 @@ export default function BriefCanvas({
         />
       )}
 
-      {showShare && currentBriefId && (
+      {!isPublic && showShare && currentBriefId && (
         <ShareDialog
           briefId={currentBriefId}
           briefName={brief.account_name}
+          briefAudience={brief.audience}
           onClose={() => setShowShare(false)}
         />
       )}
@@ -294,23 +306,26 @@ export default function BriefCanvas({
           </Tile>
         )}
 
-        {/* Row 7: Next action callout */}
-        <Tile
-          className="col-span-12 !bg-ink !text-white !border-ink"
-          onClick={() => setDrill({ kind: "next" })}
-        >
-          <div className="flex items-start gap-4">
-            <div className="size-10 rounded-xl bg-white/10 grid place-items-center shrink-0">
-              <Target className="size-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs uppercase tracking-widest text-white/60 mb-1">
-                Recommended next action
+        {/* Row 7: Next action callout — hidden on public share links;
+            this tile reads as internal sales strategy. */}
+        {!isPublic && (
+          <Tile
+            className="col-span-12 !bg-ink !text-white !border-ink"
+            onClick={() => setDrill({ kind: "next" })}
+          >
+            <div className="flex items-start gap-4">
+              <div className="size-10 rounded-xl bg-white/10 grid place-items-center shrink-0">
+                <Target className="size-5" />
               </div>
-              <p className="text-lg leading-snug">{brief.next_action}</p>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs uppercase tracking-widest text-white/60 mb-1">
+                  Recommended next action
+                </div>
+                <p className="text-lg leading-snug">{brief.next_action}</p>
+              </div>
             </div>
-          </div>
-        </Tile>
+          </Tile>
+        )}
 
         {/* Sources */}
         <Tile
@@ -339,7 +354,7 @@ export default function BriefCanvas({
         </Tile>
       </div>
 
-      <DownloadBar brief={brief} />
+      <DownloadBar brief={brief} publicToken={publicToken} />
 
       {/* Drill modals */}
       <DrillModal
@@ -546,6 +561,32 @@ export default function BriefCanvas({
         </ul>
       </DrillModal>
     </div>
+  );
+}
+
+function PublicBriefHeader({ brief }: { brief: Brief }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="pt-10 pb-8"
+    >
+      <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted mb-2">
+        <span className="size-1.5 rounded-full bg-accent" /> Account brief ·
+        shared with you
+      </div>
+      <h1 className="font-display text-5xl tracking-tight leading-[1.05]">
+        {brief.account_name}
+      </h1>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted">
+        <span className="px-2 py-0.5 rounded-full bg-white border border-[var(--line)]">
+          {brief.segment}
+        </span>
+        <span>·</span>
+        <span>Generated {brief.generated_at}</span>
+      </div>
+    </motion.div>
   );
 }
 
@@ -1101,7 +1142,13 @@ function isMissing(s: string) {
 
 /* ---------- Download bar ---------- */
 
-function DownloadBar({ brief }: { brief: Brief }) {
+function DownloadBar({
+  brief,
+  publicToken,
+}: {
+  brief: Brief;
+  publicToken?: string;
+}) {
   const [busy, setBusy] = useState<"pdf" | "docx" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1110,11 +1157,15 @@ function DownloadBar({ brief }: { brief: Brief }) {
     setBusy(format);
     setError(null);
     try {
-      const res = await fetch("/api/export", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ brief, format }),
-      });
+      const res = publicToken
+        ? await fetch(
+            `/api/share/${encodeURIComponent(publicToken)}/export?format=${format}`,
+          )
+        : await fetch("/api/export", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ brief, format }),
+          });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(

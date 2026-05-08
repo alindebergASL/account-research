@@ -21,7 +21,13 @@ export default function Header() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const hidden =
+    pathname === "/login" ||
+    pathname === "/change-password" ||
+    pathname?.startsWith("/s/");
+
   useEffect(() => {
+    if (hidden) return;
     fetch("/api/auth/me", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { user: null }))
       .then((d) => {
@@ -37,7 +43,7 @@ export default function Header() {
         }
       })
       .catch(() => setMe(null));
-  }, [pathname, router]);
+  }, [pathname, router, hidden]);
 
   useEffect(() => {
     if (!open) return;
@@ -55,7 +61,7 @@ export default function Header() {
     };
   }, [open]);
 
-  if (pathname === "/login" || pathname === "/change-password") return null;
+  if (hidden) return null;
 
   async function logout() {
     if (loading) return;

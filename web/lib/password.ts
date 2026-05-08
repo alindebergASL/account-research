@@ -42,6 +42,12 @@ export function randomSessionId(): string {
   return randomBytes(32).toString("hex");
 }
 
+// Long random URL-safe token for public share links.
+// 32 bytes -> 43-character base64url, brute-force-infeasible.
+export function randomShareToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
 export function newId(): string {
   return randomUUID();
 }

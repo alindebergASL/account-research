@@ -142,6 +142,27 @@ const MIGRATIONS: Migration[] = [
     up: (c) =>
       c.exec("UPDATE brief_shares SET role = 'reader' WHERE role = 'viewer'"),
   },
+  {
+    id: "007_brief_share_links",
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS brief_share_links (
+          id                TEXT PRIMARY KEY,
+          brief_id          TEXT NOT NULL,
+          token             TEXT NOT NULL UNIQUE,
+          created_by        TEXT NOT NULL,
+          created_at        INTEGER NOT NULL,
+          expires_at        INTEGER,
+          revoked_at        INTEGER,
+          last_accessed_at  INTEGER,
+          access_count      INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_share_links_brief
+          ON brief_share_links(brief_id);
+      `),
+  },
 ];
 
 function runMigrations(conn: Database.Database): {
@@ -282,4 +303,16 @@ export type SessionRow = {
   user_id: string;
   created_at: number;
   expires_at: number;
+};
+
+export type ShareLinkRow = {
+  id: string;
+  brief_id: string;
+  token: string;
+  created_by: string;
+  created_at: number;
+  expires_at: number | null;
+  revoked_at: number | null;
+  last_accessed_at: number | null;
+  access_count: number;
 };
