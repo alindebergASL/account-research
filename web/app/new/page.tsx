@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ArrowRight, Loader2, Search } from "lucide-react";
+import { ArrowLeft, ArrowRight, Search } from "lucide-react";
 
 const SECTORS = [
   "Public sector / government",
@@ -50,9 +50,8 @@ function NewResearch() {
   const [advanced, setAdvanced] = useState(
     !!(search.get("segment") || search.get("region") || search.get("goal")),
   );
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
 
   // Read-only viewers can't reach the form. Redirect to / if they land here.
   useEffect(() => {
@@ -68,14 +67,9 @@ function NewResearch() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!account.trim() || loading) return;
+    if (!account.trim() || submitting) return;
     setError(null);
-    setLoading(true);
-    setProgress(0);
-
-    const tick = setInterval(() => {
-      setProgress((p) => Math.min(p + 1.5, 92));
-    }, 800);
+    setSubmitting(true);
 
     try {
       const res = await fetch("/api/research", {
@@ -91,32 +85,19 @@ function NewResearch() {
           mode,
         }),
       });
-      const data = await res.json();
-      clearInterval(tick);
+      // 202 enqueue — backend responds immediately. The actual research
+      // happens in the worker process; the user gets notified via the
+      // tray + toast + (if configured) email when it finishes.
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Research failed");
-        setLoading(false);
+        setError(data.error || "Could not queue research");
+        setSubmitting(false);
         return;
       }
-      setProgress(100);
-
-      const saveRes = await fetch("/api/briefs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ brief: data.brief }),
-      });
-      if (!saveRes.ok) {
-        const saveData = await saveRes.json().catch(() => ({}));
-        setError(saveData.error || "Could not save brief");
-        setLoading(false);
-        return;
-      }
-      const { id } = await saveRes.json();
-      router.push(`/brief/${id}`);
+      router.push(`/?queued=${encodeURIComponent(data.jobId)}`);
     } catch (err: any) {
-      clearInterval(tick);
       setError(err?.message ?? "Network error");
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
@@ -142,7 +123,9 @@ function NewResearch() {
           <h1 className="font-display text-4xl md:text-5xl tracking-tight leading-[1.05]">
             Research an account.
             <br />
-            <span className="italic text-muted">Get a brief in minutes.</span>
+            <span className="italic text-muted">
+              We&rsquo;ll deliver a thorough brief and notify you when it&rsquo;s ready.
+            </span>
           </h1>
         </motion.div>
 
@@ -156,28 +139,25 @@ function NewResearch() {
               className="flex-1 bg-transparent outline-none px-2 py-3 text-lg placeholder:text-muted/70"
               value={account}
               onChange={(e) => setAccount(e.target.value)}
-              disabled={loading}
+              disabled={submitting}
             />
             <button
               type="submit"
-              disabled={!account.trim() || loading}
+              disabled={!account.trim() || submitting}
               className="m-1 inline-flex items-center gap-2 bg-ink text-white rounded-xl px-5 py-3 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent transition-colors"
             >
-              {loading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Researching
-                </>
+              {submitting ? (
+                <>Queueing…</>
               ) : (
                 <>
-                  Research
+                  Queue research
                   <ArrowRight className="size-4" />
                 </>
               )}
             </button>
           </div>
 
-          <ModeSelector mode={mode} setMode={setMode} disabled={loading} />
+          <ModeSelector mode={mode} setMode={setMode} disabled={submitting} />
 
           <div className="flex items-center justify-between text-sm text-muted">
             <button
@@ -270,21 +250,6 @@ function NewResearch() {
               {error}
             </div>
           )}
-
-          {loading && (
-            <div className="space-y-2">
-              <div className="h-1.5 bg-[var(--line)] rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-accent"
-                  animate={{ width: `${progress}%` }}
-                  transition={{ duration: 0.6 }}
-                />
-              </div>
-              <div className="text-xs text-muted">
-                Searching public sources, mapping signals, ranking personas… (this can take 1–2 minutes)
-              </div>
-            </div>
-          )}
         </form>
       </div>
 
@@ -312,9 +277,9 @@ const MODE_OPTIONS: Array<{
   label: string;
   caption: string;
 }> = [
-  { id: "quick", label: "Quick", caption: "~30s · ~$0.10" },
-  { id: "standard", label: "Standard", caption: "~70s · ~$0.35" },
-  { id: "deep", label: "Deep", caption: "~2-3 min · ~$1+" },
+  { id: "quick", label: "Quick", caption: "narrow scope" },
+  { id: "standard", label: "Standard", caption: "balanced (default)" },
+  { id: "deep", label: "Deep", caption: "exhaustive, high-stakes meetings" },
 ];
 
 const MODE_HINT: Record<"quick" | "standard" | "deep", string> = {

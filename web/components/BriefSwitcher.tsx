@@ -145,7 +145,7 @@ export default function BriefSwitcher({
               )}
               {!loading && others.length === 0 && (
                 <div className="px-4 py-6 text-sm text-muted text-center">
-                  No other briefs yet. Run a new research from the home page.
+                  No other briefs yet. Queue a new research from the home page.
                 </div>
               )}
               {!loading &&

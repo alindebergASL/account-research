@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Ban,
+  Bell,
+  BellOff,
   CheckCircle2,
   Copy,
   KeyRound,
@@ -22,6 +24,7 @@ type AdminUser = {
   created_at: number;
   disabled_at: number | null;
   must_change_password: number;
+  email_notifications_enabled: 0 | 1;
   brief_count: number;
 };
 
@@ -54,6 +57,7 @@ export default function AdminPage() {
     password: string;
   } | null>(null);
   const [busyUser, setBusyUser] = useState<string | null>(null);
+  const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -72,12 +76,35 @@ export default function AdminPage() {
   }, []);
 
   async function loadAll() {
-    const [u, b] = await Promise.all([
+    const [u, b, e] = await Promise.all([
       fetch("/api/admin/users", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/admin/briefs", { cache: "no-store" }).then((r) => r.json()),
+      fetch("/api/admin/email-status", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : { configured: false }))
+        .catch(() => ({ configured: false })),
     ]);
     setUsers(u.users || []);
     setBriefs(b.briefs || []);
+    setEmailConfigured(!!e.configured);
+  }
+
+  async function toggleNotifications(u: AdminUser) {
+    const next = !u.email_notifications_enabled;
+    setBusyUser(u.id);
+    try {
+      const r = await fetch(`/api/admin/users/${u.id}/notifications`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email_notifications_enabled: next }),
+      });
+      if (r.ok) loadAll();
+      else {
+        const d = await r.json().catch(() => ({}));
+        alert(d?.error || "Failed");
+      }
+    } finally {
+      setBusyUser(null);
+    }
   }
 
   async function deleteUser(id: string, email: string) {
@@ -178,6 +205,27 @@ export default function AdminPage() {
       <h1 className="font-display text-4xl mb-8 tracking-tight">Admin</h1>
 
       <section className="mb-12">
+        {emailConfigured !== null && (
+          <div
+            className={`mb-4 rounded-xl border px-4 py-2.5 text-sm flex items-center justify-between ${
+              emailConfigured
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-amber-300 bg-amber-50 text-amber-900"
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              {emailConfigured ? (
+                <Bell className="size-4" />
+              ) : (
+                <BellOff className="size-4" />
+              )}
+              Email notifications:{" "}
+              {emailConfigured
+                ? "configured"
+                : "not configured (set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / MAIL_FROM)"}
+            </span>
+          </div>
+        )}
         <div className="flex items-center mb-4">
           <h2 className="font-display text-xl">Users</h2>
           <span className="ml-3 text-xs text-muted">
@@ -295,6 +343,28 @@ export default function AdminPage() {
                         {busy && (
                           <Loader2 className="size-4 animate-spin text-muted" />
                         )}
+                        <button
+                          type="button"
+                          onClick={() => toggleNotifications(u)}
+                          disabled={busy}
+                          className="text-muted hover:text-ink p-1.5 rounded disabled:opacity-40"
+                          aria-label={
+                            u.email_notifications_enabled
+                              ? `Disable email notifications for ${u.email}`
+                              : `Enable email notifications for ${u.email}`
+                          }
+                          title={
+                            u.email_notifications_enabled
+                              ? "Email notifications: on"
+                              : "Email notifications: off"
+                          }
+                        >
+                          {u.email_notifications_enabled ? (
+                            <Bell className="size-4" />
+                          ) : (
+                            <BellOff className="size-4 text-muted/60" />
+                          )}
+                        </button>
                         <button
                           type="button"
                           onClick={() => resetPassword(u)}

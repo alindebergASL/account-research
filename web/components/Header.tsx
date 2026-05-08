@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldCheck } from "lucide-react";
+import ResearchTray from "./ResearchTray";
 
 type Me = {
   id: string;
@@ -86,6 +87,7 @@ export default function Header() {
           AccountBriefBuilder
         </Link>
         <div className="ml-auto flex items-center gap-3 text-sm" ref={menuRef}>
+          {me && me.role !== "viewer" && <ResearchTray />}
           {me && (
             <div className="relative">
               <button

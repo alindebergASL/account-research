@@ -6,22 +6,27 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "worker": "tsx scripts/research-worker.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
+    "@next/env": "14.2.35",
     "better-sqlite3": "^12.9.0",
     "framer-motion": "^11.11.0",
     "lucide-react": "^0.460.0",
     "next": "14.2.35",
+    "nodemailer": "^6.9.16",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.9.0",
+    "@types/nodemailer": "^6.4.16",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",
