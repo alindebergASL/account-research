@@ -58,6 +58,12 @@ function Home() {
   const [filter, setFilter] = useState<Filter>("all");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [denied, setDenied] = useState(search.get("denied") === "viewer");
+  const [queuedJob, setQueuedJob] = useState<string | null>(
+    search.get("queued"),
+  );
+  const [failedJob, setFailedJob] = useState<string | null>(
+    search.get("failed"),
+  );
 
   // Bookmark redirect: if any legacy form query params are present,
   // forward to /new preserving them. Old URLs of the form
@@ -151,6 +157,43 @@ function Home() {
           )}
         </motion.div>
 
+        {queuedJob && (
+          <div
+            className="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900 flex items-center justify-between"
+            role="status"
+          >
+            <span>
+              Queued — we&rsquo;ll notify you in the tray when the brief is ready.
+            </span>
+            <button
+              type="button"
+              onClick={() => setQueuedJob(null)}
+              className="text-xs text-emerald-900/80 hover:text-emerald-900"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {failedJob && (
+          <div
+            className="mb-4 rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-900 flex items-center justify-between"
+            role="status"
+          >
+            <span>
+              A research job failed. Open the Research tray (top-right) to see
+              details or retry.
+            </span>
+            <button
+              type="button"
+              onClick={() => setFailedJob(null)}
+              className="text-xs text-red-900/80 hover:text-red-900"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {denied && (
           <div
             className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 flex items-center justify-between"
@@ -243,7 +286,7 @@ function EmptyState({
       <div className="text-sm text-muted mb-4">
         {isViewer
           ? "No briefs have been shared with you yet."
-          : "No briefs yet. Run your first account research."}
+          : "No briefs yet. Queue your first account research."}
       </div>
       {!isViewer && (
         <Link

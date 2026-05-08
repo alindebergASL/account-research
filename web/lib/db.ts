@@ -2,6 +2,9 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { hashPassword, newId } from "./password";
+import { assertNoFakeProviderInProd } from "./envGuard";
+
+assertNoFakeProviderInProd();
 
 const DB_PATH =
   process.env.BRIEF_DB_PATH ||
@@ -163,6 +166,50 @@ const MIGRATIONS: Migration[] = [
           ON brief_share_links(brief_id);
       `),
   },
+  {
+    id: "008_research_jobs_and_email_prefs",
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS research_jobs (
+          id               TEXT PRIMARY KEY,
+          user_id          TEXT NOT NULL,
+          account_name     TEXT NOT NULL,
+          account_segment  TEXT,
+          region           TEXT,
+          goal             TEXT,
+          intake_json      TEXT NOT NULL,
+          mode             TEXT NOT NULL,
+          status           TEXT NOT NULL,
+          created_at       INTEGER NOT NULL,
+          started_at       INTEGER,
+          finished_at      INTEGER,
+          brief_id         TEXT,
+          error            TEXT,
+          usage_json       TEXT,
+          cost_usd_cents   INTEGER,
+          retry_of_job_id  TEXT,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE SET NULL,
+          FOREIGN KEY (retry_of_job_id) REFERENCES research_jobs(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_jobs_user_created
+          ON research_jobs(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_jobs_status_created
+          ON research_jobs(status, created_at);
+      `);
+      // Defensive column-exists guard: SQLite's ALTER TABLE cannot be
+      // rolled back cleanly, so make this re-runnable if a previous
+      // attempt failed mid-flight.
+      const cols = c
+        .prepare("PRAGMA table_info(users)")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "email_notifications_enabled")) {
+        c.exec(
+          "ALTER TABLE users ADD COLUMN email_notifications_enabled INTEGER NOT NULL DEFAULT 1",
+        );
+      }
+    },
+  },
 ];
 
 function runMigrations(conn: Database.Database): {
@@ -289,6 +336,34 @@ export type UserRow = {
   must_change_password: number;
   disabled_at: number | null;
   password_changed_at: number | null;
+  email_notifications_enabled: 0 | 1;
+};
+
+export type ResearchJobStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export type ResearchJobRow = {
+  id: string;
+  user_id: string;
+  account_name: string;
+  account_segment: string | null;
+  region: string | null;
+  goal: string | null;
+  intake_json: string;
+  mode: "quick" | "standard" | "deep";
+  status: ResearchJobStatus;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  brief_id: string | null;
+  error: string | null;
+  usage_json: string | null;
+  cost_usd_cents: number | null;
+  retry_of_job_id: string | null;
 };
 
 export type LoginAttemptRow = {

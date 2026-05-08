@@ -24,6 +24,7 @@ type AdminUserRow = {
   created_at: number;
   disabled_at: number | null;
   must_change_password: number;
+  email_notifications_enabled: 0 | 1;
   brief_count: number;
 };
 
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
     .prepare(
       `SELECT u.id, u.email, u.role, u.display_name, u.created_at,
               u.disabled_at, u.must_change_password,
+              u.email_notifications_enabled,
               COUNT(b.id) AS brief_count
        FROM users u
        LEFT JOIN briefs b ON b.user_id = u.id
