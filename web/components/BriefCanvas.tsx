@@ -27,8 +27,10 @@ import {
   BarChart2,
   Download,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import type {
+  AIUseCase,
   Brief,
   Initiative,
   Persona,
@@ -56,6 +58,7 @@ type DrillKind =
   | { kind: "programs" }
   | { kind: "confidence" }
   | { kind: "personas"; index?: number }
+  | { kind: "ai_use_cases"; index?: number }
   | { kind: "buying" }
   | { kind: "angle" }
   | { kind: "risks" }
@@ -237,6 +240,22 @@ export default function BriefCanvas({
             ))}
           </div>
         </div>
+
+        {/* Row 4.5: AI use cases */}
+        {brief.ai_use_cases.length > 0 && (
+          <div className="col-span-12">
+            <SectionLabel>AI use cases</SectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {brief.ai_use_cases.map((useCase, i) => (
+                <AIUseCaseCard
+                  key={i}
+                  useCase={useCase}
+                  onClick={() => setDrill({ kind: "ai_use_cases", index: i })}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Row 5: Buying path + first angle */}
         <Tile
@@ -482,6 +501,19 @@ export default function BriefCanvas({
                 <SourceLink source={p.source} />
               </div>
             </li>
+          ))}
+        </ul>
+      </DrillModal>
+
+      <DrillModal
+        open={drill?.kind === "ai_use_cases"}
+        onClose={() => setDrill(null)}
+        title="AI use cases"
+        subtitle={`${brief.ai_use_cases.length} grounded opportunities`}
+      >
+        <ul className="space-y-5">
+          {brief.ai_use_cases.map((useCase, i) => (
+            <AIUseCaseDetail key={i} useCase={useCase} />
           ))}
         </ul>
       </DrillModal>
@@ -872,6 +904,102 @@ function PersonaCard({
   );
 }
 
+function AIUseCaseCard({
+  useCase,
+  onClick,
+}: {
+  useCase: AIUseCase;
+  onClick: () => void;
+}) {
+  return (
+    <div className="card p-4" onClick={onClick}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <Sparkles className="size-4 text-accent shrink-0 mt-0.5" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-wider text-muted px-2 py-0.5 rounded-full bg-[var(--bg)] border border-[var(--line)]">
+            {useCase.complexity}
+          </span>
+          <ConfidenceChip value={useCase.confidence} />
+        </div>
+      </div>
+      <h3 className="font-medium leading-snug mb-1.5">{useCase.title}</h3>
+      <p className="text-xs uppercase tracking-wider text-muted mb-2">
+        {useCase.category} · {useCase.time_to_value}
+      </p>
+      <p className="text-sm text-muted line-clamp-3">{useCase.business_value}</p>
+    </div>
+  );
+}
+
+function AIUseCaseDetail({ useCase }: { useCase: AIUseCase }) {
+  return (
+    <li className="card !cursor-default !hover:translate-y-0 p-4">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <h3 className="font-medium text-lg leading-snug">{useCase.title}</h3>
+          <p className="text-sm text-muted">{useCase.category}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[10px] uppercase tracking-wider text-muted px-2 py-0.5 rounded-full bg-[var(--bg)] border border-[var(--line)]">
+            {useCase.complexity}
+          </span>
+          <ConfidenceChip value={useCase.confidence} />
+        </div>
+      </div>
+      <p className="text-sm leading-relaxed mb-4">{useCase.description}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div>
+          <Label>Business value</Label>
+          <p>{useCase.business_value}</p>
+        </div>
+        <div>
+          <Label>Time to value</Label>
+          <p>{useCase.time_to_value}</p>
+        </div>
+        <div>
+          <Label>Why this account</Label>
+          <p>{useCase.why_this_account}</p>
+        </div>
+        <div>
+          <Label>Suggested personas</Label>
+          <p>{useCase.suggested_personas.join(", ") || "Not specified"}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div>
+          <Label>Prerequisites</Label>
+          <ul className="space-y-1">
+            {useCase.prerequisites.length > 0 ? (
+              useCase.prerequisites.map((item, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="text-muted shrink-0">›</span>
+                  <span>{item}</span>
+                </li>
+              ))
+            ) : (
+              <li className="text-muted">Not found in public sources.</li>
+            )}
+          </ul>
+        </div>
+        <div>
+          <Label>Sources</Label>
+          <ul className="space-y-1">
+            {useCase.sources.length > 0 ? (
+              useCase.sources.map((source, i) => (
+                <li key={i} className="text-xs">
+                  <SourceLink source={source} />
+                </li>
+              ))
+            ) : (
+              <li className="text-muted">Not found in public sources.</li>
+            )}
+          </ul>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 /* ---------- Technical footprint ---------- */
 
 function TechFootprintPreview({ tf }: { tf: TechnicalFootprint }) {
@@ -1258,6 +1386,7 @@ function aggregateConfidence(brief: Brief): Record<ConfLabel, number> {
   brief.recent_signals.forEach((s) => bump(s.confidence));
   brief.top_initiatives.forEach((i) => bump(i.confidence));
   brief.personas.forEach((p) => bump(p.confidence));
+  brief.ai_use_cases.forEach((u) => bump(u.confidence));
   return counts;
 }
 
@@ -1386,6 +1515,9 @@ function ConfidenceDetail({ brief }: { brief: Brief }) {
   );
   brief.personas.forEach((p) =>
     place(p.confidence, "Persona", `${p.name || "Role-based"} — ${p.title}`, p.source),
+  );
+  brief.ai_use_cases.forEach((u) =>
+    place(u.confidence, "AI use case", u.title, u.sources[0]),
   );
 
   return (

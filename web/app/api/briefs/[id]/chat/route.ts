@@ -29,6 +29,7 @@ const ALLOWED_FIELDS = new Set([
   "technical_footprint",
   "programs_procurement",
   "personas",
+  "ai_use_cases",
   "buying_path",
   "first_angle",
   "risks",
@@ -40,7 +41,7 @@ const ALLOWED_FIELDS = new Set([
 const updateBriefTool = {
   name: "update_brief",
   description:
-    "Update the account brief in place. Use 'append' to add an item to an array field (e.g. personas, recent_signals, sources). Use 'set' to replace a string or object field. Multiple patches per call are allowed. Always also append a citation source when you add new factual content.",
+    "Update the account brief in place. Use 'append' to add an item to an array field (e.g. ai_use_cases, personas, recent_signals, sources). Use 'set' to replace a string or object field. Multiple patches per call are allowed. Always also append a citation source when you add new factual content.",
   input_schema: {
     type: "object",
     additionalProperties: false,
