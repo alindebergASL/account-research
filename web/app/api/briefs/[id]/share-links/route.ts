@@ -7,6 +7,7 @@ import {
   ttlToExpiresAt,
   type ShareLinkTtl,
 } from "@/lib/publicBrief";
+import { recentSuccessfulShareEmails } from "@/lib/shareEmails";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,7 @@ type LinkSummary = {
   expires_at: number | null;
   last_accessed_at: number | null;
   access_count: number;
+  recent_emails: Array<{ recipient: string; created_at: number }>;
 };
 
 export async function GET(
@@ -52,9 +54,14 @@ export async function GET(
     .all(params.id) as LinkSummary[];
 
   const now = Date.now();
-  const links = rows.filter(
+  const liveRows = rows.filter(
     (r) => r.expires_at === null || r.expires_at > now,
   );
+  const recentByLink = recentSuccessfulShareEmails(liveRows.map((r) => r.id));
+  const links = liveRows.map((r) => ({
+    ...r,
+    recent_emails: recentByLink.get(r.id) ?? [],
+  }));
   return NextResponse.json({ links });
 }
 
@@ -128,6 +135,7 @@ export async function POST(
       expires_at: expiresAt,
       last_accessed_at: null,
       access_count: 0,
+      recent_emails: [],
     } satisfies LinkSummary,
   });
 }
