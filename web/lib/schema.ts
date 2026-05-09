@@ -24,6 +24,20 @@ export const Persona = z.object({
   source: z.string(),
 });
 
+export const AIUseCase = z.object({
+  title: z.string(),
+  category: z.string(),
+  description: z.string(),
+  business_value: z.string(),
+  complexity: z.enum(["Low", "Medium", "High"]),
+  time_to_value: z.string(),
+  prerequisites: z.array(z.string()),
+  why_this_account: z.string(),
+  suggested_personas: z.array(z.string()),
+  confidence: Confidence,
+  sources: z.array(z.string()),
+});
+
 export const Source = z.object({
   title: z.string(),
   url: z.string(),
@@ -65,6 +79,7 @@ export const Brief = z.object({
   technical_footprint: TechnicalFootprint,
   programs_procurement: ProgramsProcurement,
   personas: z.array(Persona),
+  ai_use_cases: z.union([z.array(AIUseCase).min(1), z.array(AIUseCase).length(0)]).default([]),
   buying_path: z.string(),
   first_angle: z.string(),
   risks: z.array(z.string()),
@@ -88,6 +103,7 @@ export function briefCompleteness(b: z.infer<typeof Brief>) {
     b.recent_signals.length > 0,
     b.top_initiatives.length > 0,
     b.personas.length > 0,
+    b.ai_use_cases.length > 0,
   ];
   const filled = checks.filter(Boolean).length;
   return { filled, total: checks.length, isLow: filled < 4 };
@@ -97,6 +113,7 @@ export type Brief = z.infer<typeof Brief>;
 export type Signal = z.infer<typeof Signal>;
 export type Initiative = z.infer<typeof Initiative>;
 export type Persona = z.infer<typeof Persona>;
+export type AIUseCase = z.infer<typeof AIUseCase>;
 export type Source = z.infer<typeof Source>;
 export type TechnicalFootprint = z.infer<typeof TechnicalFootprint>;
 export type ProgramsProcurement = z.infer<typeof ProgramsProcurement>;
@@ -206,6 +223,40 @@ export const briefJsonSchema = {
         required: ["name", "title", "priority", "opener", "confidence", "source"],
       },
     },
+    ai_use_cases: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          category: { type: "string" },
+          description: { type: "string" },
+          business_value: { type: "string" },
+          complexity: { type: "string", enum: ["Low", "Medium", "High"] },
+          time_to_value: { type: "string" },
+          prerequisites: { type: "array", items: { type: "string" } },
+          why_this_account: { type: "string" },
+          suggested_personas: { type: "array", items: { type: "string" } },
+          confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
+          sources: { type: "array", items: { type: "string" } },
+        },
+        required: [
+          "title",
+          "category",
+          "description",
+          "business_value",
+          "complexity",
+          "time_to_value",
+          "prerequisites",
+          "why_this_account",
+          "suggested_personas",
+          "confidence",
+          "sources",
+        ],
+      },
+    },
     buying_path: { type: "string" },
     first_angle: { type: "string" },
     risks: { type: "array", items: { type: "string" } },
@@ -229,7 +280,7 @@ export const briefJsonSchema = {
     "account_name", "segment", "generated_at", "audience",
     "snapshot", "priority_summary", "recent_signals", "ai_tech_maturity",
     "top_initiatives", "technical_footprint", "programs_procurement",
-    "personas", "buying_path", "first_angle",
+    "personas", "ai_use_cases", "buying_path", "first_angle",
     "risks", "competitive_signals", "next_action", "sources",
   ],
 } as const;

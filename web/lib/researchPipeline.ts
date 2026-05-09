@@ -131,6 +131,7 @@ function completenessScore(b: Brief) {
     b.recent_signals.length > 0,
     b.top_initiatives.length > 0,
     b.personas.length > 0,
+    b.ai_use_cases.length > 0,
   ];
   const filled = checks.filter(Boolean).length;
   return { filled, total: checks.length, low: filled < 4 };
@@ -388,6 +389,21 @@ function fakeBrief(intake: Intake, mode: ResearchMode): Brief {
         opener: "Synthetic opener.",
         confidence: "Low",
         source: "https://example.com/fake",
+      },
+    ],
+    ai_use_cases: [
+      {
+        title: "Synthetic AI use case",
+        category: "Automation",
+        description: "Synthetic use case used only when RESEARCH_WORKER_FAKE_PROVIDER is set.",
+        business_value: "Demonstrates that AI use cases render in tests without incurring provider spend.",
+        complexity: "Low",
+        time_to_value: "1-2 weeks",
+        prerequisites: ["Synthetic signal"],
+        why_this_account: "Grounded in the synthetic test signal.",
+        suggested_personas: ["VP of Test"],
+        confidence: "Low",
+        sources: ["https://example.com/fake"],
       },
     ],
     buying_path: "Synthetic buying path.",

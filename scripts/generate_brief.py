@@ -39,6 +39,7 @@ SECTIONS = [
     ("Technical Footprint", "technical_footprint"),
     ("Programs & Procurement Signals", "programs_procurement"),
     ("Key Personas and Conversation Openers", "personas"),
+    ("AI Use Cases", "ai_use_cases"),
     ("Buying / Procurement / Decision Path", "buying_path"),
     ("Recommended First Conversation Angle", "first_angle"),
     ("Risks and Watch-Outs", "risks"),
@@ -199,6 +200,28 @@ def render_docx(brief: dict, path: Path) -> None:
                 row[4].text = clean(p.get("confidence"))
                 row[5].text = clean(p.get("source"))
 
+        elif key == "ai_use_cases" and isinstance(value, list):
+            tbl = doc.add_table(rows=1, cols=6)
+            tbl.style = "Light Grid Accent 1"
+            hdr = tbl.rows[0].cells
+            for i, h in enumerate(["Use case", "Value", "Complexity", "Time", "Personas", "Sources"]):
+                hdr[i].text = h
+            for item in value:
+                row = tbl.add_row().cells
+                row[0].text = f"{clean(item.get('title'))}\n{clean(item.get('category'))}\n{clean(item.get('description'))}"
+                row[1].text = f"{clean(item.get('business_value'))}\nWhy this account: {clean(item.get('why_this_account'))}"
+                row[2].text = clean(item.get("complexity"))
+                row[3].text = clean(item.get("time_to_value"))
+                row[4].text = _format_value(item.get("suggested_personas"), "list")
+                row[5].text = _format_value(item.get("sources"), "list")
+            for item in value:
+                prerequisites = item.get("prerequisites") or []
+                if prerequisites:
+                    doc.add_paragraph(
+                        f"Prerequisites for {clean(item.get('title'))}: {_format_value(prerequisites, 'list')}",
+                        style="List Bullet",
+                    )
+
         elif key == "sources" and isinstance(value, list):
             tbl = doc.add_table(rows=1, cols=3)
             tbl.style = "Light Grid Accent 1"
@@ -326,6 +349,30 @@ def render_pdf(brief: dict, path: Path) -> None:
                     cell(p.get("source")),
                 ])
             story.append(_table(data, [page_w * 0.14, page_w * 0.16, page_w * 0.14, page_w * 0.32, page_w * 0.10, page_w * 0.14]))
+
+        elif key == "ai_use_cases" and isinstance(value, list):
+            data = [["Use case", "Value / why", "Complexity", "Time", "Personas", "Sources"]]
+            for item in value:
+                use_case_text = "\n".join([
+                    clean(item.get("title")),
+                    clean(item.get("category")),
+                    clean(item.get("description")),
+                ])
+                value_text = "\n".join([
+                    clean(item.get("business_value")),
+                    f"Why: {clean(item.get('why_this_account'))}",
+                    f"Prereqs: {_format_value(item.get('prerequisites'), 'list')}",
+                    f"Confidence: {clean(item.get('confidence'))}",
+                ])
+                data.append([
+                    cell(use_case_text),
+                    cell(value_text),
+                    cell(item.get("complexity")),
+                    cell(item.get("time_to_value")),
+                    cell(_format_value(item.get("suggested_personas"), "list")),
+                    cell(_format_value(item.get("sources"), "list")),
+                ])
+            story.append(_table(data, [page_w * 0.20, page_w * 0.32, page_w * 0.10, page_w * 0.10, page_w * 0.13, page_w * 0.15]))
 
         elif key == "sources" and isinstance(value, list):
             data = [["Title", "URL", "Accessed"]]
