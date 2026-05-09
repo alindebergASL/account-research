@@ -210,6 +210,29 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: "009_brief_share_emails",
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS brief_share_emails (
+          id              TEXT PRIMARY KEY,
+          link_id         TEXT NOT NULL,
+          brief_id        TEXT NOT NULL,
+          sender_user_id  TEXT NOT NULL,
+          recipient       TEXT NOT NULL COLLATE NOCASE,
+          send_status     TEXT NOT NULL,
+          created_at      INTEGER NOT NULL,
+          error           TEXT,
+          FOREIGN KEY (link_id) REFERENCES brief_share_links(id) ON DELETE CASCADE,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (sender_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_share_emails_sender_created
+          ON brief_share_emails(sender_user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_share_emails_link_created
+          ON brief_share_emails(link_id, created_at DESC);
+      `),
+  },
 ];
 
 function runMigrations(conn: Database.Database): {

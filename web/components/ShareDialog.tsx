@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, Globe2, Loader2, Lock, Share2, X } from "lucide-react";
+import { Check, Copy, Globe2, Loader2, Lock, Mail, Share2, X } from "lucide-react";
 import {
   SHARE_LINK_TTL_OPTIONS,
   type ShareLinkTtl,
@@ -24,6 +24,7 @@ type ShareLink = {
   expires_at: number | null;
   last_accessed_at: number | null;
   access_count: number;
+  recent_emails?: Array<{ recipient: string; created_at: number }>;
 };
 
 type Audience = "internal" | "shareable";
@@ -56,6 +57,10 @@ export default function ShareDialog({
   const [revokingLink, setRevokingLink] = useState<string | null>(null);
   const [justCreatedToken, setJustCreatedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [linkEmailInputs, setLinkEmailInputs] = useState<Record<string, string>>({});
+  const [sendingLinkEmail, setSendingLinkEmail] = useState<string | null>(null);
+  const [linkEmailErrors, setLinkEmailErrors] = useState<Record<string, string>>({});
+  const [linkEmailSuccess, setLinkEmailSuccess] = useState<Record<string, string>>({});
 
   async function load() {
     try {
@@ -239,6 +244,58 @@ export default function ShareDialog({
     return `${window.location.origin}/s/${token}`;
   }
 
+  async function sendPublicLinkEmail(link: ShareLink) {
+    if (sendingLinkEmail) return;
+    const recipient = (linkEmailInputs[link.id] || "").trim();
+    if (!recipient) return;
+    setSendingLinkEmail(link.id);
+    setLinkEmailErrors((prev) => ({ ...prev, [link.id]: "" }));
+    setLinkEmailSuccess((prev) => ({ ...prev, [link.id]: "" }));
+    try {
+      const r = await fetch(
+        `/api/briefs/${briefId}/share-links/${link.id}/email`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ recipient }),
+        },
+      );
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setLinkEmailErrors((prev) => ({
+          ...prev,
+          [link.id]: emailErrorMessage(r.status, d?.code, d?.error),
+        }));
+        return;
+      }
+      const sent = d.email || { recipient, created_at: Date.now() };
+      setLinks((prev) =>
+        prev
+          ? prev.map((l) =>
+              l.id === link.id
+                ? {
+                    ...l,
+                    recent_emails: [
+                      sent,
+                      ...(l.recent_emails || []).filter(
+                        (e) => e.recipient !== sent.recipient,
+                      ),
+                    ].slice(0, 3),
+                  }
+                : l,
+            )
+          : prev,
+      );
+      setLinkEmailInputs((prev) => ({ ...prev, [link.id]: "" }));
+      setLinkEmailSuccess((prev) => ({
+        ...prev,
+        [link.id]: `Sent to ${sent.recipient} just now`,
+      }));
+    } finally {
+      setSendingLinkEmail(null);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
@@ -340,53 +397,115 @@ export default function ShareDialog({
                 {links?.map((l) => (
                   <div
                     key={l.id}
-                    className="border border-[var(--line)] rounded-lg px-3 py-2.5 text-sm flex items-center gap-2"
+                    className="border border-[var(--line)] rounded-lg px-3 py-2.5 text-sm space-y-2"
                   >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-mono truncate text-muted">
-                        {publicUrl(l.token)}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-mono truncate text-muted">
+                          {publicUrl(l.token)}
+                        </div>
+                        <div className="text-[11px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
+                          <span>{formatExpiry(l.expires_at)}</span>
+                          <span>·</span>
+                          <span>
+                            {l.access_count} view{l.access_count === 1 ? "" : "s"}
+                          </span>
+                          {l.last_accessed_at && (
+                            <>
+                              <span>·</span>
+                              <span>last {formatRelative(l.last_accessed_at)}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-[11px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
-                        <span>{formatExpiry(l.expires_at)}</span>
-                        <span>·</span>
-                        <span>
-                          {l.access_count} view{l.access_count === 1 ? "" : "s"}
-                        </span>
-                        {l.last_accessed_at && (
-                          <>
-                            <span>·</span>
-                            <span>last {formatRelative(l.last_accessed_at)}</span>
-                          </>
+                      <button
+                        type="button"
+                        onClick={() => copy(publicUrl(l.token), l.id)}
+                        className="text-muted hover:text-ink p-1.5 rounded"
+                        aria-label="Copy link"
+                        title="Copy link"
+                      >
+                        {copied === l.id ? (
+                          <Check className="size-3.5" />
+                        ) : (
+                          <Copy className="size-3.5" />
                         )}
-                      </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => revokeLink(l.id)}
+                        disabled={revokingLink === l.id}
+                        className="text-muted hover:text-red-600 p-1.5 rounded disabled:opacity-50"
+                        aria-label="Revoke link"
+                        title="Revoke"
+                      >
+                        {revokingLink === l.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <X className="size-3.5" />
+                        )}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => copy(publicUrl(l.token), l.id)}
-                      className="text-muted hover:text-ink p-1.5 rounded"
-                      aria-label="Copy link"
-                      title="Copy link"
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        sendPublicLinkEmail(l);
+                      }}
+                      className="pt-2 border-t border-[var(--line)] space-y-2"
                     >
-                      {copied === l.id ? (
-                        <Check className="size-3.5" />
-                      ) : (
-                        <Copy className="size-3.5" />
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="email"
+                          placeholder="customer@example.com"
+                          className="field flex-1 !py-2 text-xs"
+                          value={linkEmailInputs[l.id] || ""}
+                          onChange={(e) =>
+                            setLinkEmailInputs((prev) => ({
+                              ...prev,
+                              [l.id]: e.target.value,
+                            }))
+                          }
+                          disabled={sendingLinkEmail === l.id}
+                          aria-label="Recipient email for public link"
+                        />
+                        <button
+                          type="submit"
+                          disabled={
+                            sendingLinkEmail === l.id ||
+                            !(linkEmailInputs[l.id] || "").trim()
+                          }
+                          className="inline-flex items-center gap-1.5 bg-ink text-white rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40 hover:bg-accent transition-colors"
+                        >
+                          {sendingLinkEmail === l.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Mail className="size-3.5" />
+                          )}
+                          Email link
+                        </button>
+                      </div>
+                      {linkEmailErrors[l.id] && (
+                        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                          {linkEmailErrors[l.id]}
+                        </div>
                       )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => revokeLink(l.id)}
-                      disabled={revokingLink === l.id}
-                      className="text-muted hover:text-red-600 p-1.5 rounded disabled:opacity-50"
-                      aria-label="Revoke link"
-                      title="Revoke"
-                    >
-                      {revokingLink === l.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <X className="size-3.5" />
+                      {linkEmailSuccess[l.id] && (
+                        <div className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                          {linkEmailSuccess[l.id]}
+                        </div>
                       )}
-                    </button>
+                      {(l.recent_emails || []).length > 0 && (
+                        <div className="text-[11px] text-muted space-y-1">
+                          <div className="font-medium text-ink/70">Recent sends</div>
+                          {(l.recent_emails || []).slice(0, 3).map((e) => (
+                            <div key={`${e.recipient}-${e.created_at}`}>
+                              Sent to {e.recipient} {formatRelative(e.created_at)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </form>
                   </div>
                 ))}
 
@@ -541,6 +660,22 @@ export default function ShareDialog({
       `}</style>
     </div>
   );
+}
+
+function emailErrorMessage(status: number, code?: string, fallback?: string): string {
+  if (status === 429 || code === "rate_limited") {
+    return "You’ve reached the share-link email limit. Try again later.";
+  }
+  if (status === 503 || code === "email_not_configured") {
+    return "Email is not configured. Ask an admin to enable SMTP.";
+  }
+  if (status === 502 || code === "email_send_failed") {
+    return "SMTP send failed. Try again or ask an admin to check email settings.";
+  }
+  if (status === 400 || code === "bad_email") {
+    return "Enter a valid email address.";
+  }
+  return fallback || `Could not email link (${status})`;
 }
 
 function formatExpiry(ts: number | null): string {

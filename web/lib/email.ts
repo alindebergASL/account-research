@@ -45,33 +45,42 @@ function transport(): Transporter | null {
   return _transport;
 }
 
-function noteSkippedNotConfigured(jobId: string) {
+function noteSkippedNotConfigured(scope: string, id: string) {
   const now = Date.now();
   if (now - _lastNotConfiguredLog < NOT_CONFIGURED_LOG_INTERVAL_MS) return;
   _lastNotConfiguredLog = now;
   // eslint-disable-next-line no-console
   console.log(
-    `[email] skipped_not_configured jobId=${jobId} (debounced — set SMTP_HOST/PORT/USER/PASS/MAIL_FROM to enable)`,
+    `[email] skipped_not_configured scope=${scope} id=${id} (debounced — set SMTP_HOST/PORT/USER/PASS/MAIL_FROM to enable)`,
   );
 }
 
-function appBaseUrl(): string {
+export function appBaseUrl(): string {
   return (
     process.env.APP_BASE_URL?.replace(/\/+$/, "") || "http://127.0.0.1:3000"
   );
 }
+
+export type EmailSendResult =
+  | { ok: true }
+  | { ok: false; code: "not_configured" | "send_failed"; error: string };
 
 async function send(args: {
   to: string;
   subject: string;
   text: string;
   html: string;
-  jobId: string;
-}) {
+  scope: string;
+  id: string;
+}): Promise<EmailSendResult> {
   const t = transport();
   if (!t) {
-    noteSkippedNotConfigured(args.jobId);
-    return;
+    noteSkippedNotConfigured(args.scope, args.id);
+    return {
+      ok: false,
+      code: "not_configured",
+      error: "Email is not configured",
+    };
   }
   const { from } = readSmtpEnv();
   try {
@@ -82,11 +91,14 @@ async function send(args: {
       text: args.text,
       html: args.html,
     });
+    return { ok: true };
   } catch (err: any) {
+    const msg = String(err?.message ?? err).slice(0, 500);
     // eslint-disable-next-line no-console
     console.error(
-      `[email] send_failed jobId=${args.jobId} err=${String(err?.message ?? err).slice(0, 500)}`,
+      `[email] send_failed scope=${args.scope} id=${args.id} err=${msg}`,
     );
+    return { ok: false, code: "send_failed", error: msg };
   }
 }
 
@@ -101,7 +113,8 @@ export async function sendJobCompleteEmail(
   const name = user.display_name || user.email;
   await send({
     to: user.email,
-    jobId: job.id,
+    scope: "job",
+    id: job.id,
     subject: `Brief ready: ${job.account_name}`,
     text:
       `Hi ${name},\n\n` +
@@ -126,7 +139,8 @@ export async function sendJobFailedEmail(
   const reason = (job.error || "unknown error").slice(0, 500);
   await send({
     to: user.email,
-    jobId: job.id,
+    scope: "job",
+    id: job.id,
     subject: `Brief failed: ${job.account_name}`,
     text:
       `Hi ${name},\n\n` +
@@ -140,6 +154,39 @@ export async function sendJobFailedEmail(
 <p><a href="${link}">Retry from the tray</a></p>
 <p>— AccountBriefBuilder</p>`,
   });
+}
+
+export async function sendShareLinkEmail(args: {
+  recipient: string;
+  sharerName: string;
+  accountName: string;
+  linkUrl: string;
+  expiresAt: number | null;
+}): Promise<EmailSendResult> {
+  const expiry = args.expiresAt ? formatExpiry(args.expiresAt) : "This link does not expire.";
+  return send({
+    to: args.recipient,
+    scope: "share_link",
+    id: args.accountName,
+    subject: `${args.sharerName} shared an AccountBriefBuilder brief: ${args.accountName}`,
+    text:
+      `${args.sharerName} shared a public AccountBriefBuilder brief with you.\n\n` +
+      `Brief: ${args.accountName}\n` +
+      `${expiry}\n\n` +
+      `${args.linkUrl}\n\n` +
+      `— AccountBriefBuilder\n`,
+    html: `<p>${escapeHtml(args.sharerName)} shared a public AccountBriefBuilder brief with you.</p>
+<p><strong>${escapeHtml(args.accountName)}</strong></p>
+<p>${escapeHtml(expiry)}</p>
+<p><a href="${args.linkUrl}">Open public brief</a></p>
+<p>— AccountBriefBuilder</p>`,
+  });
+}
+
+function formatExpiry(ts: number): string {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "This link has an expiry.";
+  return `This link expires ${date.toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" })}.`;
 }
 
 function escapeHtml(s: string): string {
