@@ -297,14 +297,16 @@ export async function POST(
   const appliedPatches: Patch[] = [];
   const patchErrors: string[] = [];
   let finalText = "";
+  let containerId: string | null = null;
 
   try {
     for (let i = 0; i < 6; i++) {
-      const response = await client.messages.create({
+      const response: Anthropic.Messages.Message = await client.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 8000,
         thinking: { type: "adaptive" },
         cache_control: { type: "ephemeral" } as any,
+        ...(containerId ? { container: containerId } : {}),
         system,
         tools: [
           { type: "web_search_20260209" as const, name: "web_search" } as any,
@@ -312,6 +314,7 @@ export async function POST(
         ],
         messages,
       });
+      containerId = response.container?.id ?? containerId;
 
       const toolUses = response.content.filter(
         (b: any) => b.type === "tool_use" && b.name === "update_brief",
@@ -321,6 +324,11 @@ export async function POST(
         ...messages,
         { role: "assistant", content: response.content as any },
       ];
+
+      if (response.stop_reason === "pause_turn") {
+        if (i < 5) continue;
+        throw new Error("Anthropic server-side tool loop did not finish");
+      }
 
       if (response.stop_reason === "tool_use" && toolUses.length > 0) {
         const toolResults: any[] = [];
