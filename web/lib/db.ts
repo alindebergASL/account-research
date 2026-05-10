@@ -233,6 +233,40 @@ const MIGRATIONS: Migration[] = [
           ON brief_share_emails(link_id, created_at DESC);
       `),
   },
+  {
+    id: "010_brief_versions",
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS brief_versions (
+          id              TEXT PRIMARY KEY,
+          brief_id        TEXT NOT NULL,
+          version_no      INTEGER NOT NULL,
+          brief_json      TEXT NOT NULL,
+          reason          TEXT NOT NULL,
+          triggered_by    TEXT NOT NULL,
+          refresh_job_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (triggered_by) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (refresh_job_id) REFERENCES research_jobs(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_brief_versions_brief_created
+          ON brief_versions(brief_id, created_at DESC);
+      `),
+  },
+  {
+    id: "011_research_jobs_refresh_intent",
+    up: (c) => {
+      const cols = c.prepare("PRAGMA table_info(research_jobs)").all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "intent")) {
+        c.exec("ALTER TABLE research_jobs ADD COLUMN intent TEXT NOT NULL DEFAULT 'create'");
+      }
+      if (!cols.some((r) => r.name === "target_brief_id")) {
+        c.exec("ALTER TABLE research_jobs ADD COLUMN target_brief_id TEXT");
+      }
+      c.exec("CREATE INDEX IF NOT EXISTS idx_jobs_target_status ON research_jobs(target_brief_id, status)");
+    },
+  },
 ];
 
 function runMigrations(conn: Database.Database): {
@@ -387,6 +421,19 @@ export type ResearchJobRow = {
   usage_json: string | null;
   cost_usd_cents: number | null;
   retry_of_job_id: string | null;
+  intent: "create" | "refresh";
+  target_brief_id: string | null;
+};
+
+export type BriefVersionRow = {
+  id: string;
+  brief_id: string;
+  version_no: number;
+  brief_json: string;
+  reason: string;
+  triggered_by: string;
+  refresh_job_id: string | null;
+  created_at: number;
 };
 
 export type LoginAttemptRow = {
