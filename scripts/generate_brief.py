@@ -44,6 +44,7 @@ SECTIONS = [
     ("Risks and Watch-Outs", "risks"),
     ("Competitive / Partner / Vendor Signals", "competitive_signals"),
     ("Recommended Next Action", "next_action"),
+    ("Insights", "extensions"),
     ("Key Sources", "sources"),
 ]
 
@@ -98,6 +99,94 @@ def maturity_line(m):
     rationale = clean(m.get("rationale", ""))
     return f"Rating {rating} / 5 — {rationale}" if rationale else f"Rating {rating} / 5"
 
+
+
+def extension_label(ext):
+    return clean(ext.get("kind", "insight")).title()
+
+
+def add_docx_extensions(doc, extensions):
+    for ext in extensions:
+        if not isinstance(ext, dict):
+            continue
+        title = clean(ext.get("title")) or "Insight"
+        meta = " · ".join([x for x in [extension_label(ext), clean(ext.get("confidence")), "Added in chat" if ext.get("source") == "chat" else ""] if x])
+        p = doc.add_paragraph()
+        r = p.add_run(title)
+        r.bold = True
+        if meta:
+            mr = p.add_run(f" ({meta})")
+            mr.font.size = Pt(9)
+            mr.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        kind = ext.get("kind")
+        if kind == "table":
+            columns = [clean(c) for c in ext.get("columns", [])]
+            rows = ext.get("rows", []) if isinstance(ext.get("rows"), list) else []
+            if columns:
+                tbl = doc.add_table(rows=1, cols=len(columns))
+                tbl.style = "Light Grid Accent 1"
+                for i, col in enumerate(columns):
+                    tbl.rows[0].cells[i].text = col
+                for row_values in rows:
+                    row = tbl.add_row().cells
+                    for i in range(len(columns)):
+                        row[i].text = clean(row_values[i] if isinstance(row_values, list) and i < len(row_values) else "")
+        elif kind == "list":
+            for item in ext.get("items", []) or []:
+                doc.add_paragraph(clean(item), style="List Bullet")
+        elif kind == "card":
+            para = doc.add_paragraph()
+            run = para.add_run(clean(ext.get("body")))
+            run.bold = False
+        else:
+            doc.add_paragraph(clean(ext.get("body")))
+
+        if clean(ext.get("why_included")):
+            why = doc.add_paragraph(f"Why included: {clean(ext.get('why_included'))}")
+            why.runs[0].font.size = Pt(9)
+            why.runs[0].font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+
+def pdf_extension_flowables(ext, styles, page_w):
+    flow = []
+    if not isinstance(ext, dict):
+        return flow
+    title = clean(ext.get("title")) or "Insight"
+    bits = [extension_label(ext), clean(ext.get("confidence"))]
+    if ext.get("source") == "chat":
+        bits.append("Added in chat")
+    flow.append(Paragraph(f"<b>{title}</b> — {' · '.join([b for b in bits if b])}", styles["body"]))
+    kind = ext.get("kind")
+    if kind == "table":
+        cols = [clean(c) for c in ext.get("columns", [])]
+        rows = ext.get("rows", []) if isinstance(ext.get("rows"), list) else []
+        if cols:
+            data = [[cell for cell in cols]]
+            for row in rows:
+                data.append([clean(row[i] if isinstance(row, list) and i < len(row) else "") for i in range(len(cols))])
+            col_w = [page_w / len(cols)] * len(cols)
+            flow.append(_table([[Paragraph(clean(c), styles["tbl"]) for c in r] for r in data], col_w))
+    elif kind == "list":
+        for item in ext.get("items", []) or []:
+            flow.append(Paragraph(f"• {clean(item)}", styles["bullet"]))
+    elif kind == "card":
+        body = Paragraph(clean(ext.get("body")), styles["body"])
+        t = Table([[body]], colWidths=[page_w])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f5f7fb")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        flow.append(t)
+    else:
+        flow.append(Paragraph(clean(ext.get("body")), styles["body"]))
+    if clean(ext.get("why_included")):
+        flow.append(Paragraph(f"Why included: {clean(ext.get('why_included'))}", styles["meta"]))
+    return flow
 
 # ---------- DOCX ----------
 
@@ -198,6 +287,9 @@ def render_docx(brief: dict, path: Path) -> None:
                 row[3].text = clean(p.get("opener"))
                 row[4].text = clean(p.get("confidence"))
                 row[5].text = clean(p.get("source"))
+
+        elif key == "extensions" and isinstance(value, list):
+            add_docx_extensions(doc, value)
 
         elif key == "sources" and isinstance(value, list):
             tbl = doc.add_table(rows=1, cols=3)
@@ -326,6 +418,10 @@ def render_pdf(brief: dict, path: Path) -> None:
                     cell(p.get("source")),
                 ])
             story.append(_table(data, [page_w * 0.14, page_w * 0.16, page_w * 0.14, page_w * 0.32, page_w * 0.10, page_w * 0.14]))
+
+        elif key == "extensions" and isinstance(value, list):
+            for ext in value:
+                story.extend(pdf_extension_flowables(ext, styles, page_w))
 
         elif key == "sources" and isinstance(value, list):
             data = [["Title", "URL", "Accessed"]]

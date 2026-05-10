@@ -10,37 +10,17 @@ import {
 } from "@/lib/auth";
 import { Brief, type Brief as BriefT } from "@/lib/schema";
 import { BRIEF_CHAT_SYSTEM_PROMPT } from "@/lib/prompt";
+import { applyPatches, type BriefPatch } from "@/lib/briefPatches";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-type Patch = {
-  op: "set" | "append";
-  field: string;
-  value: any;
-};
-
-const ALLOWED_FIELDS = new Set([
-  "snapshot",
-  "priority_summary",
-  "recent_signals",
-  "ai_tech_maturity",
-  "top_initiatives",
-  "technical_footprint",
-  "programs_procurement",
-  "personas",
-  "buying_path",
-  "first_angle",
-  "risks",
-  "competitive_signals",
-  "next_action",
-  "sources",
-]);
+type Patch = BriefPatch;
 
 const updateBriefTool = {
   name: "update_brief",
   description:
-    "Update the account brief in place. Use 'append' to add an item to an array field (e.g. personas, recent_signals, sources). Use 'set' to replace a string or object field. Multiple patches per call are allowed. Always also append a citation source when you add new factual content.",
+    "Update the account brief in place. Use 'append' to add an item to an array field (e.g. personas, recent_signals, sources, extensions). Use 'set' to replace a string or object field. Multiple patches per call are allowed. Always also append a citation source when you add new factual content.",
   input_schema: {
     type: "object",
     additionalProperties: false,
@@ -64,27 +44,6 @@ const updateBriefTool = {
     required: ["patches", "summary"],
   },
 } as const;
-
-function applyPatches(brief: BriefT, patches: Patch[]): BriefT {
-  const out: any = { ...brief };
-  for (const p of patches) {
-    if (!ALLOWED_FIELDS.has(p.field)) {
-      throw new Error(`field not allowed: ${p.field}`);
-    }
-    if (p.op === "set") {
-      out[p.field] = p.value;
-    } else if (p.op === "append") {
-      const cur = out[p.field];
-      if (!Array.isArray(cur)) {
-        throw new Error(`cannot append to non-array field: ${p.field}`);
-      }
-      out[p.field] = [...cur, p.value];
-    } else {
-      throw new Error(`unknown op: ${(p as any).op}`);
-    }
-  }
-  return out as BriefT;
-}
 
 function friendlyError(err: any): string {
   const msg = String(err?.message ?? err ?? "");

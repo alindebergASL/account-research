@@ -30,6 +30,46 @@ export const Source = z.object({
   accessed: z.string(),
 });
 
+const ExtensionSource = z.enum(["model", "chat"]);
+
+export const ExtensionBase = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  source: ExtensionSource,
+  created_at: z.string(),
+  why_included: z.string(),
+  confidence: Confidence,
+  sources: z.array(Source),
+});
+
+export const CardExtension = ExtensionBase.extend({
+  kind: z.literal("card"),
+  body: z.string(),
+});
+
+export const TableExtension = ExtensionBase.extend({
+  kind: z.literal("table"),
+  columns: z.array(z.string()).min(1),
+  rows: z.array(z.array(z.string())),
+});
+
+export const ListExtension = ExtensionBase.extend({
+  kind: z.literal("list"),
+  items: z.array(z.string()),
+});
+
+export const NarrativeExtension = ExtensionBase.extend({
+  kind: z.literal("narrative"),
+  body: z.string(),
+});
+
+export const BriefExtension = z.discriminatedUnion("kind", [
+  CardExtension,
+  TableExtension,
+  ListExtension,
+  NarrativeExtension,
+]);
+
 export const TechnicalFootprint = z.object({
   ai_in_production: z.array(z.string()),
   active_pilots: z.array(z.string()),
@@ -70,6 +110,7 @@ export const Brief = z.object({
   risks: z.array(z.string()),
   competitive_signals: z.array(z.string()),
   next_action: z.string(),
+  extensions: z.array(BriefExtension).default([]),
   sources: z.array(Source),
 });
 
@@ -98,10 +139,93 @@ export type Signal = z.infer<typeof Signal>;
 export type Initiative = z.infer<typeof Initiative>;
 export type Persona = z.infer<typeof Persona>;
 export type Source = z.infer<typeof Source>;
+export type ExtensionBase = z.infer<typeof ExtensionBase>;
+export type BriefExtension = z.infer<typeof BriefExtension>;
 export type TechnicalFootprint = z.infer<typeof TechnicalFootprint>;
 export type ProgramsProcurement = z.infer<typeof ProgramsProcurement>;
 
 // JSON Schema form for Anthropic structured outputs (no zod helpers needed).
+
+const sourceJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    url: { type: "string" },
+    accessed: { type: "string" },
+  },
+  required: ["title", "url", "accessed"],
+} as const;
+
+const extensionBaseJsonProperties = {
+  id: { type: "string" },
+  title: { type: "string" },
+  source: { type: "string", enum: ["model", "chat"] },
+  created_at: { type: "string" },
+  why_included: { type: "string" },
+  confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
+  sources: { type: "array", items: sourceJsonSchema },
+} as const;
+
+const extensionBaseRequired = [
+  "kind",
+  "id",
+  "title",
+  "source",
+  "created_at",
+  "why_included",
+  "confidence",
+  "sources",
+] as const;
+
+export const briefExtensionJsonSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...extensionBaseJsonProperties,
+        kind: { type: "string", enum: ["card"] },
+        body: { type: "string" },
+      },
+      required: [...extensionBaseRequired, "body"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...extensionBaseJsonProperties,
+        kind: { type: "string", enum: ["table"] },
+        columns: { type: "array", items: { type: "string" } },
+        rows: {
+          type: "array",
+          items: { type: "array", items: { type: "string" } },
+        },
+      },
+      required: [...extensionBaseRequired, "columns", "rows"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...extensionBaseJsonProperties,
+        kind: { type: "string", enum: ["list"] },
+        items: { type: "array", items: { type: "string" } },
+      },
+      required: [...extensionBaseRequired, "items"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...extensionBaseJsonProperties,
+        kind: { type: "string", enum: ["narrative"] },
+        body: { type: "string" },
+      },
+      required: [...extensionBaseRequired, "body"],
+    },
+  ],
+} as const;
 export const briefJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -211,18 +335,13 @@ export const briefJsonSchema = {
     risks: { type: "array", items: { type: "string" } },
     competitive_signals: { type: "array", items: { type: "string" } },
     next_action: { type: "string" },
+    extensions: {
+      type: "array",
+      items: briefExtensionJsonSchema,
+    },
     sources: {
       type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          title: { type: "string" },
-          url: { type: "string" },
-          accessed: { type: "string" },
-        },
-        required: ["title", "url", "accessed"],
-      },
+      items: sourceJsonSchema,
     },
   },
   required: [
@@ -230,6 +349,6 @@ export const briefJsonSchema = {
     "snapshot", "priority_summary", "recent_signals", "ai_tech_maturity",
     "top_initiatives", "technical_footprint", "programs_procurement",
     "personas", "buying_path", "first_angle",
-    "risks", "competitive_signals", "next_action", "sources",
+    "risks", "competitive_signals", "next_action", "extensions", "sources",
   ],
 } as const;

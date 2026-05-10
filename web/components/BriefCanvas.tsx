@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import type {
   Brief,
+  BriefExtension,
   Initiative,
   Persona,
   ProgramsProcurement,
@@ -45,6 +46,13 @@ import BriefSwitcher from "./BriefSwitcher";
 import BriefChat from "./BriefChat";
 import ShareDialog from "./ShareDialog";
 import { Share2 } from "lucide-react";
+import {
+  AddedInChatChip,
+  ExtensionDetail,
+  ExtensionPreview,
+  extensionIcon,
+  extensionKindLabel,
+} from "./extensions/ExtensionRenderers";
 
 type DrillKind =
   | { kind: "snapshot" }
@@ -61,6 +69,7 @@ type DrillKind =
   | { kind: "risks" }
   | { kind: "competitive" }
   | { kind: "next" }
+  | { kind: "extension"; id: string }
   | { kind: "sources" }
   | null;
 
@@ -87,6 +96,11 @@ export default function BriefCanvas({
   const [drill, setDrill] = useState<DrillKind>(null);
   const [showShare, setShowShare] = useState(false);
   const isPublic = mode === "public";
+  const extensions = brief.extensions ?? [];
+  const activeExtension =
+    drill?.kind === "extension"
+      ? extensions.find((extension) => extension.id === drill.id)
+      : undefined;
 
   const completeness = briefCompleteness(brief);
 
@@ -327,6 +341,23 @@ export default function BriefCanvas({
           </Tile>
         )}
 
+
+        {/* Insights: optional dynamic extensions, hidden when empty */}
+        {extensions.length > 0 && (
+          <div className="col-span-12">
+            <SectionLabel>Insights</SectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {extensions.map((extension) => (
+                <ExtensionTile
+                  key={extension.id}
+                  extension={extension}
+                  onClick={() => setDrill({ kind: "extension", id: extension.id })}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Sources */}
         <Tile
           className="col-span-12"
@@ -538,6 +569,16 @@ export default function BriefCanvas({
         title="Recommended next action"
       >
         <p className="leading-relaxed text-lg">{brief.next_action}</p>
+      </DrillModal>
+
+
+      <DrillModal
+        open={drill?.kind === "extension" && !!activeExtension}
+        onClose={() => setDrill(null)}
+        title={activeExtension?.title ?? "Insight"}
+        subtitle={activeExtension ? `${extensionKindLabel(activeExtension.kind)} · ${activeExtension.confidence}` : undefined}
+      >
+        {activeExtension && <ExtensionDetail extension={activeExtension} />}
       </DrillModal>
 
       <DrillModal
@@ -869,6 +910,36 @@ function PersonaCard({
         <ConfidenceChip value={persona.confidence} />
       </div>
     </div>
+  );
+}
+
+
+/* ---------- Extensions / dynamic insights ---------- */
+
+function ExtensionTile({
+  extension,
+  onClick,
+}: {
+  extension: BriefExtension;
+  onClick: () => void;
+}) {
+  return (
+    <Tile className="col-span-1" onClick={onClick}>
+      <TileLabel icon={extensionIcon(extension.kind)}>
+        <span className="truncate">{extensionKindLabel(extension.kind)}</span>
+        {extension.source === "chat" && (
+          <span className="ml-auto">
+            <AddedInChatChip />
+          </span>
+        )}
+      </TileLabel>
+      <h3 className="font-medium leading-snug mb-2 line-clamp-2">{extension.title}</h3>
+      <ExtensionPreview extension={extension} />
+      <div className="mt-3 flex items-center gap-2 text-xs">
+        <ConfidenceChip value={extension.confidence} />
+        <span className="text-muted line-clamp-1">{extension.why_included}</span>
+      </div>
+    </Tile>
   );
 }
 
