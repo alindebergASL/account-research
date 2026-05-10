@@ -9,6 +9,7 @@ import BriefCanvas from "@/components/BriefCanvas";
 type Access = {
   is_owner: boolean;
   can_write: boolean;
+  can_manage: boolean;
   role: "owner" | "reader" | "editor" | null;
   shared_by_email: string | null;
 };
@@ -38,6 +39,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         setAccess({
           is_owner: !!data.is_owner,
           can_write: !!data.can_write,
+          can_manage: !!data.can_manage,
           role: data.role ?? null,
           shared_by_email: data.shared_by_email ?? null,
         });
@@ -104,6 +106,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         onBriefUpdate={setBrief}
         canWrite={access.can_write}
         isOwner={access.is_owner}
+        canManage={access.can_manage}
       />
     </main>
   );
