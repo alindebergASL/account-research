@@ -106,23 +106,25 @@ export async function sendJobCompleteEmail(
   user: Pick<UserRow, "email" | "display_name" | "email_notifications_enabled">,
   job: Pick<ResearchJobRow, "id" | "account_name" | "mode">,
   briefId: string,
+  kind: "create" | "refresh" = "create",
 ) {
   if (!user.email_notifications_enabled) return;
   const base = appBaseUrl();
   const link = `${base}/brief/${briefId}`;
   const name = user.display_name || user.email;
+  const isRefresh = kind === "refresh";
   await send({
     to: user.email,
     scope: "job",
     id: job.id,
-    subject: `Brief ready: ${job.account_name}`,
+    subject: `${isRefresh ? "Brief refreshed" : "Brief ready"}: ${job.account_name}`,
     text:
       `Hi ${name},\n\n` +
-      `Your ${job.mode} brief for ${job.account_name} is ready.\n\n` +
+      `Your ${job.mode} brief for ${job.account_name} ${isRefresh ? "has been refreshed" : "is ready"}.\n\n` +
       `${link}\n\n` +
       `— AccountBriefBuilder\n`,
     html: `<p>Hi ${escapeHtml(name)},</p>
-<p>Your <strong>${escapeHtml(job.mode)}</strong> brief for <strong>${escapeHtml(job.account_name)}</strong> is ready.</p>
+<p>Your <strong>${escapeHtml(job.mode)}</strong> brief for <strong>${escapeHtml(job.account_name)}</strong> ${isRefresh ? "has been refreshed" : "is ready"}.</p>
 <p><a href="${link}">Open brief</a></p>
 <p>— AccountBriefBuilder</p>`,
   });

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import RefreshConfirmModal from "./RefreshConfirmModal";
+import BriefVersions from "./BriefVersions";
 import { motion } from "framer-motion";
 import {
   Building2,
@@ -79,6 +81,7 @@ export default function BriefCanvas({
   onBriefUpdate,
   canWrite = true,
   isOwner = true,
+  canManage = true,
   mode = "private",
   publicToken,
 }: {
@@ -87,6 +90,7 @@ export default function BriefCanvas({
   onBriefUpdate?: (next: Brief) => void;
   canWrite?: boolean;
   isOwner?: boolean;
+  canManage?: boolean;
   // 'public' renders the brief for an unauthenticated outsider via a
   // share token: no header chrome, no chat, no share/edit affordances,
   // and the strategy tile (next_action) is hidden.
@@ -95,6 +99,8 @@ export default function BriefCanvas({
 }) {
   const [drill, setDrill] = useState<DrillKind>(null);
   const [showShare, setShowShare] = useState(false);
+  const [showRefresh, setShowRefresh] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
   const isPublic = mode === "public";
   const extensions = brief.extensions ?? [];
   const activeExtension =
@@ -112,7 +118,10 @@ export default function BriefCanvas({
           currentBriefId={currentBriefId}
           canWrite={canWrite}
           isOwner={isOwner}
+          canManage={canManage}
           onShareClick={() => setShowShare(true)}
+          onRefreshClick={() => setShowRefresh(true)}
+          onVersionsClick={() => setShowVersions(true)}
         />
       )}
       {isPublic && <PublicBriefHeader brief={brief} />}
@@ -132,6 +141,24 @@ export default function BriefCanvas({
           briefName={brief.account_name}
           briefAudience={brief.audience}
           onClose={() => setShowShare(false)}
+        />
+      )}
+
+      {!isPublic && showRefresh && currentBriefId && (
+        <RefreshConfirmModal
+          open={showRefresh}
+          briefId={currentBriefId}
+          defaultMode="quick"
+          onClose={() => setShowRefresh(false)}
+        />
+      )}
+
+      {!isPublic && showVersions && currentBriefId && onBriefUpdate && (
+        <BriefVersions
+          open={showVersions}
+          briefId={currentBriefId}
+          onClose={() => setShowVersions(false)}
+          onReverted={onBriefUpdate}
         />
       )}
 
@@ -178,7 +205,7 @@ export default function BriefCanvas({
             Recent strategic signals
             <span className="ml-auto text-xs text-muted">{brief.recent_signals.length}</span>
           </TileLabel>
-          <SignalsTimeline signals={brief.recent_signals.slice(0, 4)} />
+          <SignalsTimeline signals={[...brief.recent_signals].sort((a, b) => Number(!!a.previously_found) - Number(!!b.previously_found)).slice(0, 4)} />
         </Tile>
 
         {/* Row 2.5: Charts — evidence confidence + initiative landscape */}
@@ -209,11 +236,14 @@ export default function BriefCanvas({
         <div className="col-span-12">
           <SectionLabel>Top initiatives</SectionLabel>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {brief.top_initiatives.map((it, i) => (
+            {brief.top_initiatives
+              .map((it, originalIndex) => ({ it, originalIndex }))
+              .sort((a, b) => Number(!!a.it.previously_found) - Number(!!b.it.previously_found))
+              .map(({ it, originalIndex }) => (
               <InitiativeCard
-                key={i}
+                key={originalIndex}
                 init={it}
-                onClick={() => setDrill({ kind: "initiatives", index: i })}
+                onClick={() => setDrill({ kind: "initiatives", index: originalIndex })}
               />
             ))}
           </div>
@@ -242,11 +272,14 @@ export default function BriefCanvas({
         <div className="col-span-12">
           <SectionLabel>Key personas</SectionLabel>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {brief.personas.map((p, i) => (
+            {brief.personas
+              .map((p, originalIndex) => ({ p, originalIndex }))
+              .sort((a, b) => Number(!!a.p.previously_found) - Number(!!b.p.previously_found))
+              .map(({ p, originalIndex }) => (
               <PersonaCard
-                key={i}
+                key={originalIndex}
                 persona={p}
-                onClick={() => setDrill({ kind: "personas", index: i })}
+                onClick={() => setDrill({ kind: "personas", index: originalIndex })}
               />
             ))}
           </div>
@@ -636,13 +669,19 @@ function Header({
   currentBriefId,
   canWrite,
   isOwner,
+  canManage,
   onShareClick,
+  onRefreshClick,
+  onVersionsClick,
 }: {
   brief: Brief;
   currentBriefId?: string;
   canWrite: boolean;
   isOwner: boolean;
+  canManage: boolean;
   onShareClick: () => void;
+  onRefreshClick: () => void;
+  onVersionsClick: () => void;
 }) {
   return (
     <motion.div
@@ -656,6 +695,26 @@ function Header({
           <span className="size-1.5 rounded-full bg-accent" /> Account brief
         </div>
         <div className="flex items-center gap-2">
+          {currentBriefId && canManage && (
+            <>
+              <button
+                type="button"
+                onClick={onRefreshClick}
+                className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition-colors px-3 py-1.5 rounded-lg hover:bg-white border border-transparent hover:border-[var(--line)]"
+              >
+                <RefreshCw className="size-4" />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+              <button
+                type="button"
+                onClick={onVersionsClick}
+                className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition-colors px-3 py-1.5 rounded-lg hover:bg-white border border-transparent hover:border-[var(--line)]"
+              >
+                <ScrollText className="size-4" />
+                <span className="hidden sm:inline">Versions</span>
+              </button>
+            </>
+          )}
           {currentBriefId && canWrite && isOwner && (
             <button
               type="button"
@@ -845,10 +904,11 @@ function SignalsTimeline({ signals }: { signals: Signal[] }) {
   return (
     <ol className="relative border-l-2 border-[var(--line)] ml-2 space-y-3">
       {signals.map((s, i) => (
-        <li key={i} className="pl-4 relative">
+        <li key={i} className={`pl-4 relative ${s.previously_found ? "opacity-60" : ""}`}>
           <span className="absolute -left-[7px] top-1 size-3 rounded-full bg-accent ring-4 ring-[var(--card)]" />
           <p className="text-sm leading-snug line-clamp-2">{s.text}</p>
-          <div className="mt-1">
+          <div className="mt-1 flex items-center gap-2">
+            {s.previously_found && <PreviouslyFoundChip />}
             <ConfidenceChip value={s.confidence} />
           </div>
         </li>
@@ -865,10 +925,13 @@ function InitiativeCard({
   onClick: () => void;
 }) {
   return (
-    <div className="card p-4" onClick={onClick}>
+    <div className={`card p-4 ${init.previously_found ? "opacity-60" : ""}`} onClick={onClick}>
       <div className="flex items-start justify-between gap-2 mb-1.5">
         <Lightbulb className="size-4 text-amber-600 shrink-0 mt-0.5" />
-        <ConfidenceChip value={init.confidence} />
+        <div className="flex items-center gap-2">
+          {init.previously_found && <PreviouslyFoundChip />}
+          <ConfidenceChip value={init.confidence} />
+        </div>
       </div>
       <h3 className="font-medium leading-snug mb-1.5">{init.title}</h3>
       <p className="text-sm text-muted line-clamp-3">{init.detail}</p>
@@ -892,7 +955,7 @@ function PersonaCard({
       .join("")
       .toUpperCase() || "?";
   return (
-    <div className="card p-4" onClick={onClick}>
+    <div className={`card p-4 ${persona.previously_found ? "opacity-60" : ""}`} onClick={onClick}>
       <div className="flex items-start gap-3">
         <div className="size-10 rounded-full bg-[var(--bg)] border border-[var(--line)] grid place-items-center font-medium text-sm shrink-0">
           {initials}
@@ -906,13 +969,17 @@ function PersonaCard({
         <Users className="size-4 text-muted shrink-0" />
       </div>
       <p className="text-xs text-muted mt-3 line-clamp-2">{persona.opener}</p>
-      <div className="mt-2">
+      <div className="mt-2 flex items-center gap-2">
+        {persona.previously_found && <PreviouslyFoundChip />}
         <ConfidenceChip value={persona.confidence} />
       </div>
     </div>
   );
 }
 
+function PreviouslyFoundChip() {
+  return <span className="chip chip-na">previously found</span>;
+}
 
 /* ---------- Extensions / dynamic insights ---------- */
 

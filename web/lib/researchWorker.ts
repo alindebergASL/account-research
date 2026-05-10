@@ -20,7 +20,9 @@ import {
   sendJobCompleteEmail,
   sendJobFailedEmail,
 } from "./email";
-import type { Brief } from "./schema";
+import { Brief as BriefSchema, type Brief } from "./schema";
+import { mergeBriefs } from "./briefMerge";
+import { snapshotBriefVersion } from "./briefVersions";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -123,6 +125,46 @@ function saveBriefAndMarkJobDone(
   return briefId;
 }
 
+function refreshBriefAndMarkJobDone(
+  job: ResearchJobRow,
+  merged: Brief,
+  stages: StageUsage[],
+  costUsdCents: number | null,
+): string {
+  if (!job.target_brief_id) throw new Error("Refresh job missing target_brief_id");
+  const conn = db();
+  const usageJson = JSON.stringify({ stages, total: aggregateUsage(stages) });
+  const tx = conn.transaction(() => {
+    conn
+      .prepare(
+        `UPDATE briefs
+         SET account_name = ?, segment = ?, audience = ?, generated_at = ?, brief_json = ?
+         WHERE id = ?`,
+      )
+      .run(
+        merged.account_name,
+        merged.segment,
+        merged.audience,
+        merged.generated_at,
+        JSON.stringify(merged),
+        job.target_brief_id,
+      );
+    conn
+      .prepare(
+        `UPDATE research_jobs
+         SET status = 'done',
+             brief_id = ?,
+             usage_json = ?,
+             cost_usd_cents = ?,
+             finished_at = ?
+         WHERE id = ?`,
+      )
+      .run(job.target_brief_id, usageJson, costUsdCents, Date.now(), job.id);
+  });
+  tx();
+  return job.target_brief_id;
+}
+
 function markJobFailed(jobId: string, errorMessage: string) {
   // Truncate + sanitize. Pipeline already does friendly mapping; this is a
   // belt-and-braces guard so we never persist an unbounded blob.
@@ -174,6 +216,34 @@ async function executeResearchJob(job: ResearchJobRow) {
       return;
     }
 
+    let previousBrief: Brief | null = null;
+    if (job.intent === "refresh") {
+      if (!job.target_brief_id) {
+        markJobFailed(job.id, "Refresh job missing target_brief_id");
+        return;
+      }
+      const row = db()
+        .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
+        .get(job.target_brief_id) as { brief_json: string } | undefined;
+      if (!row) {
+        markJobFailed(job.id, "Target brief not found");
+        return;
+      }
+      const parsed = BriefSchema.safeParse(JSON.parse(row.brief_json));
+      if (!parsed.success) {
+        markJobFailed(job.id, "Stored target brief failed validation");
+        return;
+      }
+      previousBrief = parsed.data;
+      snapshotBriefVersion({
+        briefId: job.target_brief_id,
+        briefJson: row.brief_json,
+        reason: "pre-refresh",
+        triggeredBy: job.user_id,
+        refreshJobId: job.id,
+      });
+    }
+
     const { brief, stages } = await runResearchPipeline(intake);
 
     if (currentStatus(job.id) === "cancelled") {
@@ -183,16 +253,21 @@ async function executeResearchJob(job: ResearchJobRow) {
     }
 
     const cost = estimateAnthropicCostCents(stages);
-    const briefId = saveBriefAndMarkJobDone(job, brief, stages, cost);
+    const isRefresh = job.intent === "refresh";
+    const finalBrief = isRefresh && previousBrief ? mergeBriefs(previousBrief, brief) : brief;
+    const validated = BriefSchema.parse(finalBrief);
+    const briefId = isRefresh
+      ? refreshBriefAndMarkJobDone(job, validated, stages, cost)
+      : saveBriefAndMarkJobDone(job, validated, stages, cost);
     // eslint-disable-next-line no-console
     console.log(
-      `[worker] done job=${job.id} brief=${briefId} cost_cents=${cost ?? "null"}`,
+      `[worker] done job=${job.id} intent=${job.intent ?? "create"} brief=${briefId} cost_cents=${cost ?? "null"}`,
     );
 
     if (isEmailConfigured()) {
       const user = findUserForJob(job.user_id);
       if (user && user.email_notifications_enabled) {
-        await sendJobCompleteEmail(user, job, briefId);
+        await sendJobCompleteEmail(user, job, briefId, isRefresh ? "refresh" : "create");
       }
     }
   } catch (err: any) {

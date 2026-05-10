@@ -6,6 +6,7 @@ export const Signal = z.object({
   text: z.string(),
   source: z.string(),
   confidence: Confidence,
+  previously_found: z.boolean().optional(),
 });
 
 export const Initiative = z.object({
@@ -13,6 +14,7 @@ export const Initiative = z.object({
   detail: z.string(),
   confidence: Confidence,
   source: z.string(),
+  previously_found: z.boolean().optional(),
 });
 
 export const Persona = z.object({
@@ -22,6 +24,7 @@ export const Persona = z.object({
   opener: z.string(),
   confidence: Confidence,
   source: z.string(),
+  previously_found: z.boolean().optional(),
 });
 
 export const Source = z.object({
@@ -40,6 +43,7 @@ export const ExtensionBase = z.object({
   why_included: z.string(),
   confidence: Confidence,
   sources: z.array(Source),
+  previously_found: z.boolean().optional(),
 });
 
 export const CardExtension = ExtensionBase.extend({
@@ -165,6 +169,7 @@ const extensionBaseJsonProperties = {
   why_included: { type: "string" },
   confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
   sources: { type: "array", items: sourceJsonSchema },
+  previously_found: { type: "boolean" },
 } as const;
 
 const extensionBaseRequired = [
@@ -245,6 +250,7 @@ export const briefJsonSchema = {
           text: { type: "string" },
           source: { type: "string" },
           confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
+          previously_found: { type: "boolean" },
         },
         required: ["text", "source", "confidence"],
       },
@@ -268,6 +274,7 @@ export const briefJsonSchema = {
           detail: { type: "string" },
           confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
           source: { type: "string" },
+          previously_found: { type: "boolean" },
         },
         required: ["title", "detail", "confidence", "source"],
       },
@@ -326,6 +333,7 @@ export const briefJsonSchema = {
           opener: { type: "string" },
           confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
           source: { type: "string" },
+          previously_found: { type: "boolean" },
         },
         required: ["name", "title", "priority", "opener", "confidence", "source"],
       },

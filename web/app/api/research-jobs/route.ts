@@ -21,6 +21,8 @@ export type ResearchJobView = {
   cost_usd_cents: number | null;
   queue_position: number | null;
   retry_of_job_id: string | null;
+  intent: ResearchJobRow["intent"];
+  target_brief_id: string | null;
 };
 
 function viewFromRow(
@@ -41,6 +43,8 @@ function viewFromRow(
     cost_usd_cents: row.cost_usd_cents,
     queue_position: queuePosition,
     retry_of_job_id: row.retry_of_job_id,
+    intent: row.intent ?? "create",
+    target_brief_id: row.target_brief_id ?? null,
   };
 }
 
