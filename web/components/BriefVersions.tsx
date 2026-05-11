@@ -59,7 +59,12 @@ export default function BriefVersions({
   }
 
   async function revert(row: VersionRow) {
-    if (!confirm(`Revert to version ${row.version_no}? The current brief will be snapshotted first.`)) return;
+    if (
+      !confirm(
+        `Reverting will snapshot the current brief first, then replace it with v${row.version_no}. Continue?`,
+      )
+    )
+      return;
     setBusy(`revert-${row.id}`);
     setError(null);
     try {
@@ -95,11 +100,23 @@ export default function BriefVersions({
             <div className="divide-y divide-[var(--line)] border border-[var(--line)] rounded-xl overflow-hidden">
               {versions.map((row) => (
                 <div key={row.id} className="p-4 flex items-center justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <div className="font-medium">v{row.version_no} · {row.reason}</div>
-                    <div className="text-xs text-muted">{new Date(row.created_at).toLocaleString()} · {row.triggered_by}</div>
+                    <div className="text-xs text-muted flex flex-wrap items-center gap-2">
+                      <span>{new Date(row.created_at).toLocaleString()}</span>
+                      <span>·</span>
+                      <span>{row.triggered_by}</span>
+                      {row.refresh_job_id && (
+                        <span
+                          className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--line)]"
+                          title="Refresh job id"
+                        >
+                          job {row.refresh_job_id.slice(0, 8)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0">
                     <button onClick={() => view(row)} className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-[var(--line)]">
                       {busy === row.id ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />} View
                     </button>

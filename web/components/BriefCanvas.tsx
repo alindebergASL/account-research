@@ -84,6 +84,8 @@ export default function BriefCanvas({
   canManage = true,
   mode = "private",
   publicToken,
+  lastRefreshedAt = null,
+  versionsCount = 0,
 }: {
   brief: Brief;
   currentBriefId?: string;
@@ -96,6 +98,8 @@ export default function BriefCanvas({
   // and the strategy tile (next_action) is hidden.
   mode?: "private" | "public";
   publicToken?: string;
+  lastRefreshedAt?: number | null;
+  versionsCount?: number;
 }) {
   const [drill, setDrill] = useState<DrillKind>(null);
   const [showShare, setShowShare] = useState(false);
@@ -122,6 +126,8 @@ export default function BriefCanvas({
           onShareClick={() => setShowShare(true)}
           onRefreshClick={() => setShowRefresh(true)}
           onVersionsClick={() => setShowVersions(true)}
+          lastRefreshedAt={lastRefreshedAt}
+          versionsCount={versionsCount}
         />
       )}
       {isPublic && <PublicBriefHeader brief={brief} />}
@@ -664,6 +670,20 @@ function PublicBriefHeader({ brief }: { brief: Brief }) {
   );
 }
 
+function relativeTimeShort(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "just now";
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
 function Header({
   brief,
   currentBriefId,
@@ -673,6 +693,8 @@ function Header({
   onShareClick,
   onRefreshClick,
   onVersionsClick,
+  lastRefreshedAt,
+  versionsCount,
 }: {
   brief: Brief;
   currentBriefId?: string;
@@ -682,6 +704,8 @@ function Header({
   onShareClick: () => void;
   onRefreshClick: () => void;
   onVersionsClick: () => void;
+  lastRefreshedAt: number | null;
+  versionsCount: number;
 }) {
   return (
     <motion.div
@@ -711,7 +735,9 @@ function Header({
                 className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition-colors px-3 py-1.5 rounded-lg hover:bg-white border border-transparent hover:border-[var(--line)]"
               >
                 <ScrollText className="size-4" />
-                <span className="hidden sm:inline">Versions</span>
+                <span className="hidden sm:inline">
+                  Versions{versionsCount > 0 ? ` (${versionsCount})` : ""}
+                </span>
               </button>
             </>
           )}
@@ -744,6 +770,12 @@ function Header({
         <span>Generated {brief.generated_at}</span>
         <span>·</span>
         <span className="capitalize">{brief.audience}</span>
+        {lastRefreshedAt && (
+          <>
+            <span>·</span>
+            <span>Refreshed {relativeTimeShort(lastRefreshedAt)}</span>
+          </>
+        )}
       </div>
     </motion.div>
   );
@@ -978,7 +1010,14 @@ function PersonaCard({
 }
 
 function PreviouslyFoundChip() {
-  return <span className="chip chip-na">previously found</span>;
+  return (
+    <span
+      className="chip chip-na"
+      title="Found in a previous version but not rediscovered in the latest refresh."
+    >
+      Not rediscovered
+    </span>
+  );
 }
 
 /* ---------- Extensions / dynamic insights ---------- */

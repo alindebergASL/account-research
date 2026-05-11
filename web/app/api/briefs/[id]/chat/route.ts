@@ -11,6 +11,7 @@ import {
 import { Brief, type Brief as BriefT } from "@/lib/schema";
 import { BRIEF_CHAT_SYSTEM_PROMPT } from "@/lib/prompt";
 import { applyPatches, type BriefPatch } from "@/lib/briefPatches";
+import { logChatPatchedBrief } from "@/lib/briefEvents";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -379,6 +380,16 @@ export async function POST(
 
     if (appliedPatches.length > 0) {
       saveBrief(params.id, workingBrief);
+      const touchedFields = Array.from(
+        new Set(appliedPatches.map((p) => p.field)),
+      );
+      logChatPatchedBrief({
+        briefId: params.id,
+        actorUserId: user.id,
+        patchesApplied: appliedPatches.length,
+        patchErrors: patchErrors.length,
+        touchedFields,
+      });
     }
 
     appendChat(params.id, user.id, "user", userMessage);

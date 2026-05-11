@@ -45,12 +45,28 @@ type AdminBrief = {
   owner_email: string;
 };
 
+type AdminJob = {
+  id: string;
+  account_name: string;
+  mode: "quick" | "standard" | "deep";
+  intent: "create" | "refresh";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  cost_usd_cents: number | null;
+  created_at: number;
+  finished_at: number | null;
+  brief_id: string | null;
+  target_brief_id: string | null;
+  error: string | null;
+  user_email: string | null;
+};
+
 export default function AdminPage() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [me, setMe] = useState<{ id: string } | null>(null);
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [briefs, setBriefs] = useState<AdminBrief[] | null>(null);
+  const [jobs, setJobs] = useState<AdminJob[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [tempCred, setTempCred] = useState<{
     email: string;
@@ -76,16 +92,20 @@ export default function AdminPage() {
   }, []);
 
   async function loadAll() {
-    const [u, b, e] = await Promise.all([
+    const [u, b, e, j] = await Promise.all([
       fetch("/api/admin/users", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/admin/briefs", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/admin/email-status", { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : { configured: false }))
         .catch(() => ({ configured: false })),
+      fetch("/api/admin/jobs?limit=25", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : { jobs: [] }))
+        .catch(() => ({ jobs: [] })),
     ]);
     setUsers(u.users || []);
     setBriefs(b.briefs || []);
     setEmailConfigured(!!e.configured);
+    setJobs(j.jobs || []);
   }
 
   async function toggleNotifications(u: AdminUser) {
@@ -459,6 +479,87 @@ export default function AdminPage() {
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-muted text-center">
                     No briefs in the system yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="mt-12">
+        <div className="flex items-center mb-4">
+          <h2 className="font-display text-xl">Recent jobs</h2>
+          <span className="ml-3 text-xs text-muted">
+            {jobs ? jobs.length : "…"}
+          </span>
+          <button
+            type="button"
+            onClick={loadAll}
+            className="ml-auto text-xs text-muted hover:text-fg"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="card p-0 hover:!translate-y-0 hover:!cursor-default hover:!shadow-none overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-[var(--bg)] text-xs uppercase tracking-wider text-muted">
+              <tr>
+                <th className="text-left px-4 py-2 font-medium">Account</th>
+                <th className="text-left px-4 py-2 font-medium">User</th>
+                <th className="text-left px-4 py-2 font-medium">Intent</th>
+                <th className="text-left px-4 py-2 font-medium">Mode</th>
+                <th className="text-left px-4 py-2 font-medium">Status</th>
+                <th className="text-left px-4 py-2 font-medium">Cost</th>
+                <th className="text-left px-4 py-2 font-medium">Created</th>
+                <th className="text-left px-4 py-2 font-medium">Finished</th>
+                <th className="text-left px-4 py-2 font-medium">Brief</th>
+                <th className="text-left px-4 py-2 font-medium">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs?.map((j) => {
+                const briefId = j.brief_id ?? j.target_brief_id;
+                const cost =
+                  j.cost_usd_cents == null
+                    ? "—"
+                    : `$${(j.cost_usd_cents / 100).toFixed(2)}`;
+                return (
+                  <tr key={j.id} className="border-t border-[var(--line)] hover:bg-[var(--bg)]">
+                    <td className="px-4 py-2 font-medium">{j.account_name}</td>
+                    <td className="px-4 py-2 text-muted">{j.user_email || "—"}</td>
+                    <td className="px-4 py-2 text-muted">{j.intent}</td>
+                    <td className="px-4 py-2 text-muted">{j.mode}</td>
+                    <td className="px-4 py-2 text-muted">{j.status}</td>
+                    <td className="px-4 py-2 text-muted">{cost}</td>
+                    <td className="px-4 py-2 text-muted">
+                      {new Date(j.created_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2 text-muted">
+                      {j.finished_at ? new Date(j.finished_at).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-2">
+                      {briefId ? (
+                        <Link href={`/brief/${briefId}`} className="hover:text-accent">
+                          open
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td
+                      className="px-4 py-2 text-muted max-w-[260px] truncate"
+                      title={j.error || ""}
+                    >
+                      {j.error || ""}
+                    </td>
+                  </tr>
+                );
+              })}
+              {jobs && jobs.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="px-4 py-6 text-muted text-center">
+                    No research jobs yet.
                   </td>
                 </tr>
               )}

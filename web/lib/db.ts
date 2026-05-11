@@ -267,6 +267,32 @@ const MIGRATIONS: Migration[] = [
       c.exec("CREATE INDEX IF NOT EXISTS idx_jobs_target_status ON research_jobs(target_brief_id, status)");
     },
   },
+  {
+    id: "012_brief_events",
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS brief_events (
+          id              TEXT PRIMARY KEY,
+          brief_id        TEXT,
+          job_id          TEXT,
+          actor_user_id   TEXT,
+          actor_type      TEXT NOT NULL DEFAULT 'user',
+          event_type      TEXT NOT NULL,
+          title           TEXT NOT NULL,
+          summary         TEXT,
+          metadata_json   TEXT,
+          created_at      INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_brief_events_brief_created
+          ON brief_events(brief_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_brief_events_job
+          ON brief_events(job_id);
+        CREATE INDEX IF NOT EXISTS idx_brief_events_actor_created
+          ON brief_events(actor_user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_brief_events_type_created
+          ON brief_events(event_type, created_at DESC);
+      `),
+  },
 ];
 
 function runMigrations(conn: Database.Database): {
@@ -448,6 +474,19 @@ export type SessionRow = {
   user_id: string;
   created_at: number;
   expires_at: number;
+};
+
+export type BriefEventRow = {
+  id: string;
+  brief_id: string | null;
+  job_id: string | null;
+  actor_user_id: string | null;
+  actor_type: "user" | "worker" | "system" | "hermes";
+  event_type: string;
+  title: string;
+  summary: string | null;
+  metadata_json: string | null;
+  created_at: number;
 };
 
 export type ShareLinkRow = {

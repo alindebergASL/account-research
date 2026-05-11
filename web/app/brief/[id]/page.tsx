@@ -17,6 +17,8 @@ type Access = {
 export default function BriefPage({ params }: { params: { id: string } }) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [access, setAccess] = useState<Access | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
+  const [versionsCount, setVersionsCount] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,6 +45,14 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           role: data.role ?? null,
           shared_by_email: data.shared_by_email ?? null,
         });
+        setLastRefreshedAt(
+          typeof data.last_refreshed_at === "number"
+            ? data.last_refreshed_at
+            : null,
+        );
+        setVersionsCount(
+          typeof data.versions_count === "number" ? data.versions_count : 0,
+        );
       })
       .catch((e: any) => {
         if (cancelled) return;
@@ -107,6 +117,8 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         canWrite={access.can_write}
         isOwner={access.is_owner}
         canManage={access.can_manage}
+        lastRefreshedAt={lastRefreshedAt}
+        versionsCount={versionsCount}
       />
     </main>
   );
