@@ -43,11 +43,7 @@ function sanitizeValue(value: unknown, depth: number): unknown {
     return value;
   }
   if (depth >= MAX_DEPTH) {
-    try {
-      return JSON.stringify(value).slice(0, 200);
-    } catch {
-      return "[unserializable]";
-    }
+    return "[truncated-depth]";
   }
   if (Array.isArray(value)) {
     return value.map((v) => sanitizeValue(v, depth + 1));

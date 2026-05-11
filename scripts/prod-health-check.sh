@@ -96,10 +96,10 @@ if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
     if [[ "$latest" == *"$EXPECTED_MIGRATION"* ]]; then
       pass "latest migration $latest"
     else
-      warn "latest migration $latest (expected to contain $EXPECTED_MIGRATION)"
+      fail "latest migration $latest (expected to contain $EXPECTED_MIGRATION)"
     fi
   else
-    warn "no migrations recorded"
+    fail "no migrations recorded"
   fi
 fi
 
@@ -117,7 +117,7 @@ fi
 if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
   echo "[health-check] last 5 failed jobs:"
   sqlite3 -separator '|' "$BRIEF_DB_PATH" \
-    "SELECT id, account_name, finished_at, substr(COALESCE(error,''), 1, 80)
+    "SELECT id, account_name, finished_at, status
      FROM research_jobs WHERE status='failed'
      ORDER BY COALESCE(finished_at, created_at) DESC LIMIT 5" 2>/dev/null \
     | awk -F'|' '{printf "  - %s | %s | %s | %s\n", $1, $2, $3, $4}' \
@@ -134,7 +134,6 @@ scan_app_logs() {
   count="$(echo "$logs" | grep -ciE 'zod|send_failed|unhandledrejection|exception|failed job' || true)"
   if [[ "$count" =~ ^[0-9]+$ ]] && (( count > 0 )); then
     warn "$name: $count suspect log line(s) in last 500"
-    echo "$logs" | grep -iE 'zod|send_failed|unhandledrejection|exception|failed job' | tail -n 5 | sed 's/^/    /'
   else
     pass "$name: no suspect log lines in last 500"
   fi

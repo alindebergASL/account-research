@@ -58,11 +58,38 @@ test("sanitizer recurses and drops forbidden keys at depth", () => {
 test("sanitizer flattens past depth 4", () => {
   const deep: any = { a: { b: { c: { d: { e: { token: "x", v: 1 } } } } } };
   const out = sanitizeEventMetadata(deep) as any;
-  // At depth 4 the inner object becomes a stringified preview, not a
-  // structured object; just verify it doesn't throw and forbidden values
-  // do not appear unredacted in the output.
   const serialized = JSON.stringify(out);
   assert.ok(serialized.length > 0);
+  assert.ok(serialized.includes("[truncated-depth]"), serialized);
+});
+
+test("forbidden values never appear in serialized output, at any depth", () => {
+  const input = {
+    a: {
+      b: {
+        c: {
+          d: {
+            e: {
+              token: "token-leak-marker",
+              prompt: "prompt-leak-marker",
+              content: "content-leak-marker",
+              password: "password-leak-marker",
+            },
+          },
+        },
+      },
+    },
+    list: [
+      { messages: [{ content: "content-leak-marker" }] },
+      { authorization: "Bearer token-leak-marker" },
+    ],
+  };
+  const out = sanitizeEventMetadata(input);
+  const serialized = JSON.stringify(out);
+  assert.ok(!serialized.includes("token-leak-marker"), serialized);
+  assert.ok(!serialized.includes("prompt-leak-marker"), serialized);
+  assert.ok(!serialized.includes("content-leak-marker"), serialized);
+  assert.ok(!serialized.includes("password-leak-marker"), serialized);
 });
 
 test("sanitizer truncates payloads over 8 KB", () => {
