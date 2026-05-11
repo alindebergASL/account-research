@@ -66,6 +66,20 @@ export async function GET(
     sharedByEmail = ownerRow?.email ?? null;
   }
 
+  // Most-recent successful refresh job for this brief, if any.
+  const lastRefresh = db()
+    .prepare(
+      `SELECT MAX(finished_at) AS t FROM research_jobs
+       WHERE target_brief_id = ? AND status = 'done' AND intent = 'refresh'`,
+    )
+    .get(params.id) as { t: number | null } | undefined;
+  const lastRefreshedAt = lastRefresh?.t ?? null;
+
+  const versionsCountRow = db()
+    .prepare(`SELECT COUNT(*) AS n FROM brief_versions WHERE brief_id = ?`)
+    .get(params.id) as { n: number } | undefined;
+  const versionsCount = versionsCountRow?.n ?? 0;
+
   return NextResponse.json({
     brief: parsed.data,
     created_at: row.created_at,
@@ -74,6 +88,8 @@ export async function GET(
     can_manage: canManage,
     role,
     shared_by_email: sharedByEmail,
+    last_refreshed_at: lastRefreshedAt,
+    versions_count: versionsCount,
   });
 }
 

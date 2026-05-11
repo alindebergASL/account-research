@@ -1,8 +1,87 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, type ResearchJobRow } from "@/lib/db";
-import { HttpError, requireUser } from "@/lib/auth";
+import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
+import { listBriefEventsForBrief } from "@/lib/briefEvents";
 
 export const runtime = "nodejs";
+
+function trimError(err: string | null): string | null {
+  if (!err) return null;
+  const firstLine = err.split(/\r?\n/)[0].trim();
+  return firstLine.length > 500 ? firstLine.slice(0, 500) : firstLine;
+}
+
+// GET /api/research-jobs/[id] — job detail for owner / admin / brief-manager.
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return NextResponse.json(e.body, { status: e.status });
+    }
+    throw e;
+  }
+
+  const conn = db();
+  const job = conn
+    .prepare(`SELECT * FROM research_jobs WHERE id = ?`)
+    .get(params.id) as ResearchJobRow | undefined;
+  if (!job) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // canManageBrief requires a non-null brief id; queued create jobs have
+  // neither brief_id nor target_brief_id, so the null guard matters.
+  const linkedBriefId = job.target_brief_id ?? job.brief_id;
+  const isOwner = job.user_id === user.id;
+  const isAdmin = user.role === "admin";
+  const canManageLinked =
+    linkedBriefId !== null && canManageBrief(user, linkedBriefId);
+  if (!isOwner && !isAdmin && !canManageLinked) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  let queuePosition: number | null = null;
+  if (job.status === "queued") {
+    const { n } = conn
+      .prepare(
+        `SELECT COUNT(*) AS n FROM research_jobs
+         WHERE status = 'queued' AND created_at <= ?`,
+      )
+      .get(job.created_at) as { n: number };
+    queuePosition = n;
+  } else if (job.status === "running") {
+    queuePosition = 0;
+  }
+
+  const recentEvents = linkedBriefId
+    ? listBriefEventsForBrief(linkedBriefId, 10)
+    : [];
+
+  return NextResponse.json({
+    id: job.id,
+    account_name: job.account_name,
+    account_segment: job.account_segment,
+    region: job.region,
+    goal: job.goal,
+    mode: job.mode,
+    status: job.status,
+    intent: job.intent ?? "create",
+    target_brief_id: job.target_brief_id ?? null,
+    brief_id: job.brief_id,
+    created_at: job.created_at,
+    started_at: job.started_at,
+    finished_at: job.finished_at,
+    cost_usd_cents: job.cost_usd_cents,
+    error: trimError(job.error),
+    queue_position: queuePosition,
+    recent_events: recentEvents,
+  });
+}
 
 // DELETE /api/research-jobs/[id] — cancel a job.
 //   queued  → mark cancelled; worker will skip it.

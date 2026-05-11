@@ -30,5 +30,6 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
        ORDER BY created_at DESC`,
     )
     .all(params.id) as BriefVersionRow[];
-  return NextResponse.json({ versions: rows.map(({ brief_json, ...row }) => row) });
+  const versions = rows.map(({ brief_json, ...row }) => row);
+  return NextResponse.json({ versions, count: versions.length });
 }

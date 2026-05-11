@@ -3,6 +3,7 @@ import { db, type BriefRow, type BriefVersionRow } from "@/lib/db";
 import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
 import { Brief } from "@/lib/schema";
 import { snapshotBriefVersion } from "@/lib/briefVersions";
+import { logBriefReverted } from "@/lib/briefEvents";
 
 export const runtime = "nodejs";
 
@@ -39,8 +40,9 @@ export async function POST(
   const current = db().prepare(`SELECT * FROM briefs WHERE id = ?`).get(params.id) as BriefRow | undefined;
   if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  let preRevertVersionId = "";
   const tx = db().transaction(() => {
-    snapshotBriefVersion({
+    preRevertVersionId = snapshotBriefVersion({
       briefId: params.id,
       briefJson: current.brief_json,
       reason: "pre-revert",
@@ -64,6 +66,13 @@ export async function POST(
       );
   });
   tx();
+
+  logBriefReverted({
+    briefId: params.id,
+    revertedFromVersionId: params.versionId,
+    preRevertVersionId,
+    actorUserId: user.id,
+  });
 
   return NextResponse.json({ ok: true, brief: parsedVersion.data });
 }

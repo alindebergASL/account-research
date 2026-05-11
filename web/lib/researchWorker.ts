@@ -23,6 +23,11 @@ import {
 import { Brief as BriefSchema, type Brief } from "./schema";
 import { mergeBriefs } from "./briefMerge";
 import { snapshotBriefVersion } from "./briefVersions";
+import {
+  logBriefCreated,
+  logBriefRefreshed,
+  logJobCompleted,
+} from "./briefEvents";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -217,6 +222,7 @@ async function executeResearchJob(job: ResearchJobRow) {
     }
 
     let previousBrief: Brief | null = null;
+    let preRefreshVersionId: string | null = null;
     if (job.intent === "refresh") {
       if (!job.target_brief_id) {
         markJobFailed(job.id, "Refresh job missing target_brief_id");
@@ -235,7 +241,7 @@ async function executeResearchJob(job: ResearchJobRow) {
         return;
       }
       previousBrief = parsed.data;
-      snapshotBriefVersion({
+      preRefreshVersionId = snapshotBriefVersion({
         briefId: job.target_brief_id,
         briefJson: row.brief_json,
         reason: "pre-refresh",
@@ -263,6 +269,37 @@ async function executeResearchJob(job: ResearchJobRow) {
     console.log(
       `[worker] done job=${job.id} intent=${job.intent ?? "create"} brief=${briefId} cost_cents=${cost ?? "null"}`,
     );
+
+    // Audit-trail events (after the primary transaction commits).
+    if (isRefresh) {
+      logBriefRefreshed({
+        briefId,
+        jobId: job.id,
+        actorUserId: job.user_id,
+        mode: job.mode,
+        costCents: cost,
+        preRefreshVersionId,
+      });
+    } else {
+      logBriefCreated({
+        briefId,
+        jobId: job.id,
+        actorUserId: job.user_id,
+        accountName: validated.account_name,
+        mode: job.mode,
+        costCents: cost,
+        sourceCount: validated.sources?.length ?? 0,
+      });
+    }
+    logJobCompleted({
+      briefId,
+      jobId: job.id,
+      actorUserId: job.user_id,
+      accountName: job.account_name,
+      mode: job.mode,
+      intent: isRefresh ? "refresh" : "create",
+      costCents: cost,
+    });
 
     if (isEmailConfigured()) {
       const user = findUserForJob(job.user_id);
