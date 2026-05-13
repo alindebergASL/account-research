@@ -6,6 +6,7 @@ import {
   ActionPanelTile,
   OpenQuestionsTile,
   MetricTile,
+  ExtensionTile,
 } from "../../components/canvas/tiles";
 import {
   SectionRefDetail,
@@ -13,6 +14,7 @@ import {
   ActionPanelDetail,
   OpenQuestionsDetail,
   MetricDetail,
+  ExtensionDetail,
 } from "../../components/canvas/details";
 
 export interface WidgetDescriptor {
@@ -28,6 +30,7 @@ export const ALL_WIDGET_KINDS: readonly WidgetKind[] = [
   "action_panel",
   "open_questions",
   "metric",
+  "extension",
 ];
 
 const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
@@ -60,6 +63,12 @@ const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
     label: "Metric",
     Tile: MetricTile as ComponentType<{ widget: CanvasWidget }>,
     Detail: MetricDetail as ComponentType<{ widget: CanvasWidget }>,
+  },
+  extension: {
+    kind: "extension",
+    label: "Insight",
+    Tile: ExtensionTile as ComponentType<{ widget: CanvasWidget }>,
+    Detail: ExtensionDetail as ComponentType<{ widget: CanvasWidget }>,
   },
 };
 

@@ -27,10 +27,10 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const canvasBridgeEnabled = isCanvasBridgeEnabled();
   const canvas = useMemo(
     () =>
-      brief
+      canvasBridgeEnabled && brief
         ? buildReadOnlyCanvasFromBrief({ briefId: params.id, brief })
         : null,
-    [brief, params.id],
+    [brief, canvasBridgeEnabled, params.id],
   );
 
   useEffect(() => {

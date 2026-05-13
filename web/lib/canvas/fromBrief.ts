@@ -1,5 +1,5 @@
-import type { Brief } from "@/lib/schema";
-import type { CanvasWidget, Canvas, Confidence } from "./schema";
+import type { Brief, BriefExtension } from "@/lib/schema";
+import type { CanvasWidget, Canvas, Confidence, Source } from "./schema";
 
 // Build a read-only, deterministic Canvas from an existing Brief.
 //
@@ -9,9 +9,10 @@ import type { CanvasWidget, Canvas, Confidence } from "./schema";
 //   or from fixed labels/headers.
 // - All widget controls are false.
 // - Widget IDs are stable slugs so the same input produces the same output.
-// - `extensions` section is included only when `brief.extensions.length > 0`.
+// - Brief extensions become first-class widgets with id `extension-<ext.id>`.
 
 const EVIDENCE_CAP = 8;
+const GRID_COLS = 12;
 
 const NO_CONTROLS = {
   can_refresh: false,
@@ -20,7 +21,7 @@ const NO_CONTROLS = {
   can_export: false,
 } as const;
 
-function truncate(s: string, max = 220): string {
+function truncate(s: string, max = 320): string {
   if (!s) return "";
   const trimmed = s.trim();
   if (trimmed.length <= max) return trimmed;
@@ -34,18 +35,35 @@ function listPreview(items: string[], max = 4): string {
   return head;
 }
 
-function layoutAt(index: number) {
-  // Deterministic two-column grid: alternating x=0/6, y increments every 2.
-  const col = index % 2;
-  const row = Math.floor(index / 2);
-  return {
-    x: col === 0 ? 0 : 6,
-    y: row * 2,
-    w: 6,
-    h: 2,
-    pinned: false,
-    collapsed: false,
-  };
+function sourceFromBriefSource(s: { title: string; url: string; accessed?: string }): Source {
+  return { title: s.title, url: s.url, accessed: s.accessed };
+}
+
+// Greedy 12-col packer: tracks y and x; when next widget overflows
+// row, advance y and reset x. Output coordinates are deterministic.
+class GridPacker {
+  private x = 0;
+  private y = 0;
+  private rowHeight = 0;
+  next(w: number, h: number) {
+    const ww = Math.min(Math.max(w, 1), GRID_COLS);
+    if (this.x + ww > GRID_COLS) {
+      this.y += this.rowHeight || 1;
+      this.x = 0;
+      this.rowHeight = 0;
+    }
+    const layout = {
+      x: this.x,
+      y: this.y,
+      w: ww,
+      h: Math.min(Math.max(h, 1), 24),
+      pinned: false,
+      collapsed: false,
+    };
+    this.x += ww;
+    this.rowHeight = Math.max(this.rowHeight, layout.h);
+    return layout;
+  }
 }
 
 export function buildReadOnlyCanvasFromBrief({
@@ -57,24 +75,31 @@ export function buildReadOnlyCanvasFromBrief({
 }): Canvas {
   const generatedAt = brief.generated_at || new Date(0).toISOString();
   const widgets: CanvasWidget[] = [];
+  const packer = new GridPacker();
 
   function baseWidget(
     id: string,
     title: string,
-    indexHint: number,
-    opts: { confidence?: Confidence; why_included?: string } = {},
+    w: number,
+    h: number,
+    opts: {
+      confidence?: Confidence;
+      why_included?: string;
+      source?: "system" | "model" | "research" | "chat" | "user" | "refresh" | "hermes";
+      sources?: Source[];
+    } = {},
   ) {
     return {
       id,
       title,
       description: "",
-      source: "system" as const,
+      source: opts.source ?? ("system" as const),
       created_at: generatedAt,
       updated_at: generatedAt,
       confidence: opts.confidence,
       why_included: opts.why_included ?? "Derived from saved brief.",
-      sources: [],
-      layout: layoutAt(indexHint),
+      sources: opts.sources ?? [],
+      layout: packer.next(w, h),
       controls: { ...NO_CONTROLS },
       status: "fresh" as const,
       evidence: [],
@@ -86,130 +111,56 @@ export function buildReadOnlyCanvasFromBrief({
     title: string,
     sectionKey: string,
     preview: string,
+    w: number,
+    h = 3,
   ) {
     widgets.push({
-      ...baseWidget(id, title, widgets.length, {
+      ...baseWidget(id, title, w, h, {
         why_included: "Derived from standard brief section.",
       }),
       kind: "section_ref",
-      data: { section_key: sectionKey, preview: truncate(preview, 320) },
+      data: { section_key: sectionKey, preview: truncate(preview) },
     });
   }
 
-  // 1) Section references — fixed deterministic order.
-  addSectionRef("section-snapshot", "Account snapshot", "snapshot", brief.snapshot);
+  // ---- Header row: snapshot + maturity gauge -----------------------------
+  addSectionRef(
+    "section-snapshot",
+    "Account snapshot",
+    "snapshot",
+    brief.snapshot,
+    8,
+    3,
+  );
+  widgets.push({
+    ...baseWidget("metric-ai-maturity", "AI maturity", 4, 3),
+    kind: "metric",
+    data: {
+      label: "AI / tech maturity",
+      value: `${brief.ai_tech_maturity.rating}/5`,
+      helper: "Rating from the saved brief.",
+    },
+  });
+
+  // ---- Priority + signals row -------------------------------------------
   addSectionRef(
     "section-priority",
     "Why this account · why now",
     "priority_summary",
     brief.priority_summary,
+    6,
+    3,
   );
   addSectionRef(
     "section-recent-signals",
     "Recent strategic signals",
     "recent_signals",
     listPreview(brief.recent_signals.map((s) => s.text)),
-  );
-  addSectionRef(
-    "section-ai-maturity",
-    "AI / tech maturity",
-    "ai_tech_maturity",
-    `Rating ${brief.ai_tech_maturity.rating}/5 — ${brief.ai_tech_maturity.rationale}`,
-  );
-  addSectionRef(
-    "section-top-initiatives",
-    "Top initiatives",
-    "top_initiatives",
-    listPreview(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
+    6,
+    3,
   );
 
-  const tf = brief.technical_footprint;
-  addSectionRef(
-    "section-technical-footprint",
-    "Technical footprint",
-    "technical_footprint",
-    [
-      tf.ai_in_production.length > 0
-        ? `AI in production: ${tf.ai_in_production.slice(0, 2).join("; ")}`
-        : "",
-      tf.active_pilots.length > 0
-        ? `Active pilots: ${tf.active_pilots.slice(0, 2).join("; ")}`
-        : "",
-      tf.cloud_platforms.length > 0
-        ? `Cloud: ${tf.cloud_platforms.join(", ")}`
-        : "",
-      tf.clinical_platforms ? `Clinical: ${tf.clinical_platforms}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
-
-  const pp = brief.programs_procurement;
-  addSectionRef(
-    "section-programs-procurement",
-    "Programs & procurement",
-    "programs_procurement",
-    [
-      pp.active_rfps_contracts.length > 0
-        ? `Active RFPs / contracts: ${pp.active_rfps_contracts.slice(0, 3).join("; ")}`
-        : "",
-      pp.modernization_grants.length > 0
-        ? `Grants: ${pp.modernization_grants.slice(0, 2).join("; ")}`
-        : "",
-      pp.ai_governance_policy
-        ? `Governance: ${pp.ai_governance_policy}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
-
-  addSectionRef(
-    "section-personas",
-    "Key personas",
-    "personas",
-    listPreview(brief.personas.map((p) => `${p.name} — ${p.title}`)),
-  );
-  addSectionRef(
-    "section-buying-path",
-    "Buying / decision path",
-    "buying_path",
-    brief.buying_path,
-  );
-  addSectionRef(
-    "section-first-angle",
-    "First conversation angle",
-    "first_angle",
-    brief.first_angle,
-  );
-  addSectionRef(
-    "section-risks",
-    "Risks & watch-outs",
-    "risks",
-    listPreview(brief.risks),
-  );
-  addSectionRef(
-    "section-competitive-signals",
-    "Competitive / vendor signals",
-    "competitive_signals",
-    listPreview(brief.competitive_signals),
-  );
-  if (brief.extensions.length > 0) {
-    addSectionRef(
-      "section-extensions",
-      "Insights",
-      "extensions",
-      listPreview(brief.extensions.map((e) => e.title)),
-    );
-  }
-  addSectionRef(
-    "section-sources",
-    "Key sources",
-    "sources",
-    listPreview(brief.sources.map((s) => s.title)),
-  );
-
-  // 2) Evidence board — capped at 8, drawn from explicit brief fields.
+  // ---- Evidence board + small metrics row -------------------------------
   const evidence: { text: string; source?: string; confidence?: Confidence }[] = [];
   for (const s of brief.recent_signals) {
     evidence.push({ text: s.text, source: s.source, confidence: s.confidence });
@@ -240,18 +191,137 @@ export function buildReadOnlyCanvasFromBrief({
       confidence: ext.confidence,
     });
   }
-
   widgets.push({
-    ...baseWidget("evidence-board", "Evidence board", widgets.length, {
+    ...baseWidget("evidence-board", "Evidence board", 8, 4, {
       why_included: "Citation snippets from signals, initiatives, and personas.",
     }),
     kind: "evidence_board",
     data: { items: evidence.slice(0, EVIDENCE_CAP) },
   });
-
-  // 3) Action panel — exactly one action, verbatim from brief.next_action.
   widgets.push({
-    ...baseWidget("action-next", "Recommended next action", widgets.length, {
+    ...baseWidget("metric-sources", "Sources", 4, 2),
+    kind: "metric",
+    data: {
+      label: "Cited sources",
+      value: String(brief.sources.length),
+      helper: brief.sources.length === 1 ? "source" : "sources",
+    },
+  });
+  widgets.push({
+    ...baseWidget("metric-initiatives", "Initiatives", 4, 2),
+    kind: "metric",
+    data: {
+      label: "Top initiatives",
+      value: String(brief.top_initiatives.length),
+      helper: brief.top_initiatives.length === 1 ? "initiative" : "initiatives",
+    },
+  });
+
+  // ---- Substance rows ---------------------------------------------------
+  addSectionRef(
+    "section-ai-maturity",
+    "AI / tech maturity",
+    "ai_tech_maturity",
+    `Rating ${brief.ai_tech_maturity.rating}/5 — ${brief.ai_tech_maturity.rationale}`,
+    6,
+    3,
+  );
+  addSectionRef(
+    "section-top-initiatives",
+    "Top initiatives",
+    "top_initiatives",
+    listPreview(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
+    6,
+    3,
+  );
+
+  const tf = brief.technical_footprint;
+  addSectionRef(
+    "section-technical-footprint",
+    "Technical footprint",
+    "technical_footprint",
+    [
+      tf.ai_in_production.length > 0
+        ? `AI in production: ${tf.ai_in_production.slice(0, 2).join("; ")}`
+        : "",
+      tf.active_pilots.length > 0
+        ? `Active pilots: ${tf.active_pilots.slice(0, 2).join("; ")}`
+        : "",
+      tf.cloud_platforms.length > 0
+        ? `Cloud: ${tf.cloud_platforms.join(", ")}`
+        : "",
+      tf.clinical_platforms ? `Clinical: ${tf.clinical_platforms}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    6,
+    3,
+  );
+
+  const pp = brief.programs_procurement;
+  addSectionRef(
+    "section-programs-procurement",
+    "Programs & procurement",
+    "programs_procurement",
+    [
+      pp.active_rfps_contracts.length > 0
+        ? `Active RFPs / contracts: ${pp.active_rfps_contracts.slice(0, 3).join("; ")}`
+        : "",
+      pp.modernization_grants.length > 0
+        ? `Grants: ${pp.modernization_grants.slice(0, 2).join("; ")}`
+        : "",
+      pp.ai_governance_policy ? `Governance: ${pp.ai_governance_policy}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    6,
+    3,
+  );
+
+  addSectionRef(
+    "section-personas",
+    "Key personas",
+    "personas",
+    listPreview(brief.personas.map((p) => `${p.name} — ${p.title}`)),
+    6,
+    3,
+  );
+  addSectionRef(
+    "section-buying-path",
+    "Buying / decision path",
+    "buying_path",
+    brief.buying_path,
+    6,
+    2,
+  );
+  addSectionRef(
+    "section-first-angle",
+    "First conversation angle",
+    "first_angle",
+    brief.first_angle,
+    6,
+    2,
+  );
+  addSectionRef(
+    "section-risks",
+    "Risks & watch-outs",
+    "risks",
+    listPreview(brief.risks),
+    6,
+    2,
+  );
+  addSectionRef(
+    "section-competitive-signals",
+    "Competitive / vendor signals",
+    "competitive_signals",
+    listPreview(brief.competitive_signals),
+    6,
+    2,
+  );
+
+  // ---- Action + open questions ------------------------------------------
+  widgets.push({
+    ...baseWidget("action-next", "Recommended next action", 8, 2, {
       why_included: "From brief.next_action.",
     }),
     kind: "action_panel",
@@ -260,17 +330,13 @@ export function buildReadOnlyCanvasFromBrief({
     },
   });
 
-  // 4) Open questions — deterministic heuristics from missing/thin fields.
   const questions: string[] = [];
   if (brief.personas.length === 0) {
     questions.push("Which buyer or executive sponsor should be prioritized?");
   }
   if (brief.competitive_signals.length === 0) {
-    questions.push(
-      "Which incumbent vendors or competitors are most relevant?",
-    );
+    questions.push("Which incumbent vendors or competitors are most relevant?");
   }
-  // Low-completeness signal mirrors the canvas LowQualityBanner heuristic.
   const filled = [
     brief.snapshot,
     brief.priority_summary,
@@ -284,46 +350,31 @@ export function buildReadOnlyCanvasFromBrief({
     brief.personas.length > 0,
   ].filter(Boolean).length;
   if (filled + arrayFilled < 4) {
-    questions.push(
-      "Which public sources would strengthen this account brief?",
-    );
+    questions.push("Which public sources would strengthen this account brief?");
   }
   widgets.push({
-    ...baseWidget("open-questions", "Open questions", widgets.length, {
+    ...baseWidget("open-questions", "Open questions", 4, 2, {
       why_included: "Surface gaps without inventing facts.",
     }),
     kind: "open_questions",
     data: { questions },
   });
 
-  // 5) Metrics — 3 cards from brief metadata.
-  widgets.push({
-    ...baseWidget("metric-ai-maturity", "AI maturity", widgets.length),
-    kind: "metric",
-    data: {
-      label: "AI / tech maturity",
-      value: `${brief.ai_tech_maturity.rating}/5`,
-      helper: "Rating from the saved brief.",
-    },
-  });
-  widgets.push({
-    ...baseWidget("metric-sources", "Sources", widgets.length),
-    kind: "metric",
-    data: {
-      label: "Cited sources",
-      value: String(brief.sources.length),
-      helper: brief.sources.length === 1 ? "source" : "sources",
-    },
-  });
-  widgets.push({
-    ...baseWidget("metric-initiatives", "Initiatives", widgets.length),
-    kind: "metric",
-    data: {
-      label: "Top initiatives",
-      value: String(brief.top_initiatives.length),
-      helper: brief.top_initiatives.length === 1 ? "initiative" : "initiatives",
-    },
-  });
+  // ---- Sources -----------------------------------------------------------
+  addSectionRef(
+    "section-sources",
+    "Key sources",
+    "sources",
+    listPreview(brief.sources.map((s) => s.title)),
+    12,
+    2,
+  );
+
+  // ---- Extensions as first-class widgets --------------------------------
+  // Layout per spec: card/list w=6, table/narrative w=12.
+  for (const ext of brief.extensions) {
+    widgets.push(buildExtensionWidget(ext, packer, generatedAt));
+  }
 
   return {
     account_id: briefId,
@@ -336,4 +387,62 @@ export function buildReadOnlyCanvasFromBrief({
       pinned_order: widgets.map((w) => w.id),
     },
   };
+}
+
+function buildExtensionWidget(
+  ext: BriefExtension,
+  packer: GridPacker,
+  generatedAtFallback: string,
+): CanvasWidget {
+  const w = ext.kind === "table" || ext.kind === "narrative" ? 12 : 6;
+  const h = ext.kind === "table" ? 4 : ext.kind === "narrative" ? 3 : 3;
+  const layout = packer.next(w, h);
+  const created = ext.created_at || generatedAtFallback;
+  // Preserve the brief's own extension source verbatim so renderers can
+  // show chat additions and operators see PR-A research/model provenance.
+  const source = ext.source;
+  const sources = ext.sources.map(sourceFromBriefSource);
+
+  const base = {
+    id: `extension-${ext.id}`,
+    title: ext.title,
+    description: "",
+    source,
+    created_at: created,
+    updated_at: created,
+    confidence: ext.confidence,
+    why_included: ext.why_included || "From brief extensions.",
+    sources,
+    layout,
+    controls: { ...NO_CONTROLS },
+    status: "fresh" as const,
+    evidence: [],
+  };
+
+  switch (ext.kind) {
+    case "card":
+      return {
+        ...base,
+        kind: "extension",
+        data: { ext_kind: "card", body: ext.body },
+      };
+    case "narrative":
+      return {
+        ...base,
+        kind: "extension",
+        data: { ext_kind: "narrative", body: ext.body },
+      };
+    case "list":
+      return {
+        ...base,
+        kind: "extension",
+        data: { ext_kind: "list", items: ext.items },
+      };
+    case "table":
+      return {
+        ...base,
+        kind: "extension",
+        data: { ext_kind: "table", columns: ext.columns, rows: ext.rows },
+      };
+  }
 }
