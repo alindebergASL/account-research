@@ -32,12 +32,13 @@ export const WidgetKind = z.enum([
 export type WidgetKind = z.infer<typeof WidgetKind>;
 
 // `refresh` and `hermes` are accepted now so a future Hermes-emitted
-// widget passes schema validation without churn. The read-only adapter
-// currently only emits `system` and `chat` (the latter only for
-// chat-sourced extensions).
+// widget passes schema validation without churn. `research` preserves
+// PR-A research-generated extension provenance; `model` remains valid for
+// legacy briefs.
 export const WidgetSource = z.enum([
   "system",
   "model",
+  "research",
   "chat",
   "user",
   "refresh",
@@ -73,6 +74,7 @@ export const Evidence = z.object({
   source: z.string().optional(),
   confidence: Confidence.optional(),
   tag: z.string().optional(),
+  added_at: z.string().optional(),
 });
 export type Evidence = z.infer<typeof Evidence>;
 
@@ -90,6 +92,7 @@ export const EvidenceItem = z.object({
   source: z.string().optional(),
   confidence: Confidence.optional(),
   tag: z.string().optional(),
+  added_at: z.string().optional(),
 });
 
 export const EvidenceBoardData = z.object({
@@ -140,10 +143,18 @@ export const MetricData = z.object({
 
 // Extension widgets render Brief extensions (card / table / list /
 // narrative) as native canvas widgets with deterministic IDs.
+export const ExtensionListItemData = z.union([
+  z.string(),
+  z.object({
+    heading: z.string().optional(),
+    text: z.string(),
+  }),
+]);
+
 export const ExtensionData = z.object({
   ext_kind: z.enum(["card", "table", "list", "narrative"]),
   body: z.string().optional(),
-  items: z.array(z.string()).optional(),
+  items: z.array(ExtensionListItemData).optional(),
   columns: z.array(z.string()).optional(),
   rows: z.array(z.array(z.string())).optional(),
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Lock, RefreshCw } from "lucide-react";
+import { Lock } from "lucide-react";
 import type { Canvas } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
 import WidgetTile from "./WidgetTile";
@@ -38,19 +38,13 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
         </p>
         <div className="text-xs text-muted mt-2 flex flex-wrap items-center gap-3">
           <span>{canvas.widgets.length} widgets</span>
-          <span>·</span>
-          <span>version {canvas.version}</span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1 opacity-60">
-            <RefreshCw className="size-3" />
-            Refresh / actions coming later
-          </span>
         </div>
       </header>
 
       {/* Grid */}
       <div
-        data-testid="canvas-widget-grid"
+        data-testid="widget-grid"
+        data-legacy-testid="canvas-widget-grid"
         className="grid grid-cols-1 md:grid-cols-12 gap-4 auto-rows-min"
       >
         {canvas.widgets.map((w) => (

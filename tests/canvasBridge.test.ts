@@ -139,7 +139,7 @@ test("one extension of each kind produces dedicated extension widgets", () => {
       id: "card-1",
       title: "Pilot procurement insight",
       body: "Public-sector pilot expected to procure in Q3.",
-      source: "model",
+      source: "research",
       created_at: "2026-05-11",
       why_included: "Surfaced from procurement scan.",
       confidence: "Medium",
@@ -197,7 +197,7 @@ test("one extension of each kind produces dedicated extension widgets", () => {
   if (cardW && cardW.kind === "extension") {
     assert.equal(cardW.data.ext_kind, "card");
     assert.equal(cardW.data.body, "Public-sector pilot expected to procure in Q3.");
-    assert.equal(cardW.source, "model");
+    assert.equal(cardW.source, "research", "research-sourced extension preserves source=research");
     assert.equal(cardW.layout.w, 6);
   }
   const tableW = canvas.widgets.find((w) => w.id === "extension-table-1");
@@ -295,7 +295,7 @@ test("schema accepts richer metric / open-question / action / evidence shapes", 
         kind: "metric",
         title: "Pipeline value",
         description: "",
-        source: "hermes",
+        source: "research",
         created_at: "2026-05-13T00:00:00.000Z",
         updated_at: "2026-05-13T00:00:00.000Z",
         sources: [],
@@ -415,7 +415,7 @@ test("schema accepts richer metric / open-question / action / evidence shapes", 
   if (metric.kind === "metric") {
     assert.equal(metric.data.unit, "USD");
     assert.equal(metric.data.delta, "+12% MoM");
-    assert.equal(metric.source, "hermes");
+    assert.equal(metric.source, "research");
     assert.equal(metric.status, "watching");
   }
   const questions = parsed.widgets[1];

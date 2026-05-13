@@ -85,7 +85,7 @@ export function buildReadOnlyCanvasFromBrief({
     opts: {
       confidence?: Confidence;
       why_included?: string;
-      source?: "system" | "model" | "chat" | "user" | "refresh" | "hermes";
+      source?: "system" | "model" | "research" | "chat" | "user" | "refresh" | "hermes";
       sources?: Source[];
     } = {},
   ) {
@@ -398,9 +398,9 @@ function buildExtensionWidget(
   const h = ext.kind === "table" ? 4 : ext.kind === "narrative" ? 3 : 3;
   const layout = packer.next(w, h);
   const created = ext.created_at || generatedAtFallback;
-  // Preserve the brief's own extension source verbatim ('model' or 'chat')
-  // so renderers can show "Added in chat" and operators see provenance.
-  const source: "chat" | "model" = ext.source === "chat" ? "chat" : "model";
+  // Preserve the brief's own extension source verbatim so renderers can
+  // show chat additions and operators see PR-A research/model provenance.
+  const source = ext.source;
   const sources = ext.sources.map(sourceFromBriefSource);
 
   const base = {

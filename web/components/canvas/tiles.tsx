@@ -8,21 +8,10 @@ import type {
   ExtensionWidget,
 } from "../../lib/canvas/schema";
 
-function TileHeader({
-  title,
-  kindLabel,
-}: {
-  title: string;
-  kindLabel: string;
-}) {
-  return (
-    <div className="mb-2">
-      <div className="text-[10px] uppercase tracking-widest text-muted mb-1">
-        {kindLabel}
-      </div>
-      <h3 className="text-sm font-medium leading-tight line-clamp-2">{title}</h3>
-    </div>
-  );
+function TileHeader(_props: { title: string; kindLabel: string }) {
+  // Header chrome lives in WidgetTile so all widget kinds share the same
+  // title/drill affordances and confidence/status placement.
+  return null;
 }
 
 // ---- section_ref ----------------------------------------------------------
@@ -158,12 +147,8 @@ export function MetricTile({
 
 // ---- extension ------------------------------------------------------------
 
-function ChatChip() {
-  return (
-    <span className="chip chip-na text-[10px]" title="Added in chat">
-      Added in chat
-    </span>
-  );
+function extensionListItemText(item: string | { heading?: string; text: string }): string {
+  return typeof item === "string" ? item : item.heading ? `${item.heading}: ${item.text}` : item.text;
 }
 
 export function ExtensionTile({
@@ -172,20 +157,8 @@ export function ExtensionTile({
   widget: import("zod").infer<typeof ExtensionWidget>;
 }) {
   const d = widget.data;
-  const isChat = widget.source === "chat";
-  const kindLabel = `Insight · ${d.ext_kind}`;
-
   return (
     <div>
-      <div className="mb-2 flex items-center gap-2">
-        <div className="text-[10px] uppercase tracking-widest text-muted">
-          {kindLabel}
-        </div>
-        {isChat && <ChatChip />}
-      </div>
-      <h3 className="text-sm font-medium leading-tight line-clamp-2 mb-2">
-        {widget.title}
-      </h3>
       {d.ext_kind === "card" && (
         <p className="text-sm leading-snug line-clamp-5">{d.body || "—"}</p>
       )}
@@ -198,7 +171,7 @@ export function ExtensionTile({
         <ul className="space-y-1 text-sm list-disc pl-5">
           {(d.items ?? []).slice(0, 4).map((item, i) => (
             <li key={i} className="line-clamp-2">
-              {item}
+              {extensionListItemText(item)}
             </li>
           ))}
           {(d.items ?? []).length === 0 && (
