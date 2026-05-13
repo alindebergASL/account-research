@@ -24,13 +24,24 @@ export const ALLOWED_BRIEF_PATCH_FIELDS = new Set([
   "extensions",
 ]);
 
-function stampChatExtension(value: any) {
+// Force source="chat" on a single chat-appended extension regardless of what
+// the model sent. Newly-appended extensions are by definition chat-authored,
+// so we never let the model claim source="research" or "model" here.
+function forceChatExtension(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  return { ...value, source: value.source ?? "chat" };
+  return { ...value, source: "chat" };
 }
 
-function parseChatExtension(value: any) {
-  return BriefExtension.parse(stampChatExtension(value));
+function parseAppendedChatExtension(value: any) {
+  return BriefExtension.parse(forceChatExtension(value));
+}
+
+// op=set replaces the whole extensions array. Items may include legacy
+// research-generated entries (source "model" or "research") that the user
+// is intentionally preserving — do NOT force "chat" here. We still parse
+// each item against BriefExtension so malformed entries are rejected.
+function parseSetExtension(value: any) {
+  return BriefExtension.parse(value);
 }
 
 export function applyPatches(brief: BriefT, patches: BriefPatch[]): BriefT {
@@ -42,12 +53,12 @@ export function applyPatches(brief: BriefT, patches: BriefPatch[]): BriefT {
     let value = p.value;
     if (p.field === "extensions") {
       if (p.op === "append") {
-        value = parseChatExtension(value);
+        value = parseAppendedChatExtension(value);
       } else if (p.op === "set") {
         if (!Array.isArray(value)) {
           throw new Error("extensions set value must be an array");
         }
-        value = value.map(parseChatExtension);
+        value = value.map(parseSetExtension);
       }
     }
     if (p.op === "set") {

@@ -105,6 +105,19 @@ def extension_label(ext):
     return clean(ext.get("kind", "insight")).title()
 
 
+# List items accept either a plain string (legacy / pre-PR-A) or a
+# {heading?, text} object (PR-A spec). Renderers fold both into one
+# display string of the form "Heading: text" when heading is present.
+def list_item_text(item):
+    if isinstance(item, dict):
+        heading = clean(item.get("heading"))
+        text = clean(item.get("text"))
+        if heading and text:
+            return f"{heading}: {text}"
+        return heading or text
+    return clean(item)
+
+
 def add_docx_extensions(doc, extensions):
     for ext in extensions:
         if not isinstance(ext, dict):
@@ -134,11 +147,17 @@ def add_docx_extensions(doc, extensions):
                         row[i].text = clean(row_values[i] if isinstance(row_values, list) and i < len(row_values) else "")
         elif kind == "list":
             for item in ext.get("items", []) or []:
-                doc.add_paragraph(clean(item), style="List Bullet")
+                doc.add_paragraph(list_item_text(item), style="List Bullet")
         elif kind == "card":
             para = doc.add_paragraph()
             run = para.add_run(clean(ext.get("body")))
             run.bold = False
+            badges = ext.get("badges") if isinstance(ext.get("badges"), list) else []
+            if badges:
+                badges_p = doc.add_paragraph(" · ".join(clean(b) for b in badges if clean(b)))
+                if badges_p.runs:
+                    badges_p.runs[0].font.size = Pt(9)
+                    badges_p.runs[0].font.color.rgb = RGBColor(0x66, 0x66, 0x66)
         else:
             doc.add_paragraph(clean(ext.get("body")))
 
@@ -169,10 +188,16 @@ def pdf_extension_flowables(ext, styles, page_w):
             flow.append(_table([[Paragraph(clean(c), styles["tbl"]) for c in r] for r in data], col_w))
     elif kind == "list":
         for item in ext.get("items", []) or []:
-            flow.append(Paragraph(f"• {clean(item)}", styles["bullet"]))
+            flow.append(Paragraph(f"• {list_item_text(item)}", styles["bullet"]))
     elif kind == "card":
         body = Paragraph(clean(ext.get("body")), styles["body"])
-        t = Table([[body]], colWidths=[page_w])
+        cell_flows = [body]
+        badges = ext.get("badges") if isinstance(ext.get("badges"), list) else []
+        if badges:
+            cell_flows.append(
+                Paragraph(" · ".join(clean(b) for b in badges if clean(b)), styles["meta"])
+            )
+        t = Table([[cell_flows]], colWidths=[page_w])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f5f7fb")),
             ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
