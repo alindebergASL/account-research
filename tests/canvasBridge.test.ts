@@ -6,6 +6,7 @@ import { Canvas } from "../web/lib/canvas/schema";
 import { Brief, type BriefExtension } from "../web/lib/schema";
 import { buildReadOnlyCanvasFromBrief } from "../web/lib/canvas/fromBrief";
 import { ALL_WIDGET_KINDS, getDescriptor } from "../web/lib/canvas/registry";
+import { isSafeExternalUrl } from "../web/components/canvas/details";
 
 const sampleBriefJson = JSON.parse(
   readFileSync(path.join(__dirname, "sample_brief.json"), "utf8"),
@@ -478,4 +479,12 @@ test("schema rejects out-of-bounds widget layout", () => {
       meta: { layout_mode: "grid", pinned_order: ["x"] },
     });
   assert.throws(bad);
+});
+
+test("canvas detail source links only allow http and https URLs", () => {
+  assert.equal(isSafeExternalUrl("https://example.com/source"), true);
+  assert.equal(isSafeExternalUrl("http://example.com/source"), true);
+  assert.equal(isSafeExternalUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeExternalUrl("data:text/html,<script>alert(1)</script>"), false);
+  assert.equal(isSafeExternalUrl("not a url"), false);
 });

@@ -86,9 +86,10 @@ export default function WidgetTile({
         <button
           type="button"
           onClick={onOpen}
+          aria-label={`Drill into ${widget.title}`}
           className="inline-flex items-center gap-0.5 text-muted hover:text-accent whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
         >
-          Drill <ChevronRight className="size-3" />
+          Drill <ChevronRight className="size-3" aria-hidden="true" />
         </button>
       </footer>
     </motion.article>

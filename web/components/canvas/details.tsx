@@ -11,6 +11,15 @@ import type {
 } from "../../lib/canvas/schema";
 import { ConfidenceChip, SourceLink } from "../DrillModal";
 
+export function isSafeExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function Meta({
   why_included,
   confidence,
@@ -59,17 +68,17 @@ function SourcesBlock({
           <ul className="space-y-2 text-sm">
             {sources!.map((s, i) => (
               <li key={`${s.url || s.title}-${i}`} className="min-w-0">
-                {s.url ? (
+                {s.url && isSafeExternalUrl(s.url) ? (
                   <a
                     href={s.url}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noreferrer noopener"
                     className="text-accent hover:underline break-words"
                   >
                     {s.title || s.url}
                   </a>
                 ) : (
-                  <span>{s.title}</span>
+                  <span>{s.title || s.url}</span>
                 )}
                 {s.accessed && (
                   <span className="ml-2 text-xs text-muted">

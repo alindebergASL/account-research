@@ -7,6 +7,36 @@ import { getDescriptor } from "../../lib/canvas/registry";
 import WidgetTile from "./WidgetTile";
 import DrillModal from "../DrillModal";
 
+function gridSpanClass(span: number): string {
+  const safe = Math.min(Math.max(Math.round(span), 1), 12);
+  switch (safe) {
+    case 2:
+      return "md:col-span-2";
+    case 3:
+      return "md:col-span-3";
+    case 4:
+      return "md:col-span-4";
+    case 5:
+      return "md:col-span-5";
+    case 6:
+      return "md:col-span-6";
+    case 7:
+      return "md:col-span-7";
+    case 8:
+      return "md:col-span-8";
+    case 9:
+      return "md:col-span-9";
+    case 10:
+      return "md:col-span-10";
+    case 11:
+      return "md:col-span-11";
+    case 12:
+      return "md:col-span-12";
+    default:
+      return "md:col-span-1";
+  }
+}
+
 export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const open = canvas.widgets.find((w) => w.id === openId) ?? null;
@@ -27,7 +57,7 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
             className="inline-flex items-center gap-1 chip chip-na text-[10px] ml-2"
             title="Read-only preview derived from the saved brief"
           >
-            <Lock className="size-3" /> Read-only
+            <Lock className="size-3" aria-hidden="true" /> Read-only
           </span>
         </div>
         <h1 className="font-display text-4xl tracking-tight leading-tight mt-2">
@@ -50,10 +80,7 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
         {canvas.widgets.map((w) => (
           <div
             key={w.id}
-            className="col-span-1 min-w-0"
-            style={{
-              gridColumn: `span ${Math.min(Math.max(w.layout.w, 1), 12)} / span ${Math.min(Math.max(w.layout.w, 1), 12)}`,
-            }}
+            className={`col-span-1 min-w-0 ${gridSpanClass(w.layout.w)}`}
           >
             <WidgetTile widget={w} onOpen={() => setOpenId(w.id)} />
           </div>
