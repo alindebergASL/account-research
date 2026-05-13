@@ -33,7 +33,27 @@ export const Source = z.object({
   accessed: z.string(),
 });
 
-const ExtensionSource = z.enum(["model", "chat"]);
+// Accepts:
+//  - "research" — new research-generated extensions (PR-A spec)
+//  - "model"    — legacy research-generated extensions (pre-PR-A)
+//  - "chat"     — chat-appended extensions
+// Legacy "model" stays valid so existing briefs continue to parse without
+// migration. New research output should use "research"; chat patches always
+// force "chat".
+const ExtensionSource = z.enum(["model", "research", "chat"]);
+
+// List items accept both shapes:
+//  - string                            (legacy / pre-PR-A)
+//  - { heading?: string; text: string } (PR-A spec)
+// Renderers normalise to "{heading}: {text}" when heading is present.
+export const ExtensionListItem = z.union([
+  z.string(),
+  z.object({
+    heading: z.string().optional(),
+    text: z.string(),
+  }),
+]);
+export type ExtensionListItem = z.infer<typeof ExtensionListItem>;
 
 export const ExtensionBase = z.object({
   id: z.string().min(1),
@@ -49,6 +69,9 @@ export const ExtensionBase = z.object({
 export const CardExtension = ExtensionBase.extend({
   kind: z.literal("card"),
   body: z.string(),
+  // PR-A spec: small chips on the card. Defaulted so legacy rows without
+  // a badges field still parse.
+  badges: z.array(z.string()).default([]),
 });
 
 export const TableExtension = ExtensionBase.extend({
@@ -59,7 +82,7 @@ export const TableExtension = ExtensionBase.extend({
 
 export const ListExtension = ExtensionBase.extend({
   kind: z.literal("list"),
-  items: z.array(z.string()),
+  items: z.array(ExtensionListItem),
 });
 
 export const NarrativeExtension = ExtensionBase.extend({
@@ -164,7 +187,9 @@ const sourceJsonSchema = {
 const extensionBaseJsonProperties = {
   id: { type: "string" },
   title: { type: "string" },
-  source: { type: "string", enum: ["model", "chat"] },
+  // Includes "research" (PR-A spec, preferred for new research output) and
+  // "model" (legacy pre-PR-A). Chat patches are stamped "chat" server-side.
+  source: { type: "string", enum: ["model", "research", "chat"] },
   created_at: { type: "string" },
   why_included: { type: "string" },
   confidence: { type: "string", enum: ["High", "Medium", "Low", "Not found"] },
@@ -192,6 +217,7 @@ export const briefExtensionJsonSchema = {
         ...extensionBaseJsonProperties,
         kind: { type: "string", enum: ["card"] },
         body: { type: "string" },
+        badges: { type: "array", items: { type: "string" } },
       },
       required: [...extensionBaseRequired, "body"],
     },
@@ -215,7 +241,26 @@ export const briefExtensionJsonSchema = {
       properties: {
         ...extensionBaseJsonProperties,
         kind: { type: "string", enum: ["list"] },
-        items: { type: "array", items: { type: "string" } },
+        items: {
+          type: "array",
+          // Accepts either a plain string or an object with optional
+          // heading + required text. Anthropic structured outputs treat
+          // a `type: ["string", "object"]` items field as a union.
+          items: {
+            oneOf: [
+              { type: "string" },
+              {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  heading: { type: "string" },
+                  text: { type: "string" },
+                },
+                required: ["text"],
+              },
+            ],
+          },
+        },
       },
       required: [...extensionBaseRequired, "items"],
     },

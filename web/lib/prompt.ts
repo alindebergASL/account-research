@@ -78,7 +78,7 @@ Field guidance:
 - risks: 3–5 short bullets.
 - competitive_signals: short bullets, only if found in public sources.
 - next_action: a single concrete recommended next step with timing.
-- extensions: optional dynamic insights for unusual, high-value account-specific material that does not fit the standard sections. Include at most 3. Use stable slug ids (lowercase kebab-case, e.g. "cloud-migration-timeline"). Prefer structured kinds in this order: table for comparisons/matrices, list for ranked bullets/checklists, card for compact callouts. Use narrative only as a fallback when structure would be forced. Do NOT repackage or duplicate content already covered in standard sections; extensions should add a genuinely useful extra lens. Every extension must be grounded with why_included, confidence, and sources. Use source="model" for generated briefs.
+- extensions: optional dynamic insights for unusual, high-value account-specific material that does not fit the standard sections. Include at most 3. Use stable slug ids (lowercase kebab-case, e.g. "cloud-migration-timeline"). Prefer structured kinds in this order: table for comparisons/matrices, list for ranked bullets/checklists, card for compact callouts. Use narrative only as a fallback when structure would be forced. Do NOT repackage or duplicate content already covered in standard sections; extensions should add a genuinely useful extra lens. Every extension must be grounded with why_included, confidence, and at least one entry in sources. Use source="research" for research-generated extensions. Card extensions may include an optional "badges" array (short string chips, e.g. ["Q3-2026","tier-1"]). List extensions accept either plain strings or objects with an optional "heading" plus required "text" — prefer the object form when items have a natural label.
 - sources: every credible URL referenced, with accessed=today.
 
 If web_search returns nothing usable for a given account, still emit the JSON; mark unknown fields with "Not found in public sources." text and confidence "Not found", and keep the sources array short or empty.
@@ -131,18 +131,19 @@ Return EXACTLY ONE JSON object as your final message. No prose before or after. 
       "kind": "card",
       "id": "stable-slug-id",
       "title": "string",
-      "source": "model",
+      "source": "research",
       "created_at": "YYYY-MM-DD",
       "why_included": "string",
       "confidence": "High" | "Medium" | "Low" | "Not found",
       "sources": [{ "title": "string", "url": "string", "accessed": "YYYY-MM-DD" }],
-      "body": "string"
+      "body": "string",
+      "badges": ["optional", "short", "chips"]
     },
     {
       "kind": "table",
       "id": "stable-slug-id",
       "title": "string",
-      "source": "model",
+      "source": "research",
       "created_at": "YYYY-MM-DD",
       "why_included": "string",
       "confidence": "High" | "Medium" | "Low" | "Not found",
@@ -154,18 +155,21 @@ Return EXACTLY ONE JSON object as your final message. No prose before or after. 
       "kind": "list",
       "id": "stable-slug-id",
       "title": "string",
-      "source": "model",
+      "source": "research",
       "created_at": "YYYY-MM-DD",
       "why_included": "string",
       "confidence": "High" | "Medium" | "Low" | "Not found",
       "sources": [{ "title": "string", "url": "string", "accessed": "YYYY-MM-DD" }],
-      "items": ["string"]
+      "items": [
+        "plain string item",
+        { "heading": "optional", "text": "required" }
+      ]
     },
     {
       "kind": "narrative",
       "id": "stable-slug-id",
       "title": "string",
-      "source": "model",
+      "source": "research",
       "created_at": "YYYY-MM-DD",
       "why_included": "string",
       "confidence": "High" | "Medium" | "Low" | "Not found",
@@ -184,7 +188,7 @@ HARD RULES — these are past failure modes; do not repeat them:
 - personas MUST include priority, opener, and source on every item.
 - programs_procurement keys MUST be EXACTLY: modernization_grants, consortium_purchasing, active_rfps_contracts, ai_governance_policy, public_ai_use_cases. Do not invent alternates like "shared_services_consortia" or "active_rfps_or_expiring_contracts".
 - extensions MUST be an array. Use [] when there are no genuinely additive optional insights. Never include more than 3 extensions.
-- extension kind MUST be exactly "card", "table", "list", or "narrative"; source MUST be exactly "model" in generated briefs.
+- extension kind MUST be exactly "card", "table", "list", or "narrative"; source MUST be exactly "research" in generated briefs.
 - sources MUST be an array of objects with title + url + accessed.
 - audience MUST be exactly "internal" or "shareable".
 - confidence MUST be exactly "High", "Medium", "Low", or "Not found".
@@ -241,7 +245,7 @@ When you do call update_brief:
 - Prefer "append" over "set" for arrays (recent_signals, top_initiatives, personas, sources, risks, competitive_signals, extensions, technical_footprint.* arrays, programs_procurement.* arrays).
 - Use "set" only for top-level scalar/object fields (snapshot, priority_summary, buying_path, first_angle, next_action, ai_tech_maturity, technical_footprint, programs_procurement) or to replace the full extensions array when the user clearly wants that replacement.
 - Match the existing item shape exactly. Personas need {name, title, priority, opener, confidence, source}. Recent_signals need {text, source, confidence}. Initiatives need {title, detail, confidence, source}. Sources need {title, url, accessed}.
-- Extensions are optional dynamic insights. Use at most 3 total. Give each extension a stable lowercase kebab-case id. Prefer structured kinds: table for comparisons/matrices, list for ranked bullets/checklists, card for compact callouts. Use narrative only as a fallback. Do NOT duplicate/repackage standard-section content. Extension source should be "chat"; if omitted the server will stamp it. Every extension needs why_included, confidence, created_at, and sources.
+- Extensions are optional dynamic insights. Use at most 3 total. Give each extension a stable lowercase kebab-case id. Prefer structured kinds: table for comparisons/matrices, list for ranked bullets/checklists, card for compact callouts. Use narrative only as a fallback. Do NOT duplicate/repackage standard-section content. Extension source for chat-authored items must be "chat"; the server forces this stamp on append. Every extension needs why_included, confidence, created_at, and at least one entry in sources. Card extensions may include an optional "badges" array of short string chips. List extensions accept items as either plain strings or objects of shape { heading?: string, text: string } — prefer the object form when items have a natural label.
 - When you add new evidence, also append to "sources" or include extension.sources so the change has a citation trail.
 - Confidence values must be exactly "High", "Medium", "Low", or "Not found".
 - Never fabricate. If the requested information cannot be verified from public sources, reply that and skip the update.
