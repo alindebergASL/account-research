@@ -9,6 +9,7 @@ import {
   requireUser,
 } from "@/lib/auth";
 import { Brief } from "@/lib/schema";
+import { canPreviewCanvas } from "@/lib/canvas/capability";
 
 export const runtime = "nodejs";
 
@@ -90,6 +91,11 @@ export async function GET(
     shared_by_email: sharedByEmail,
     last_refreshed_at: lastRefreshedAt,
     versions_count: versionsCount,
+    // Server-derived: only true when CANVAS_PREVIEW_ENABLED=1 AND
+    // user.role === "admin". Used by the client to decide whether to
+    // render the Brief view / Canvas view toggle. Read-only and
+    // capability-only — no secrets, no env values, no canvas data.
+    canvas_preview: canPreviewCanvas(user),
   });
 }
 

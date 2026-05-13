@@ -7,7 +7,6 @@ import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
 import ReadOnlyCanvasView from "@/components/canvas/ReadOnlyCanvasView";
 import { buildReadOnlyCanvasFromBrief } from "@/lib/canvas/fromBrief";
-import { isCanvasBridgeEnabled } from "@/lib/canvas/flags";
 
 type Access = {
   is_owner: boolean;
@@ -24,13 +23,17 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const [versionsCount, setVersionsCount] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"brief" | "canvas">("brief");
-  const canvasBridgeEnabled = isCanvasBridgeEnabled();
+  // Server-derived capability: true only when CANVAS_PREVIEW_ENABLED=1
+  // AND the authenticated user is admin. The client treats this as
+  // opaque — it cannot read the env var directly and shouldn't infer
+  // anything from it beyond "render the toggle or not".
+  const [canvasPreview, setCanvasPreview] = useState<boolean>(false);
   const canvas = useMemo(
     () =>
-      canvasBridgeEnabled && brief
+      canvasPreview && brief
         ? buildReadOnlyCanvasFromBrief({ briefId: params.id, brief })
         : null,
-    [brief, canvasBridgeEnabled, params.id],
+    [brief, canvasPreview, params.id],
   );
 
   useEffect(() => {
@@ -65,6 +68,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         setVersionsCount(
           typeof data.versions_count === "number" ? data.versions_count : 0,
         );
+        setCanvasPreview(data.canvas_preview === true);
       })
       .catch((e: any) => {
         if (cancelled) return;
@@ -122,7 +126,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           )}
         </div>
       )}
-      {canvasBridgeEnabled && (
+      {canvasPreview && (
         <div className="max-w-7xl mx-auto px-6 mt-4">
           <div
             role="tablist"
@@ -158,7 +162,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           </div>
         </div>
       )}
-      {canvasBridgeEnabled && viewMode === "canvas" && canvas ? (
+      {canvasPreview && viewMode === "canvas" && canvas ? (
         <ReadOnlyCanvasView canvas={canvas} />
       ) : (
         <BriefCanvas
