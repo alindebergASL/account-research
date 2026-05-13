@@ -62,7 +62,10 @@ export const ExtensionBase = z.object({
   created_at: z.string(),
   why_included: z.string(),
   confidence: Confidence,
-  sources: z.array(Source),
+  // Defaulted so stored / legacy / partial extension objects without a
+  // sources field still parse. The Anthropic JSON schema (below) still
+  // requires `sources` so research model output quality stays high.
+  sources: z.array(Source).default([]),
   previously_found: z.boolean().optional(),
 });
 

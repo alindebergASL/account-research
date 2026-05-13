@@ -177,6 +177,17 @@ test('table extension preserves columns and rows', () => {
   }
 });
 
+test('extension without sources parses and defaults sources to []', () => {
+  const { sources, ...withoutSources } = baseExt;
+  const ext = BriefExtension.parse({
+    ...withoutSources,
+    kind: 'card',
+    source: 'research',
+    body: 'no sources field',
+  });
+  assert.deepEqual(ext.sources, []);
+});
+
 test('invalid extension kind is rejected', () => {
   assert.throws(() =>
     BriefExtension.parse({ ...baseExt, kind: 'bogus' as any, body: 'x' }),
