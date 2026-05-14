@@ -7,6 +7,13 @@ import { Brief, type BriefExtension } from "../web/lib/schema";
 import { buildReadOnlyCanvasFromBrief } from "../web/lib/canvas/fromBrief";
 import { ALL_WIDGET_KINDS, getDescriptor } from "../web/lib/canvas/registry";
 import { isSafeExternalUrl } from "../web/components/canvas/details";
+import {
+  parseFractionValue,
+  aggregateConfidence,
+  sourceTypeLabel,
+  sectionKeyTone,
+  confidenceBucket,
+} from "../web/lib/canvas/visualHelpers";
 
 const sampleBriefJson = JSON.parse(
   readFileSync(path.join(__dirname, "sample_brief.json"), "utf8"),
@@ -555,4 +562,83 @@ test("canvas detail source links only allow http and https URLs", () => {
   assert.equal(isSafeExternalUrl("javascript:alert(1)"), false);
   assert.equal(isSafeExternalUrl("data:text/html,<script>alert(1)</script>"), false);
   assert.equal(isSafeExternalUrl("not a url"), false);
+});
+
+// ---- visual helpers (PR #14 polish) -----------------------------------------
+
+test("parseFractionValue matches simple N/M strings", () => {
+  assert.deepEqual(parseFractionValue("4/5"), { current: 4, max: 5 });
+  assert.deepEqual(parseFractionValue("3 / 5"), { current: 3, max: 5 });
+  assert.deepEqual(parseFractionValue(" 2/10 "), { current: 2, max: 10 });
+});
+
+test("parseFractionValue rejects non-fraction values", () => {
+  assert.equal(parseFractionValue("12"), null);
+  assert.equal(parseFractionValue("not a number"), null);
+  assert.equal(parseFractionValue(""), null);
+  assert.equal(parseFractionValue(undefined), null);
+  assert.equal(parseFractionValue(null), null);
+  assert.equal(parseFractionValue(7 as unknown), null);
+});
+
+test("parseFractionValue rejects out-of-range pairs", () => {
+  assert.equal(parseFractionValue("6/5"), null, "current must not exceed max");
+  assert.equal(parseFractionValue("3/0"), null, "max must be positive");
+});
+
+test("confidenceBucket maps known labels and falls back to 'na'", () => {
+  assert.equal(confidenceBucket("High"), "high");
+  assert.equal(confidenceBucket("MEDIUM"), "medium");
+  assert.equal(confidenceBucket("low"), "low");
+  assert.equal(confidenceBucket("Not found"), "na");
+  assert.equal(confidenceBucket(undefined), "na");
+  assert.equal(confidenceBucket(null), "na");
+  assert.equal(confidenceBucket(42 as unknown), "na");
+  assert.equal(confidenceBucket("garbage"), "na");
+});
+
+test("aggregateConfidence counts each bucket and tolerates noise", () => {
+  const counts = aggregateConfidence([
+    { confidence: "High" },
+    { confidence: "high" },
+    { confidence: "Medium" },
+    { confidence: "Low" },
+    { confidence: "Not found" },
+    { confidence: undefined },
+    null,
+    undefined,
+  ] as Array<{ confidence?: unknown } | null | undefined>);
+  assert.deepEqual(counts, { high: 2, medium: 1, low: 1, na: 4 });
+});
+
+test("aggregateConfidence handles empty / non-array input", () => {
+  assert.deepEqual(
+    aggregateConfidence([]),
+    { high: 0, medium: 0, low: 0, na: 0 },
+  );
+  assert.deepEqual(
+    aggregateConfidence(undefined as unknown as []),
+    { high: 0, medium: 0, low: 0, na: 0 },
+  );
+});
+
+test("sourceTypeLabel returns a human label and never throws on unknown input", () => {
+  assert.equal(sourceTypeLabel("system"), "System");
+  assert.equal(sourceTypeLabel("research"), "Research");
+  assert.equal(sourceTypeLabel("HERMES"), "Hermes");
+  assert.equal(sourceTypeLabel(""), "Source");
+  assert.equal(sourceTypeLabel(undefined), "Source");
+  assert.equal(sourceTypeLabel(null), "Source");
+  assert.equal(sourceTypeLabel("legacy-unknown"), "Source");
+  assert.equal(sourceTypeLabel(123 as unknown), "Source");
+});
+
+test("sectionKeyTone maps known section_keys to tones", () => {
+  assert.equal(sectionKeyTone("risks"), "risk");
+  assert.equal(sectionKeyTone("competitive_signals"), "signal");
+  assert.equal(sectionKeyTone("recent_signals"), "signal");
+  assert.equal(sectionKeyTone("top_initiatives"), "opportunity");
+  assert.equal(sectionKeyTone("snapshot"), "neutral");
+  assert.equal(sectionKeyTone(undefined), "neutral");
+  assert.equal(sectionKeyTone(42 as unknown), "neutral");
 });

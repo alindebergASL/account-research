@@ -10,6 +10,11 @@ import type {
   Evidence,
 } from "../../lib/canvas/schema";
 import { ConfidenceChip, SourceLink } from "../DrillModal";
+import {
+  ConfidenceBar,
+  SeverityChip,
+  aggregateConfidence,
+} from "./visuals";
 
 export function isSafeExternalUrl(url: string): boolean {
   try {
@@ -150,9 +155,18 @@ export function EvidenceBoardDetail({
 }: {
   widget: import("zod").infer<typeof EvidenceBoardWidget>;
 }) {
+  const counts = aggregateConfidence(widget.data.items);
   return (
     <div>
       <Meta why_included={widget.why_included} source={widget.source} />
+      {widget.data.items.length > 0 && (
+        <section className="mb-5 rounded-lg border border-[var(--line)] p-3">
+          <div className="text-xs uppercase tracking-wider text-muted mb-2">
+            Evidence confidence
+          </div>
+          <ConfidenceBar counts={counts} size="md" />
+        </section>
+      )}
       {widget.data.items.length === 0 ? (
         <p className="text-sm text-muted">No evidence available.</p>
       ) : (
@@ -192,13 +206,6 @@ function normalizeAction(a: import("zod").infer<typeof ActionPanelWidget>["data"
     };
   }
   return { title: a.text, detail: a.why, severity: a.severity, owner: a.owner };
-}
-
-function SeverityChip({ s }: { s?: "low" | "medium" | "high" }) {
-  if (!s) return null;
-  const cls =
-    s === "high" ? "chip-low" : s === "medium" ? "chip-med" : "chip-na";
-  return <span className={`chip ${cls} text-[10px]`}>severity: {s}</span>;
 }
 
 export function ActionPanelDetail({
