@@ -8,6 +8,7 @@ import { getDescriptor } from "../../lib/canvas/registry";
 import { ConfidenceChip } from "../DrillModal";
 import {
   SourceTypeBadge,
+  ToneIcon,
   semanticAccentClass,
   semanticAccentStyle,
   sectionKeyTone,
@@ -79,11 +80,13 @@ export default function WidgetTile({
     : accentStyle;
 
   const labelClass = isAction
-    ? "text-[10px] uppercase tracking-widest text-white/60 mb-1"
-    : "text-[10px] uppercase tracking-widest text-muted mb-1";
+    ? "inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-white/60 mb-1"
+    : "inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted mb-1";
+  // Slightly stronger title hierarchy than the previous text-sm — closer
+  // to the Brief view's executive feel without becoming the same component.
   const titleClass = isAction
-    ? "block max-w-full truncate text-left text-sm font-medium leading-tight text-white"
-    : "block max-w-full truncate text-left text-sm font-medium leading-tight text-ink";
+    ? "block max-w-full truncate text-left text-[15px] font-semibold leading-tight tracking-tight text-white"
+    : "block max-w-full truncate text-left text-[15px] font-semibold leading-tight tracking-tight text-ink";
   const footerClass = isAction
     ? "mt-3 pt-3 border-t border-white/15 flex items-center justify-between gap-2 text-xs text-white/70"
     : "mt-3 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-2 text-xs text-muted";
@@ -107,7 +110,10 @@ export default function WidgetTile({
     >
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className={labelClass}>{label}</div>
+          <div className={labelClass}>
+            {tone !== "neutral" && <ToneIcon tone={tone} className="size-3" />}
+            <span>{label}</span>
+          </div>
           <div className={titleClass} title={widget.title}>
             {widget.title}
           </div>
