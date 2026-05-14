@@ -35,6 +35,11 @@ function listPreview(items: string[], max = 4): string {
   return head;
 }
 
+function listFullText(items: string[]): string {
+  if (!items || items.length === 0) return "";
+  return items.map((s) => `• ${s.trim()}`).join("\n");
+}
+
 function sourceFromBriefSource(s: { title: string; url: string; accessed?: string }): Source {
   return { title: s.title, url: s.url, accessed: s.accessed };
 }
@@ -113,13 +118,19 @@ export function buildReadOnlyCanvasFromBrief({
     preview: string,
     w: number,
     h = 3,
+    fullText = preview,
   ) {
+    const trimmedFullText = fullText.trim();
     widgets.push({
       ...baseWidget(id, title, w, h, {
         why_included: "Derived from standard brief section.",
       }),
       kind: "section_ref",
-      data: { section_key: sectionKey, preview: truncate(preview) },
+      data: {
+        section_key: sectionKey,
+        preview: truncate(preview),
+        full_text: trimmedFullText,
+      },
     });
   }
 
@@ -158,6 +169,7 @@ export function buildReadOnlyCanvasFromBrief({
     listPreview(brief.recent_signals.map((s) => s.text)),
     6,
     3,
+    listFullText(brief.recent_signals.map((s) => s.text)),
   );
 
   // ---- Evidence board + small metrics row -------------------------------
@@ -233,6 +245,7 @@ export function buildReadOnlyCanvasFromBrief({
     listPreview(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
     6,
     3,
+    listFullText(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
   );
 
   const tf = brief.technical_footprint;
@@ -242,10 +255,10 @@ export function buildReadOnlyCanvasFromBrief({
     "technical_footprint",
     [
       tf.ai_in_production.length > 0
-        ? `AI in production: ${tf.ai_in_production.slice(0, 2).join("; ")}`
+        ? `AI in production: ${tf.ai_in_production.join("; ")}`
         : "",
       tf.active_pilots.length > 0
-        ? `Active pilots: ${tf.active_pilots.slice(0, 2).join("; ")}`
+        ? `Active pilots: ${tf.active_pilots.join("; ")}`
         : "",
       tf.cloud_platforms.length > 0
         ? `Cloud: ${tf.cloud_platforms.join(", ")}`
@@ -265,10 +278,10 @@ export function buildReadOnlyCanvasFromBrief({
     "programs_procurement",
     [
       pp.active_rfps_contracts.length > 0
-        ? `Active RFPs / contracts: ${pp.active_rfps_contracts.slice(0, 3).join("; ")}`
+        ? `Active RFPs / contracts: ${pp.active_rfps_contracts.join("; ")}`
         : "",
       pp.modernization_grants.length > 0
-        ? `Grants: ${pp.modernization_grants.slice(0, 2).join("; ")}`
+        ? `Grants: ${pp.modernization_grants.join("; ")}`
         : "",
       pp.ai_governance_policy ? `Governance: ${pp.ai_governance_policy}` : "",
     ]
@@ -285,6 +298,7 @@ export function buildReadOnlyCanvasFromBrief({
     listPreview(brief.personas.map((p) => `${p.name} — ${p.title}`)),
     6,
     3,
+    listFullText(brief.personas.map((p) => `${p.name} — ${p.title}`)),
   );
   addSectionRef(
     "section-buying-path",
@@ -309,6 +323,7 @@ export function buildReadOnlyCanvasFromBrief({
     listPreview(brief.risks),
     6,
     2,
+    listFullText(brief.risks),
   );
   addSectionRef(
     "section-competitive-signals",
@@ -317,6 +332,7 @@ export function buildReadOnlyCanvasFromBrief({
     listPreview(brief.competitive_signals),
     6,
     2,
+    listFullText(brief.competitive_signals),
   );
 
   // ---- Action + open questions ------------------------------------------
@@ -368,6 +384,7 @@ export function buildReadOnlyCanvasFromBrief({
     listPreview(brief.sources.map((s) => s.title)),
     12,
     2,
+    listFullText(brief.sources.map((s) => s.title)),
   );
 
   // ---- Extensions as first-class widgets --------------------------------

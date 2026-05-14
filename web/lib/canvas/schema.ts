@@ -83,6 +83,9 @@ export type Evidence = z.infer<typeof Evidence>;
 export const SectionRefData = z.object({
   section_key: z.string(),
   preview: z.string(),
+  // Concise cards use `preview`; drill-in detail uses `full_text` when
+  // available so opening a widget does not show the same truncated copy.
+  full_text: z.string().optional(),
 });
 
 // Same shape used inline for evidence-board items; richer than the

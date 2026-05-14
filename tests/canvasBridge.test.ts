@@ -60,6 +60,38 @@ test("Canvas.parse accepts the full output of buildReadOnlyCanvasFromBrief", () 
 
 // ---- adapter shape + determinism ------------------------------------------
 
+test("section_ref widgets keep full drill-in text separate from tile preview", () => {
+  const longSnapshot = `${"Full drill-in sentence. ".repeat(40)}Final full-detail marker.`;
+  const brief = Brief.parse({ ...sampleBriefJson, snapshot: longSnapshot });
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const snapshot = canvas.widgets.find((w) => w.id === "section-snapshot");
+
+  assert.ok(snapshot);
+  assert.equal(snapshot?.kind, "section_ref");
+  if (snapshot?.kind !== "section_ref") return;
+
+  assert.ok(
+    snapshot.data.preview.length < longSnapshot.length,
+    "tile preview should remain concise",
+  );
+  assert.equal(
+    (snapshot.data as { full_text?: string }).full_text,
+    longSnapshot,
+    "drill-in detail must preserve the complete section text",
+  );
+});
+
+test("WidgetTile opens when the card surface is clicked, not only the drill link", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  assert.match(source, /<motion\.article[\s\S]*?onClick=\{onOpen\}/);
+  assert.match(source, /role="button"/);
+  assert.match(source, /tabIndex=\{0\}/);
+  assert.match(source, /onKeyDown=\{handleCardKeyDown\}/);
+});
+
 test("buildReadOnlyCanvasFromBrief derives deterministic read-only widgets", () => {
   const brief = Brief.parse(sampleBriefJson);
   const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
