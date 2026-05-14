@@ -76,7 +76,12 @@ export default function WidgetTile({
 
   const accentStyle = semanticAccentStyle(tone);
   const style: CSSProperties | undefined = isAction
-    ? { color: "white", ...(accentStyle ?? {}) }
+    ? {
+        color: "white",
+        backgroundColor: "var(--ink)",
+        borderColor: "var(--ink)",
+        ...(accentStyle ?? {}),
+      }
     : accentStyle;
 
   const labelClass = isAction
