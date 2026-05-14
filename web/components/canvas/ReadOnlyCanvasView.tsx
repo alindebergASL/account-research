@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Lock } from "lucide-react";
-import type { Canvas } from "../../lib/canvas/schema";
+import type { Canvas, CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
 import WidgetTile from "./WidgetTile";
 import DrillModal from "../DrillModal";
@@ -37,6 +37,36 @@ function gridSpanClass(span: number): string {
   }
 }
 
+function formatGeneratedAt(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value || "unknown";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function widgetEvidenceCount(widget: CanvasWidget): number {
+  return widget.evidence.length +
+    (widget.kind === "evidence_board" ? widget.data.items.length : 0);
+}
+
+function ModalFooter({ widget }: { widget: CanvasWidget }) {
+  const evidenceCount = widgetEvidenceCount(widget);
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <span>Provenance: {widget.source.replace(/_/g, " ")}</span>
+      <span>{widget.sources.length} source{widget.sources.length === 1 ? "" : "s"}</span>
+      <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
+      <span>Controls disabled · audit-ready preview</span>
+      <span>Updated {formatGeneratedAt(widget.updated_at)}</span>
+    </div>
+  );
+}
+
 export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const open = canvas.widgets.find((w) => w.id === openId) ?? null;
@@ -64,10 +94,19 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
           {canvas.account_name}
         </h1>
         <p className="text-sm text-muted mt-1">
-          Read-only view derived from the saved brief.
+          Read-only view derived from the saved brief. Widget actions are disabled
+          until controlled agent approvals are enabled.
         </p>
         <div className="text-xs text-muted mt-2 flex flex-wrap items-center gap-3">
           <span>{canvas.widgets.length} widgets</span>
+          <span>Generated {formatGeneratedAt(canvas.generated_at)}</span>
+          <span>{canvas.meta.agent_readiness.source_count} sources</span>
+          <span>{canvas.meta.agent_readiness.evidence_count} evidence items</span>
+          <span>
+            {canvas.meta.agent_readiness.controls_enabled
+              ? "Controls enabled"
+              : "Controls disabled"}
+          </span>
         </div>
       </header>
 
@@ -92,6 +131,7 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
         title={open?.title ?? ""}
         subtitle={open && descriptor ? descriptor.label : undefined}
         onClose={() => setOpenId(null)}
+        footer={open ? <ModalFooter widget={open} /> : undefined}
       >
         {open && Detail && <Detail widget={open as never} />}
       </DrillModal>

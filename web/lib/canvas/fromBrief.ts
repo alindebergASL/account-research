@@ -393,6 +393,11 @@ export function buildReadOnlyCanvasFromBrief({
     widgets.push(buildExtensionWidget(ext, packer, generatedAt));
   }
 
+  const evidenceCount = widgets.reduce(
+    (n, w) => n + w.evidence.length + (w.kind === "evidence_board" ? w.data.items.length : 0),
+    0,
+  );
+
   return {
     account_id: briefId,
     account_name: brief.account_name,
@@ -402,6 +407,19 @@ export function buildReadOnlyCanvasFromBrief({
     meta: {
       layout_mode: "grid",
       pinned_order: widgets.map((w) => w.id),
+      agent_readiness: {
+        mode: "read_only_preview",
+        generated_from: "saved_brief",
+        controls_enabled: widgets.some(
+          (w) =>
+            w.controls.can_edit ||
+            w.controls.can_export ||
+            w.controls.can_refresh ||
+            w.controls.can_remove,
+        ),
+        source_count: brief.sources.length,
+        evidence_count: evidenceCount,
+      },
     },
   };
 }
