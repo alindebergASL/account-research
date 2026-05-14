@@ -10,6 +10,30 @@
   --muted: #5b6472;
   --line: #e7e5df;
   --accent: #2f6df6;
+
+  /* Canvas semantic colors (shared by chips, charts, and accents) */
+  --conf-high: #16a34a;
+  --conf-med:  #2f6df6;
+  --conf-low:  #f59e0b;
+  --conf-na:   #9ca3af;
+
+  /* Severity tokens are distinct from confidence to keep meaning clear:
+     high = urgent / blocker (red), medium = attention (amber),
+     low = informational (gray). Pairs are bg / text / border. */
+  --sev-high-bg:     #fee2e2;
+  --sev-high-text:   #991b1b;
+  --sev-high-border: #fecaca;
+  --sev-med-bg:      #fef3c7;
+  --sev-med-text:    #92400e;
+  --sev-med-border:  #fde68a;
+  --sev-low-bg:      #f3f4f6;
+  --sev-low-text:    #4b5563;
+  --sev-low-border:  #e5e7eb;
+
+  /* Tone tokens for section_ref left-accent. */
+  --tone-risk:        #dc2626;
+  --tone-opportunity: #16a34a;
+  --tone-signal:      #2f6df6;
 }
 
 html, body {

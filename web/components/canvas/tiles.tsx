@@ -7,6 +7,12 @@ import type {
   MetricWidget,
   ExtensionWidget,
 } from "../../lib/canvas/schema";
+import {
+  ConfidenceBar,
+  MiniGauge,
+  aggregateConfidence,
+  parseFractionValue,
+} from "./visuals";
 
 function TileHeader(_props: { title: string; kindLabel: string }) {
   // Header chrome lives in WidgetTile so all widget kinds share the same
@@ -39,9 +45,11 @@ export function EvidenceBoardTile({
   widget: import("zod").infer<typeof EvidenceBoardWidget>;
 }) {
   const items = widget.data.items.slice(0, 3);
+  const counts = aggregateConfidence(widget.data.items);
   return (
-    <div>
+    <div className="space-y-3">
       <TileHeader title={widget.title} kindLabel="Evidence" />
+      {widget.data.items.length > 0 && <ConfidenceBar counts={counts} />}
       <ul className="space-y-2 text-sm">
         {items.map((it, i) => (
           <li key={i} className="pl-3 border-l-2 border-[var(--line)]">
@@ -53,7 +61,7 @@ export function EvidenceBoardTile({
         )}
       </ul>
       {widget.data.items.length > items.length && (
-        <p className="text-xs text-muted mt-2">
+        <p className="text-xs text-muted">
           +{widget.data.items.length - items.length} more · open to view
         </p>
       )}
@@ -132,15 +140,39 @@ export function MetricTile({
 }) {
   const d = widget.data;
   const helper = d.helper ?? d.unit;
+  // Detect "N/M" style metric values (e.g. AI maturity emits "4/5") and
+  // render a small gauge alongside the number. Plain numeric / string
+  // metrics fall back to the existing big-number treatment.
+  const fraction = parseFractionValue(d.value);
   return (
     <div>
       <TileHeader title={widget.title} kindLabel="Metric" />
-      <div className="flex items-baseline gap-2">
-        <span className="font-display text-4xl tracking-tight">{d.value}</span>
-        {helper && <span className="text-xs text-muted">{helper}</span>}
+      <div className="flex items-center gap-3">
+        {fraction && (
+          <MiniGauge current={fraction.current} max={fraction.max} size={56} />
+        )}
+        <div className="min-w-0">
+          {!fraction && (
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-4xl tracking-tight">
+                {d.value}
+              </span>
+              {helper && <span className="text-xs text-muted">{helper}</span>}
+            </div>
+          )}
+          {fraction && helper && (
+            <span className="text-xs text-muted">{helper}</span>
+          )}
+          {d.label && (
+            <p className="text-xs text-muted mt-1 truncate" title={d.label}>
+              {d.label}
+            </p>
+          )}
+          {d.delta && (
+            <p className="text-xs text-muted mt-0.5">Δ {d.delta}</p>
+          )}
+        </div>
       </div>
-      {d.label && <p className="text-xs text-muted mt-1">{d.label}</p>}
-      {d.delta && <p className="text-xs text-muted mt-0.5">Δ {d.delta}</p>}
     </div>
   );
 }

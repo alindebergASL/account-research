@@ -2,10 +2,16 @@
 
 import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import type { CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
 import { ConfidenceChip } from "../DrillModal";
+import {
+  SourceTypeBadge,
+  semanticAccentClass,
+  semanticAccentStyle,
+  sectionKeyTone,
+} from "./visuals";
 
 function StatusChip({ status }: { status: CanvasWidget["status"] }) {
   const cls =
@@ -24,10 +30,14 @@ function kindLabel(widget: CanvasWidget, fallback: string): string {
   return fallback;
 }
 
-function sourceSummary(widget: CanvasWidget): string {
-  const source = widget.source.replace(/_/g, " ");
-  const count = widget.sources.length;
-  return `${source} · ${count} source${count === 1 ? "" : "s"}`;
+// section_ref widgets get a tone left-accent based on section_key
+// (e.g. risks → red, top_initiatives → green). Other kinds default
+// to neutral / no accent.
+function widgetTone(widget: CanvasWidget) {
+  if (widget.kind === "section_ref") {
+    return sectionKeyTone(widget.data.section_key);
+  }
+  return "neutral" as const;
 }
 
 export default function WidgetTile({
@@ -40,6 +50,8 @@ export default function WidgetTile({
   const descriptor = getDescriptor(widget.kind);
   const Tile = descriptor.Tile;
   const label = kindLabel(widget, descriptor.label);
+  const tone = widgetTone(widget);
+  const isAction = widget.kind === "action_panel";
 
   function handleCardKeyDown(e: KeyboardEvent<HTMLElement>) {
     if (e.key === "Enter" || e.key === " ") {
@@ -47,6 +59,34 @@ export default function WidgetTile({
       onOpen();
     }
   }
+
+  // Inverted treatment for the Recommended next action so it visually
+  // stands out the way the Brief view's next-action callout does.
+  const cardClass = [
+    "card group p-5 flex flex-col h-full cursor-pointer transition-all",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
+    isAction
+      ? "bg-ink text-white border-ink hover:border-ink/80"
+      : "hover:border-accent/40",
+    semanticAccentClass(tone),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const accentStyle = semanticAccentStyle(tone);
+  const style: CSSProperties | undefined = isAction
+    ? { color: "white", ...(accentStyle ?? {}) }
+    : accentStyle;
+
+  const labelClass = isAction
+    ? "text-[10px] uppercase tracking-widest text-white/60 mb-1"
+    : "text-[10px] uppercase tracking-widest text-muted mb-1";
+  const titleClass = isAction
+    ? "block max-w-full truncate text-left text-sm font-medium leading-tight text-white"
+    : "block max-w-full truncate text-left text-sm font-medium leading-tight text-ink";
+  const footerClass = isAction
+    ? "mt-3 pt-3 border-t border-white/15 flex items-center justify-between gap-2 text-xs text-white/70"
+    : "mt-3 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-2 text-xs text-muted";
 
   return (
     <motion.article
@@ -57,32 +97,24 @@ export default function WidgetTile({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="card group p-5 flex flex-col h-full cursor-pointer transition-colors hover:border-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      style={style}
+      className={cardClass}
       data-testid="canvas-widget"
       data-widget-kind={widget.kind}
       data-widget-id={widget.id}
+      data-widget-tone={tone}
       aria-label={`Drill into ${widget.title}`}
     >
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] uppercase tracking-widest text-muted mb-1">
-            {label}
-          </div>
-          <div
-            className="block max-w-full truncate text-left text-sm font-medium leading-tight text-ink"
-            title={widget.title}
-          >
+          <div className={labelClass}>{label}</div>
+          <div className={titleClass} title={widget.title}>
             {widget.title}
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {widget.confidence && <ConfidenceChip value={widget.confidence} />}
           <StatusChip status={widget.status} />
-          {widget.source === "chat" && (
-            <span className="chip chip-na text-[10px]" title="Added in chat">
-              Added in chat
-            </span>
-          )}
         </div>
       </header>
 
@@ -90,11 +122,26 @@ export default function WidgetTile({
         <Tile widget={widget as never} />
       </div>
 
-      <footer className="mt-3 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-2 text-xs text-muted">
-        <span className="min-w-0 truncate" title={sourceSummary(widget)}>
-          {sourceSummary(widget)}
+      <footer className={footerClass}>
+        <span className="min-w-0 flex items-center gap-2 truncate">
+          <SourceTypeBadge source={widget.source} />
+          <span
+            className="truncate"
+            title={`${widget.sources.length} source${
+              widget.sources.length === 1 ? "" : "s"
+            }`}
+          >
+            {widget.sources.length} source
+            {widget.sources.length === 1 ? "" : "s"}
+          </span>
         </span>
-        <span className="inline-flex items-center gap-0.5 text-muted group-hover:text-accent whitespace-nowrap">
+        <span
+          className={
+            isAction
+              ? "inline-flex items-center gap-0.5 text-white/70 group-hover:text-white whitespace-nowrap"
+              : "inline-flex items-center gap-0.5 text-muted group-hover:text-accent whitespace-nowrap"
+          }
+        >
           Drill <ChevronRight className="size-3" aria-hidden="true" />
         </span>
       </footer>
