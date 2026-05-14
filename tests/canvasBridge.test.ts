@@ -81,6 +81,42 @@ test("section_ref widgets keep full drill-in text separate from tile preview", (
   );
 });
 
+test("canvas meta exposes agent-readiness provenance and audit counts", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+
+  assert.equal(canvas.meta.agent_readiness.mode, "read_only_preview");
+  assert.equal(canvas.meta.agent_readiness.generated_from, "saved_brief");
+  assert.equal(canvas.meta.agent_readiness.controls_enabled, false);
+  assert.equal(canvas.meta.agent_readiness.source_count, brief.sources.length);
+  assert.equal(
+    canvas.meta.agent_readiness.evidence_count,
+    canvas.widgets.reduce((n, w) => n + w.evidence.length, 0) +
+      canvas.widgets.reduce(
+        (n, w) => n + (w.kind === "evidence_board" ? w.data.items.length : 0),
+        0,
+      ),
+  );
+});
+
+test("canvas modal supports a persistent provenance/action footer", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/components/DrillModal.tsx"),
+    "utf8",
+  );
+  assert.match(source, /footer\?: React\.ReactNode/);
+  assert.match(source, /data-testid="drill-modal-footer"/);
+});
+
+test("evidence source links only render safe http(s) URLs as anchors", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/components/DrillModal.tsx"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /source\.startsWith\("http"\)/);
+  assert.match(source, /isSafeSourceUrl/);
+});
+
 test("WidgetTile opens when the card surface is clicked, not only the drill link", () => {
   const source = readFileSync(
     path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),

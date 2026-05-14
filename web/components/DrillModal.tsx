@@ -10,12 +10,14 @@ export default function DrillModal({
   subtitle,
   onClose,
   children,
+  footer,
 }: {
   open: boolean;
   title: string;
   subtitle?: string;
   onClose: () => void;
   children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -66,6 +68,14 @@ export default function DrillModal({
                 </button>
               </div>
               <div className="overflow-y-auto px-6 py-5 flex-1">{children}</div>
+              {footer && (
+                <div
+                  data-testid="drill-modal-footer"
+                  className="border-t border-[var(--line)] bg-[var(--bg)] px-6 py-3 text-xs text-muted"
+                >
+                  {footer}
+                </div>
+              )}
             </motion.div>
           </motion.div>
         </>
@@ -87,9 +97,18 @@ export function ConfidenceChip({ value }: { value: string }) {
   return <span className={`chip ${cls}`}>{value || "—"}</span>;
 }
 
+function isSafeSourceUrl(source: string): boolean {
+  try {
+    const parsed = new URL(source);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function SourceLink({ source }: { source: string }) {
   if (!source) return <span className="text-muted">—</span>;
-  if (source.startsWith("http")) {
+  if (isSafeSourceUrl(source)) {
     return (
       <a
         href={source}

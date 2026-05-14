@@ -220,9 +220,24 @@ export const CanvasWidget = z.discriminatedUnion("kind", [
 ]);
 export type CanvasWidget = z.infer<typeof CanvasWidget>;
 
+export const CanvasAgentReadiness = z.object({
+  mode: z.literal("read_only_preview"),
+  generated_from: z.literal("saved_brief"),
+  controls_enabled: z.boolean().default(false),
+  source_count: z.number().int().nonnegative().default(0),
+  evidence_count: z.number().int().nonnegative().default(0),
+});
+
 export const CanvasMeta = z.object({
   layout_mode: z.enum(["grid", "freeform"]).default("grid"),
   pinned_order: z.array(z.string()).default([]),
+  agent_readiness: CanvasAgentReadiness.default({
+    mode: "read_only_preview",
+    generated_from: "saved_brief",
+    controls_enabled: false,
+    source_count: 0,
+    evidence_count: 0,
+  }),
 });
 
 export const Canvas = z.object({
