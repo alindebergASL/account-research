@@ -136,7 +136,7 @@ export function SectionRefDetail({
         Derived from standard brief section: <code>{widget.data.section_key}</code>
       </div>
       <p className="text-sm whitespace-pre-line leading-relaxed">
-        {widget.data.preview || "—"}
+        {widget.data.full_text || widget.data.preview || "—"}
       </p>
       <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
     </div>

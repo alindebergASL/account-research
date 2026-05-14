@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import type { CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
 import { ConfidenceChip } from "../DrillModal";
@@ -40,29 +41,39 @@ export default function WidgetTile({
   const Tile = descriptor.Tile;
   const label = kindLabel(widget, descriptor.label);
 
+  function handleCardKeyDown(e: KeyboardEvent<HTMLElement>) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onOpen();
+    }
+  }
+
   return (
     <motion.article
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={handleCardKeyDown}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="card p-5 flex flex-col h-full"
+      className="card group p-5 flex flex-col h-full cursor-pointer transition-colors hover:border-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       data-testid="canvas-widget"
       data-widget-kind={widget.kind}
       data-widget-id={widget.id}
+      aria-label={`Drill into ${widget.title}`}
     >
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-[10px] uppercase tracking-widest text-muted mb-1">
             {label}
           </div>
-          <button
-            type="button"
-            onClick={onOpen}
-            className="block max-w-full truncate text-left text-sm font-medium leading-tight text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
+          <div
+            className="block max-w-full truncate text-left text-sm font-medium leading-tight text-ink"
             title={widget.title}
           >
             {widget.title}
-          </button>
+          </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {widget.confidence && <ConfidenceChip value={widget.confidence} />}
@@ -83,14 +94,9 @@ export default function WidgetTile({
         <span className="min-w-0 truncate" title={sourceSummary(widget)}>
           {sourceSummary(widget)}
         </span>
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-label={`Drill into ${widget.title}`}
-          className="inline-flex items-center gap-0.5 text-muted hover:text-accent whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
-        >
+        <span className="inline-flex items-center gap-0.5 text-muted group-hover:text-accent whitespace-nowrap">
           Drill <ChevronRight className="size-3" aria-hidden="true" />
-        </button>
+        </span>
       </footer>
     </motion.article>
   );
