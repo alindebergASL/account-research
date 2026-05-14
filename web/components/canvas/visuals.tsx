@@ -1,24 +1,31 @@
 "use client";
 
 import {
+  Activity,
+  AlertTriangle,
   Bot,
   Cpu,
   Globe,
+  HelpCircle,
   MessageSquare,
   RefreshCw,
   Sparkles,
+  Target,
+  TrendingUp,
   User,
-  HelpCircle,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import {
   aggregateConfidence,
+  confidenceBucket,
+  confidenceWeight,
   parseFractionValue,
-  sourceTypeLabel,
   sectionKeyTone,
+  sourceTypeLabel,
   totalConfidence,
-  type ConfidenceCounts,
   type AccentTone,
+  type ConfidenceBucket,
+  type ConfidenceCounts,
 } from "../../lib/canvas/visualHelpers";
 
 // Re-export helpers so consumers have one import path for visuals.
@@ -26,11 +33,13 @@ import {
 // them without dragging React in.
 export {
   aggregateConfidence,
+  confidenceBucket,
+  confidenceWeight,
   parseFractionValue,
-  sourceTypeLabel,
   sectionKeyTone,
+  sourceTypeLabel,
 };
-export type { ConfidenceCounts, AccentTone };
+export type { AccentTone, ConfidenceBucket, ConfidenceCounts };
 
 // ---- ConfidenceBar --------------------------------------------------------
 
@@ -287,3 +296,162 @@ export function SeverityChip({ s }: { s?: "low" | "medium" | "high" }) {
     </span>
   );
 }
+
+// ---- ToneIcon --------------------------------------------------------------
+
+// Small icon paired with a tone left-accent. Risk = warning triangle,
+// opportunity = upward trend, signal = activity pulse. Neutral renders
+// nothing so callers can spread it freely.
+export function ToneIcon({
+  tone,
+  className = "size-4",
+}: {
+  tone: AccentTone;
+  className?: string;
+}) {
+  switch (tone) {
+    case "risk":
+      return (
+        <AlertTriangle
+          className={className}
+          style={{ color: "var(--tone-risk)" }}
+          aria-hidden="true"
+        />
+      );
+    case "opportunity":
+      return (
+        <TrendingUp
+          className={className}
+          style={{ color: "var(--tone-opportunity)" }}
+          aria-hidden="true"
+        />
+      );
+    case "signal":
+      return (
+        <Activity
+          className={className}
+          style={{ color: "var(--tone-signal)" }}
+          aria-hidden="true"
+        />
+      );
+    default:
+      return null;
+  }
+}
+
+// Inline "12H · 5M · 3L · 1NF" style confidence counts. Strong-typography
+// quick-read companion to ConfidenceBar.
+export function ConfidenceCountsInline({ counts }: { counts: ConfidenceCounts }) {
+  const order: Array<{ key: keyof ConfidenceCounts; short: string }> = [
+    { key: "high", short: "H" },
+    { key: "medium", short: "M" },
+    { key: "low", short: "L" },
+    { key: "na", short: "NF" },
+  ];
+  const parts = order.filter((p) => counts[p.key] > 0);
+  if (parts.length === 0) {
+    return <span className="text-[10px] text-muted">No items</span>;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-muted">
+      {parts.map(({ key, short }) => (
+        <span key={key} className="inline-flex items-center gap-1">
+          <span
+            className="size-1.5 rounded-full"
+            style={{ background: CONF_COLOR_VAR[key] }}
+            aria-hidden="true"
+          />
+          <span className="font-display text-[12px] text-ink leading-none">
+            {counts[key]}
+          </span>
+          <span>{short}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---- InitiativeLandscape ---------------------------------------------------
+
+// Horizontal stacked-bar treatment mirroring Brief view's InitiativeBars.
+// Reads from a list of structured items (text + confidence) which the
+// Canvas adapter populates on the section-top-initiatives / risks /
+// signals widgets via the existing `widget.evidence` field.
+//
+// Each row: a confidence-weighted bar in the appropriate semantic color,
+// the item label, and an optional small confidence chip on the right.
+export function InitiativeLandscape({
+  items,
+  max = 6,
+  tone = "opportunity",
+}: {
+  items: ReadonlyArray<{
+    text: string;
+    confidence?: unknown;
+    source?: string;
+  }>;
+  max?: number;
+  tone?: AccentTone;
+}) {
+  if (!items || items.length === 0) {
+    return <p className="text-sm text-muted">No items.</p>;
+  }
+  const rows = items.slice(0, max);
+  const overflow = items.length - rows.length;
+  // Tone is used for the "neutral" fallback row color; otherwise rows are
+  // confidence-colored individually so the dominant signal is visible.
+  const fallbackColor =
+    tone === "risk"
+      ? "var(--tone-risk)"
+      : tone === "signal"
+        ? "var(--tone-signal)"
+        : "var(--tone-opportunity)";
+
+  return (
+    <ul className="space-y-2">
+      {rows.map((it, i) => {
+        const bucket = confidenceBucket(it.confidence);
+        const weight = confidenceWeight(it.confidence);
+        const pct = Math.max(8, Math.round(weight * 100));
+        const color =
+          bucket === "high"
+            ? "var(--conf-high)"
+            : bucket === "medium"
+              ? "var(--conf-med)"
+              : bucket === "low"
+                ? "var(--conf-low)"
+                : fallbackColor;
+        return (
+          <li key={i} className="space-y-1">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="min-w-0 truncate text-ink" title={it.text}>
+                {it.text}
+              </span>
+              {typeof it.confidence === "string" && (
+                <span
+                  className="shrink-0 text-[10px] uppercase tracking-wider"
+                  style={{ color }}
+                >
+                  {it.confidence}
+                </span>
+              )}
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg)]">
+              <div
+                style={{ width: `${pct}%`, background: color }}
+                className="h-full"
+              />
+            </div>
+          </li>
+        );
+      })}
+      {overflow > 0 && (
+        <li className="text-[10px] text-muted">+{overflow} more · open to view</li>
+      )}
+    </ul>
+  );
+}
+
+// Re-exported "Recommended action" icon for the inverted action panel
+// chrome — kept in this module so the tile import surface stays tight.
+export { Target };

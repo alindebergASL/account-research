@@ -83,6 +83,23 @@ export function sourceTypeLabel(source: unknown): string {
   }
 }
 
+// Returns a 0..1 weight for a confidence value, used to size bars in
+// landscape-style visualizations the way BriefCanvas' InitiativeBars does.
+// Unknown / null inputs fall to a small visible weight so a bar is still
+// drawn (helps the eye see the row exists) but stays visually muted.
+export function confidenceWeight(value: unknown): number {
+  switch (confidenceBucket(value)) {
+    case "high":
+      return 1;
+    case "medium":
+      return 0.66;
+    case "low":
+      return 0.33;
+    default:
+      return 0.12;
+  }
+}
+
 // Returns the tone class (used by SemanticAccent) for a given
 // section_ref section_key. Falls back to "neutral" for anything the
 // canvas hasn't given a dedicated palette to.

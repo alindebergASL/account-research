@@ -12,8 +12,12 @@ import type {
 import { ConfidenceChip, SourceLink } from "../DrillModal";
 import {
   ConfidenceBar,
+  ConfidenceCountsInline,
+  InitiativeLandscape,
   SeverityChip,
+  ToneIcon,
   aggregateConfidence,
+  sectionKeyTone,
 } from "./visuals";
 
 export function isSafeExternalUrl(url: string): boolean {
@@ -130,6 +134,20 @@ export function SectionRefDetail({
 }: {
   widget: import("zod").infer<typeof SectionRefWidget>;
 }) {
+  const tone = sectionKeyTone(widget.data.section_key);
+  const structured = widget.evidence;
+  const hasStructured = structured.length > 0;
+  const landscapeKeys = new Set([
+    "top_initiatives",
+    "recent_signals",
+    "personas",
+    "risks",
+    "competitive_signals",
+  ]);
+  const useLandscape =
+    hasStructured && landscapeKeys.has(widget.data.section_key);
+  const body = widget.data.full_text || widget.data.preview || "—";
+
   return (
     <div>
       <Meta
@@ -137,12 +155,26 @@ export function SectionRefDetail({
         confidence={widget.confidence}
         source={widget.source}
       />
-      <div className="rounded-lg bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs text-muted mb-3">
-        Derived from standard brief section: <code>{widget.data.section_key}</code>
+      <div
+        className="rounded-lg bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs text-muted mb-3 flex items-center gap-2"
+        style={
+          tone !== "neutral"
+            ? { borderLeftColor: `var(--tone-${tone})`, borderLeftWidth: "4px" }
+            : undefined
+        }
+      >
+        {tone !== "neutral" && <ToneIcon tone={tone} className="size-4" />}
+        <span>
+          Derived from standard brief section:{" "}
+          <code>{widget.data.section_key}</code>
+        </span>
       </div>
-      <p className="text-sm whitespace-pre-line leading-relaxed">
-        {widget.data.full_text || widget.data.preview || "—"}
-      </p>
+
+      {useLandscape ? (
+        <InitiativeLandscape items={structured} max={20} tone={tone} />
+      ) : (
+        <p className="text-sm whitespace-pre-line leading-relaxed">{body}</p>
+      )}
       <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
     </div>
   );

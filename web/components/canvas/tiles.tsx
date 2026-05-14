@@ -9,9 +9,12 @@ import type {
 } from "../../lib/canvas/schema";
 import {
   ConfidenceBar,
+  ConfidenceCountsInline,
+  InitiativeLandscape,
   MiniGauge,
   aggregateConfidence,
   parseFractionValue,
+  sectionKeyTone,
 } from "./visuals";
 
 function TileHeader(_props: { title: string; kindLabel: string }) {
@@ -27,6 +30,30 @@ export function SectionRefTile({
 }: {
   widget: import("zod").infer<typeof SectionRefWidget>;
 }) {
+  const tone = sectionKeyTone(widget.data.section_key);
+  const evidence = widget.evidence;
+  const hasStructured = evidence.length > 0;
+  // Sections seeded with structured evidence get the landscape treatment
+  // so the Canvas reads like a dashboard, not a duplicate of Brief view.
+  const landscapeKeys = new Set([
+    "top_initiatives",
+    "recent_signals",
+    "personas",
+    "risks",
+    "competitive_signals",
+  ]);
+  const useLandscape =
+    hasStructured && landscapeKeys.has(widget.data.section_key);
+
+  if (useLandscape) {
+    return (
+      <div className="space-y-2">
+        <TileHeader title={widget.title} kindLabel="Section" />
+        <InitiativeLandscape items={evidence} max={4} tone={tone} />
+      </div>
+    );
+  }
+
   return (
     <div>
       <TileHeader title={widget.title} kindLabel="Section" />
@@ -49,7 +76,12 @@ export function EvidenceBoardTile({
   return (
     <div className="space-y-3">
       <TileHeader title={widget.title} kindLabel="Evidence" />
-      {widget.data.items.length > 0 && <ConfidenceBar counts={counts} />}
+      {widget.data.items.length > 0 && (
+        <div className="space-y-1.5">
+          <ConfidenceBar counts={counts} />
+          <ConfidenceCountsInline counts={counts} />
+        </div>
+      )}
       <ul className="space-y-2 text-sm">
         {items.map((it, i) => (
           <li key={i} className="pl-3 border-l-2 border-[var(--line)]">
