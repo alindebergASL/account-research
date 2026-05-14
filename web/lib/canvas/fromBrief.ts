@@ -111,6 +111,17 @@ export function buildReadOnlyCanvasFromBrief({
     };
   }
 
+  // Structured items stored on `widget.evidence` for the section_refs
+  // that benefit from a landscape/list-style visual (initiatives, recent
+  // signals, risks, personas). This stays inside the existing Evidence
+  // shape so no schema change is required.
+  type StructuredItem = {
+    text: string;
+    source?: string;
+    confidence?: Confidence;
+    tag?: string;
+  };
+
   function addSectionRef(
     id: string,
     title: string,
@@ -119,12 +130,25 @@ export function buildReadOnlyCanvasFromBrief({
     w: number,
     h = 3,
     fullText = preview,
+    structured?: StructuredItem[],
   ) {
     const trimmedFullText = fullText.trim();
+    const base = baseWidget(id, title, w, h, {
+      why_included: "Derived from standard brief section.",
+    });
     widgets.push({
-      ...baseWidget(id, title, w, h, {
-        why_included: "Derived from standard brief section.",
-      }),
+      ...base,
+      // Populate evidence with structured items when the section has them;
+      // renderers detect this and switch to a richer visual (e.g. the
+      // initiative landscape) instead of the plain preview string.
+      evidence: structured && structured.length > 0
+        ? structured.map((s) => ({
+            text: s.text,
+            source: s.source,
+            confidence: s.confidence,
+            tag: s.tag,
+          }))
+        : base.evidence,
       kind: "section_ref",
       data: {
         section_key: sectionKey,
@@ -170,6 +194,11 @@ export function buildReadOnlyCanvasFromBrief({
     6,
     3,
     listFullText(brief.recent_signals.map((s) => s.text)),
+    brief.recent_signals.map((s) => ({
+      text: s.text,
+      source: s.source,
+      confidence: s.confidence,
+    })),
   );
 
   // ---- Evidence board + small metrics row -------------------------------
@@ -243,9 +272,15 @@ export function buildReadOnlyCanvasFromBrief({
     "Top initiatives",
     "top_initiatives",
     listPreview(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
-    6,
+    12,
     3,
     listFullText(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
+    brief.top_initiatives.map((i) => ({
+      text: i.title,
+      source: i.source,
+      confidence: i.confidence,
+      tag: i.detail,
+    })),
   );
 
   const tf = brief.technical_footprint;
@@ -299,6 +334,12 @@ export function buildReadOnlyCanvasFromBrief({
     6,
     3,
     listFullText(brief.personas.map((p) => `${p.name} — ${p.title}`)),
+    brief.personas.map((p) => ({
+      text: `${p.name} — ${p.title}`,
+      source: p.source,
+      confidence: p.confidence,
+      tag: p.priority,
+    })),
   );
   addSectionRef(
     "section-buying-path",
@@ -322,8 +363,9 @@ export function buildReadOnlyCanvasFromBrief({
     "risks",
     listPreview(brief.risks),
     6,
-    2,
+    3,
     listFullText(brief.risks),
+    brief.risks.map((r) => ({ text: r })),
   );
   addSectionRef(
     "section-competitive-signals",
@@ -331,8 +373,9 @@ export function buildReadOnlyCanvasFromBrief({
     "competitive_signals",
     listPreview(brief.competitive_signals),
     6,
-    2,
+    3,
     listFullText(brief.competitive_signals),
+    brief.competitive_signals.map((c) => ({ text: c })),
   );
 
   // ---- Action + open questions ------------------------------------------

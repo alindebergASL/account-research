@@ -13,6 +13,7 @@ import {
   sourceTypeLabel,
   sectionKeyTone,
   confidenceBucket,
+  confidenceWeight,
 } from "../web/lib/canvas/visualHelpers";
 
 const sampleBriefJson = JSON.parse(
@@ -641,4 +642,61 @@ test("sectionKeyTone maps known section_keys to tones", () => {
   assert.equal(sectionKeyTone("snapshot"), "neutral");
   assert.equal(sectionKeyTone(undefined), "neutral");
   assert.equal(sectionKeyTone(42 as unknown), "neutral");
+});
+
+test("confidenceWeight maps buckets to bar widths and handles unknowns", () => {
+  assert.equal(confidenceWeight("High"), 1);
+  assert.equal(confidenceWeight("Medium"), 0.66);
+  assert.equal(confidenceWeight("Low"), 0.33);
+  assert.equal(confidenceWeight("Not found"), 0.12);
+  assert.equal(confidenceWeight(undefined), 0.12);
+  assert.equal(confidenceWeight("garbage"), 0.12);
+});
+
+test("Canvas-native modules: structured evidence is seeded on the right section_refs", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+
+  const expectations: Array<{ id: string; min: number; tag?: boolean }> = [
+    { id: "section-top-initiatives", min: 1, tag: true },
+    { id: "section-recent-signals", min: 1 },
+    { id: "section-personas", min: 1, tag: true },
+    { id: "section-risks", min: 1 },
+    { id: "section-competitive-signals", min: 1 },
+  ];
+  for (const exp of expectations) {
+    const w = canvas.widgets.find((x) => x.id === exp.id);
+    assert.ok(w, `${exp.id} should exist`);
+    if (!w) continue;
+    assert.ok(
+      w.evidence.length >= exp.min,
+      `${exp.id} should carry structured evidence (>= ${exp.min}); got ${w.evidence.length}`,
+    );
+    assert.ok(
+      w.evidence.every((e) => typeof e.text === "string" && e.text.length > 0),
+      `${exp.id} evidence rows must carry a non-empty text`,
+    );
+    if (exp.tag) {
+      assert.ok(
+        w.evidence.some((e) => typeof e.tag === "string" && e.tag!.length > 0),
+        `${exp.id} should populate at least one evidence.tag`,
+      );
+    }
+  }
+});
+
+test("section-top-initiatives is widened to a full row for the landscape", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const w = canvas.widgets.find((x) => x.id === "section-top-initiatives");
+  assert.ok(w);
+  assert.equal(w?.layout.w, 12);
+});
+
+test("non-landscape section_refs (e.g. snapshot) keep evidence empty", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const snapshot = canvas.widgets.find((x) => x.id === "section-snapshot");
+  assert.ok(snapshot);
+  assert.equal(snapshot?.evidence.length, 0);
 });
