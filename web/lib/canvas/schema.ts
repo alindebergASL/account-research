@@ -28,6 +28,11 @@ export const WidgetKind = z.enum([
   "open_questions",
   "metric",
   "extension",
+  // Canvas v2 strategic workspace (Phase 1)
+  "strategic_signal_radar",
+  "opportunity_risk_split",
+  "momentum_strip",
+  "ai_takeaways",
 ]);
 export type WidgetKind = z.infer<typeof WidgetKind>;
 
@@ -162,6 +167,60 @@ export const ExtensionData = z.object({
   rows: z.array(z.array(z.string())).optional(),
 });
 
+// ---- Canvas v2 strategic workspace data shapes ----------------------------
+
+export const StrategicSignalRadarData = z.object({
+  quadrants: z.array(
+    z.object({
+      key: z.enum(["strategy", "tech", "procurement", "leadership"]),
+      label: z.string(),
+      count: z.number().int().nonnegative(),
+      confidence: Confidence.optional(),
+      sample: z.string().optional(),
+    }),
+  ),
+});
+
+export const OpportunityRiskSplitData = z.object({
+  opportunities: z.object({
+    count: z.number().int().nonnegative(),
+    top: z
+      .object({
+        text: z.string(),
+        confidence: Confidence.optional(),
+        tag: z.string().optional(),
+      })
+      .nullable(),
+  }),
+  risks: z.object({
+    count: z.number().int().nonnegative(),
+    top: z.object({ text: z.string() }).nullable(),
+  }),
+  balance: z.enum(["opportunity-heavy", "risk-heavy", "balanced"]),
+});
+
+export const MomentumStripData = z.object({
+  segments: z.array(
+    z.object({
+      key: z.enum(["signals", "initiatives", "pilots", "programs"]),
+      label: z.string(),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  total: z.number().int().nonnegative(),
+  velocity_label: z.enum(["High momentum", "Steady", "Low momentum", "Quiet"]),
+});
+
+export const AITakeawayItem = z.object({
+  headline: z.string(),
+  detail: z.string(),
+  source_field: z.string(),
+});
+
+export const AITakeawaysData = z.object({
+  takeaways: z.array(AITakeawayItem),
+});
+
 // ---- widget discriminated union --------------------------------------------
 
 const BaseWidget = z.object({
@@ -210,6 +269,26 @@ export const ExtensionWidget = BaseWidget.extend({
   data: ExtensionData,
 });
 
+export const StrategicSignalRadarWidget = BaseWidget.extend({
+  kind: z.literal("strategic_signal_radar"),
+  data: StrategicSignalRadarData,
+});
+
+export const OpportunityRiskSplitWidget = BaseWidget.extend({
+  kind: z.literal("opportunity_risk_split"),
+  data: OpportunityRiskSplitData,
+});
+
+export const MomentumStripWidget = BaseWidget.extend({
+  kind: z.literal("momentum_strip"),
+  data: MomentumStripData,
+});
+
+export const AITakeawaysWidget = BaseWidget.extend({
+  kind: z.literal("ai_takeaways"),
+  data: AITakeawaysData,
+});
+
 export const CanvasWidget = z.discriminatedUnion("kind", [
   SectionRefWidget,
   EvidenceBoardWidget,
@@ -217,6 +296,10 @@ export const CanvasWidget = z.discriminatedUnion("kind", [
   OpenQuestionsWidget,
   MetricWidget,
   ExtensionWidget,
+  StrategicSignalRadarWidget,
+  OpportunityRiskSplitWidget,
+  MomentumStripWidget,
+  AITakeawaysWidget,
 ]);
 export type CanvasWidget = z.infer<typeof CanvasWidget>;
 
