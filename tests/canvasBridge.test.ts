@@ -148,6 +148,9 @@ test("Canvas widget chrome hides draft scaffolding from normal fresh cards", () 
   assert.match(source, /shouldShowStatusChip\(widget\.status\) && <StatusChip status=\{widget\.status\} \/>/, "fresh status should only appear through the conditional helper");
   assert.doesNotMatch(source, /\{widget\.sources\.length\} source/, "zero-source counts should not be rendered mechanically on every card");
   assert.match(source, /provenanceSummary/, "cards should summarize provenance instead of dumping raw source counts");
+  assert.match(source, /function sectionLabel/, "section cards should translate brief keys into executive-facing labels");
+  assert.match(source, /Account context/);
+  assert.match(source, /Decision path/);
 });
 
 test("Canvas header copy presents Hermes as the strategic layout driver", () => {
@@ -160,6 +163,45 @@ test("Canvas header copy presents Hermes as the strategic layout driver", () => 
   assert.match(source, /Read-only mode/);
   assert.doesNotMatch(source, /Controls disabled/);
   assert.doesNotMatch(source, /Widget actions are disabled/);
+  assert.doesNotMatch(source, />\s*widgets\s*</i, "header should not expose internal widget terminology");
+  assert.match(source, /priority areas|strategic modules|account signals/i, "header stats should use executive-facing labels");
+});
+
+test("Canvas registry uses executive-facing labels instead of internal object labels", () => {
+  assert.equal(getDescriptor("section_ref").label, "Brief insight");
+  assert.equal(getDescriptor("metric").label, "Account signal");
+  assert.equal(getDescriptor("action_panel").label, "Recommended move");
+});
+
+test("Canvas adapter suppresses empty discovery-gap and sparse count-only metrics", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const ids = canvas.widgets.map((w) => w.id);
+
+  assert.equal(ids.includes("open-questions"), false, "empty open questions should not occupy a full card");
+  assert.equal(ids.includes("metric-sources"), false, "source count belongs in the header, not a sparse metric card");
+  assert.equal(ids.includes("metric-initiatives"), false, "initiative count belongs in narrative widgets, not a sparse metric card");
+});
+
+test("section previews preserve the executive point without raw long-text clipping", () => {
+  const longSnapshot = [
+    "The executive answer should fit on the card and preserve the complete first point.",
+    "Second sentence contains implementation detail that belongs in the drill-in panel rather than the tile preview.",
+    "Third sentence adds more context for the full detail view.",
+  ].join(" ");
+  const brief = Brief.parse({ ...sampleBriefJson, snapshot: longSnapshot });
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const snapshot = canvas.widgets.find((w) => w.id === "section-snapshot");
+
+  assert.ok(snapshot);
+  assert.equal(snapshot?.kind, "section_ref");
+  if (snapshot?.kind !== "section_ref") return;
+
+  assert.equal(
+    snapshot.data.preview,
+    "The executive answer should fit on the card and preserve the complete first point.",
+  );
+  assert.equal((snapshot.data as { full_text?: string }).full_text, longSnapshot);
 });
 
 test("buildReadOnlyCanvasFromBrief derives deterministic read-only widgets", () => {

@@ -66,6 +66,10 @@ function ModalFooter({ widget }: { widget: CanvasWidget }) {
   );
 }
 
+function editorialModuleCount(canvas: Canvas): number {
+  return canvas.widgets.filter((w) => w.kind !== "metric").length;
+}
+
 export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const open = canvas.widgets.find((w) => w.id === openId) ?? null;
@@ -103,9 +107,9 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:min-w-[420px]">
             <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
               <strong className="block text-base leading-none text-ink">
-                {canvas.widgets.length}
+                {editorialModuleCount(canvas)}
               </strong>
-              <span className="text-muted">widgets</span>
+              <span className="text-muted">priority areas</span>
             </span>
             <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
               <strong className="block text-base leading-none text-ink">
@@ -117,7 +121,7 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
               <strong className="block text-base leading-none text-ink">
                 {canvas.meta.agent_readiness.evidence_count}
               </strong>
-              <span className="text-muted">evidence items</span>
+              <span className="text-muted">evidence points</span>
             </span>
             <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
               <strong className="block text-sm leading-none text-ink">

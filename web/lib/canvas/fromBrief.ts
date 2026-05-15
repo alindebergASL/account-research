@@ -27,11 +27,23 @@ const NO_CONTROLS = {
   can_export: false,
 } as const;
 
-function truncate(s: string, max = 320): string {
+function executivePreview(s: string, max = 220): string {
   if (!s) return "";
-  const trimmed = s.trim();
+  const trimmed = s.trim().replace(/\s+/g, " ");
   if (trimmed.length <= max) return trimmed;
-  return trimmed.slice(0, max - 1).trimEnd() + "…";
+
+  const firstSentence = trimmed.match(/^.+?[.!?](?:\s|$)/)?.[0]?.trim();
+  if (firstSentence && firstSentence.length <= max) return firstSentence;
+
+  const boundary = Math.max(
+    trimmed.lastIndexOf(". ", max),
+    trimmed.lastIndexOf("; ", max),
+    trimmed.lastIndexOf(": ", max),
+    trimmed.lastIndexOf(" — ", max),
+    trimmed.lastIndexOf(" ", max),
+  );
+  const cut = boundary > 80 ? boundary : max - 1;
+  return trimmed.slice(0, cut).trimEnd().replace(/[,:;—-]+$/, "") + "…";
 }
 
 function listPreview(items: string[], max = 4): string {
@@ -158,7 +170,7 @@ export function buildReadOnlyCanvasFromBrief({
       kind: "section_ref",
       data: {
         section_key: sectionKey,
-        preview: truncate(preview),
+        preview: executivePreview(preview),
         full_text: trimmedFullText,
       },
     });
@@ -287,24 +299,9 @@ export function buildReadOnlyCanvasFromBrief({
     kind: "evidence_board",
     data: { items: evidence.slice(0, EVIDENCE_CAP) },
   });
-  widgets.push({
-    ...baseWidget("metric-sources", "Sources", 4, 2),
-    kind: "metric",
-    data: {
-      label: "Cited sources",
-      value: String(brief.sources.length),
-      helper: brief.sources.length === 1 ? "source" : "sources",
-    },
-  });
-  widgets.push({
-    ...baseWidget("metric-initiatives", "Initiatives", 4, 2),
-    kind: "metric",
-    data: {
-      label: "Top initiatives",
-      value: String(brief.top_initiatives.length),
-      helper: brief.top_initiatives.length === 1 ? "initiative" : "initiatives",
-    },
-  });
+  // Source and initiative counts are already carried in the header and
+  // strategic modules. Avoid count-only cards that read as sparse dashboard
+  // scaffolding instead of executive guidance.
 
   // ---- Substance rows ---------------------------------------------------
   addSectionRef(
@@ -459,13 +456,15 @@ export function buildReadOnlyCanvasFromBrief({
   if (filled + arrayFilled < 4) {
     questions.push("Which public sources would strengthen this account brief?");
   }
-  widgets.push({
-    ...baseWidget("open-questions", "Open questions", 4, 2, {
-      why_included: "Surface gaps without inventing facts.",
-    }),
-    kind: "open_questions",
-    data: { questions },
-  });
+  if (questions.length > 0) {
+    widgets.push({
+      ...baseWidget("open-questions", "Discovery gaps", 4, 2, {
+        why_included: "Surface gaps without inventing facts.",
+      }),
+      kind: "open_questions",
+      data: { questions },
+    });
+  }
 
   // ---- Sources -----------------------------------------------------------
   addSectionRef(

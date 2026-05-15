@@ -46,16 +46,52 @@ function provenanceSummary(widget: CanvasWidget): string {
   if (evidenceCount > 0) {
     return `${evidenceCount} evidence item${evidenceCount === 1 ? "" : "s"}`;
   }
-  if (widget.source === "hermes") return "Hermes synthesis from saved brief";
-  if (widget.source === "system") return "Brief-derived";
-  if (widget.source === "chat") return "From conversation";
-  if (widget.source === "research") return "Research-derived";
-  if (widget.source === "model") return "Model-derived";
-  if (widget.source === "refresh") return "Refresh-derived";
-  return "User-added";
+  if (widget.source === "chat") return "Conversation insight";
+  if (widget.source === "research") return "Research-backed";
+  if (widget.source === "model") return "Modeled insight";
+  if (widget.source === "refresh") return "Refreshed insight";
+  if (widget.source === "user") return "User-added";
+  return "";
+}
+
+function sectionLabel(sectionKey: string): string {
+  switch (sectionKey) {
+    case "snapshot":
+      return "Account context";
+    case "why_now":
+    case "priority_summary":
+      return "Why now";
+    case "recent_signals":
+      return "Recent signals";
+    case "ai_tech_maturity":
+      return "AI readiness";
+    case "top_initiatives":
+      return "Priority initiatives";
+    case "technical_footprint":
+      return "Technical landscape";
+    case "programs_procurement":
+      return "Procurement path";
+    case "personas":
+      return "Buying committee";
+    case "buying_path":
+      return "Decision path";
+    case "first_angle":
+      return "Conversation angle";
+    case "risks":
+      return "Risk watch";
+    case "competitive_signals":
+      return "Vendor landscape";
+    case "sources":
+      return "Source coverage";
+    case "extensions":
+      return "Added insight";
+    default:
+      return "Brief insight";
+  }
 }
 
 function kindLabel(widget: CanvasWidget, fallback: string): string {
+  if (widget.kind === "section_ref") return sectionLabel(widget.data.section_key);
   if (widget.kind === "extension") return `${fallback} · ${widget.data.ext_kind}`;
   return fallback;
 }
@@ -164,9 +200,13 @@ export default function WidgetTile({
       </div>
 
       <footer className={footerClass}>
-        <span className="min-w-0 truncate" title={provenance}>
-          {provenance}
-        </span>
+        {provenance ? (
+          <span className="min-w-0 truncate" title={provenance}>
+            {provenance}
+          </span>
+        ) : (
+          <span aria-hidden="true" />
+        )}
         <span
           className={
             isAction

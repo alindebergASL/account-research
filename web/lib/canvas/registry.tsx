@@ -48,7 +48,7 @@ export const ALL_WIDGET_KINDS: readonly WidgetKind[] = [
 const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
   section_ref: {
     kind: "section_ref",
-    label: "Section reference",
+    label: "Brief insight",
     Tile: SectionRefTile as ComponentType<{ widget: CanvasWidget }>,
     Detail: SectionRefDetail as ComponentType<{ widget: CanvasWidget }>,
   },
@@ -60,7 +60,7 @@ const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
   },
   action_panel: {
     kind: "action_panel",
-    label: "Action panel",
+    label: "Recommended move",
     Tile: ActionPanelTile as ComponentType<{ widget: CanvasWidget }>,
     Detail: ActionPanelDetail as ComponentType<{ widget: CanvasWidget }>,
   },
@@ -72,7 +72,7 @@ const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
   },
   metric: {
     kind: "metric",
-    label: "Metric",
+    label: "Account signal",
     Tile: MetricTile as ComponentType<{ widget: CanvasWidget }>,
     Detail: MetricDetail as ComponentType<{ widget: CanvasWidget }>,
   },
