@@ -7,7 +7,6 @@ import type { CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
 import { ConfidenceChip } from "../DrillModal";
 import {
-  SourceTypeBadge,
   ToneIcon,
   semanticAccentClass,
   semanticAccentStyle,
@@ -23,7 +22,37 @@ function StatusChip({ status }: { status: CanvasWidget["status"] }) {
         : status === "watching"
           ? "chip-med"
           : "chip-na";
-  return <span className={`chip ${cls} text-[10px]`}>{status}</span>;
+  return <span className={`chip ${cls} text-[10px] capitalize`}>{status}</span>;
+}
+
+function shouldShowStatusChip(status: CanvasWidget["status"]): boolean {
+  // Normal fresh cards should not carry a repeated badge. Show status only
+  // when it changes the reader's decision: stale, watched, or archived.
+  return status !== "fresh";
+}
+
+function provenanceSummary(widget: CanvasWidget): string {
+  const sourceCount = widget.sources.length;
+  const evidenceCount =
+    widget.evidence.length +
+    (widget.kind === "evidence_board" ? widget.data.items.length : 0);
+
+  if (sourceCount > 0 && evidenceCount > 0) {
+    return `${sourceCount} source${sourceCount === 1 ? "" : "s"} · ${evidenceCount} evidence item${evidenceCount === 1 ? "" : "s"}`;
+  }
+  if (sourceCount > 0) {
+    return `${sourceCount} source${sourceCount === 1 ? "" : "s"}`;
+  }
+  if (evidenceCount > 0) {
+    return `${evidenceCount} evidence item${evidenceCount === 1 ? "" : "s"}`;
+  }
+  if (widget.source === "hermes") return "Hermes synthesis from saved brief";
+  if (widget.source === "system") return "Brief-derived";
+  if (widget.source === "chat") return "From conversation";
+  if (widget.source === "research") return "Research-derived";
+  if (widget.source === "model") return "Model-derived";
+  if (widget.source === "refresh") return "Refresh-derived";
+  return "User-added";
 }
 
 function kindLabel(widget: CanvasWidget, fallback: string): string {
@@ -93,8 +122,9 @@ export default function WidgetTile({
     ? "block max-w-full truncate text-left text-[15px] font-semibold leading-tight tracking-tight text-white"
     : "block max-w-full truncate text-left text-[15px] font-semibold leading-tight tracking-tight text-ink";
   const footerClass = isAction
-    ? "mt-3 pt-3 border-t border-white/15 flex items-center justify-between gap-2 text-xs text-white/70"
-    : "mt-3 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-2 text-xs text-muted";
+    ? "mt-4 pt-3 border-t border-white/15 flex items-center justify-between gap-3 text-xs text-white/75"
+    : "mt-4 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-3 text-xs text-muted";
+  const provenance = provenanceSummary(widget);
 
   return (
     <motion.article
@@ -111,7 +141,7 @@ export default function WidgetTile({
       data-widget-kind={widget.kind}
       data-widget-id={widget.id}
       data-widget-tone={tone}
-      aria-label={`Drill into ${widget.title}`}
+      aria-label={`View details for ${widget.title}`}
     >
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -125,7 +155,7 @@ export default function WidgetTile({
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {widget.confidence && <ConfidenceChip value={widget.confidence} />}
-          <StatusChip status={widget.status} />
+          {shouldShowStatusChip(widget.status) && <StatusChip status={widget.status} />}
         </div>
       </header>
 
@@ -134,26 +164,17 @@ export default function WidgetTile({
       </div>
 
       <footer className={footerClass}>
-        <span className="min-w-0 flex items-center gap-2 truncate">
-          <SourceTypeBadge source={widget.source} />
-          <span
-            className="truncate"
-            title={`${widget.sources.length} source${
-              widget.sources.length === 1 ? "" : "s"
-            }`}
-          >
-            {widget.sources.length} source
-            {widget.sources.length === 1 ? "" : "s"}
-          </span>
+        <span className="min-w-0 truncate" title={provenance}>
+          {provenance}
         </span>
         <span
           className={
             isAction
-              ? "inline-flex items-center gap-0.5 text-white/70 group-hover:text-white whitespace-nowrap"
-              : "inline-flex items-center gap-0.5 text-muted group-hover:text-accent whitespace-nowrap"
+              ? "inline-flex items-center gap-0.5 text-white/80 group-hover:text-white whitespace-nowrap font-medium"
+              : "inline-flex items-center gap-0.5 text-muted group-hover:text-accent whitespace-nowrap font-medium"
           }
         >
-          Drill <ChevronRight className="size-3" aria-hidden="true" />
+          View details <ChevronRight className="size-3" aria-hidden="true" />
         </span>
       </footer>
     </motion.article>

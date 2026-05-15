@@ -41,12 +41,10 @@ function gridSpanClass(span: number): string {
 function formatGeneratedAt(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value || "unknown";
-  return d.toLocaleString(undefined, {
+  return d.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   });
 }
 
@@ -62,7 +60,7 @@ function ModalFooter({ widget }: { widget: CanvasWidget }) {
       <span>Provenance: {widget.source.replace(/_/g, " ")}</span>
       <span>{widget.sources.length} source{widget.sources.length === 1 ? "" : "s"}</span>
       <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
-      <span>Controls disabled · audit-ready preview</span>
+      <span>Read-only mode · action approvals not enabled</span>
       <span>Updated {formatGeneratedAt(widget.updated_at)}</span>
     </div>
   );
@@ -80,34 +78,54 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
       className="max-w-7xl mx-auto px-6 pb-24"
     >
       {/* Header */}
-      <header className="pt-10 pb-6">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted">
+      <header className="pt-10 pb-7">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted">
           <span className="size-1.5 rounded-full bg-accent" />
-          Dynamic canvas preview
+          Hermes-built strategic canvas
           <span
-            className="inline-flex items-center gap-1 chip chip-na text-[10px] ml-2"
-            title="Read-only preview derived from the saved brief"
+            className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 py-1 text-[10px] font-semibold text-ink shadow-sm"
+            title="You can inspect details; editing and agent actions require a later approval flow."
           >
-            <Lock className="size-3" aria-hidden="true" /> Read-only
+            <Lock className="size-3" aria-hidden="true" /> Read-only mode
           </span>
         </div>
-        <h1 className="font-display text-4xl tracking-tight leading-tight mt-2">
-          {canvas.account_name}
-        </h1>
-        <p className="text-sm text-muted mt-1">
-          Read-only view derived from the saved brief. Widget actions are disabled
-          until controlled agent approvals are enabled.
-        </p>
-        <div className="text-xs text-muted mt-2 flex flex-wrap items-center gap-3">
-          <span>{canvas.widgets.length} widgets</span>
-          <span>Generated {formatGeneratedAt(canvas.generated_at)}</span>
-          <span>{canvas.meta.agent_readiness.source_count} sources</span>
-          <span>{canvas.meta.agent_readiness.evidence_count} evidence items</span>
-          <span>
-            {canvas.meta.agent_readiness.controls_enabled
-              ? "Controls enabled"
-              : "Controls disabled"}
-          </span>
+        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <h1 className="font-display text-4xl tracking-tight leading-tight">
+              {canvas.account_name}
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Hermes arranges the saved brief into a dynamic account workspace:
+              the strongest signals, evidence, risks, and next moves are composed
+              for review, not merely listed as another brief page.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:min-w-[420px]">
+            <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
+              <strong className="block text-base leading-none text-ink">
+                {canvas.widgets.length}
+              </strong>
+              <span className="text-muted">widgets</span>
+            </span>
+            <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
+              <strong className="block text-base leading-none text-ink">
+                {canvas.meta.agent_readiness.source_count}
+              </strong>
+              <span className="text-muted">sources</span>
+            </span>
+            <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
+              <strong className="block text-base leading-none text-ink">
+                {canvas.meta.agent_readiness.evidence_count}
+              </strong>
+              <span className="text-muted">evidence items</span>
+            </span>
+            <span className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 shadow-sm">
+              <strong className="block text-sm leading-none text-ink">
+                {formatGeneratedAt(canvas.generated_at)}
+              </strong>
+              <span className="text-muted">generated</span>
+            </span>
+          </div>
         </div>
       </header>
 
