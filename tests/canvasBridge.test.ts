@@ -126,7 +126,7 @@ test("evidence source links only render safe http(s) URLs as anchors", () => {
   assert.match(source, /isSafeSourceUrl/);
 });
 
-test("WidgetTile opens when the card surface is clicked, not only the drill link", () => {
+test("WidgetTile opens when the card surface is clicked, not only the details link", () => {
   const source = readFileSync(
     path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
     "utf8",
@@ -135,6 +135,31 @@ test("WidgetTile opens when the card surface is clicked, not only the drill link
   assert.match(source, /role="button"/);
   assert.match(source, /tabIndex=\{0\}/);
   assert.match(source, /onKeyDown=\{handleCardKeyDown\}/);
+  assert.doesNotMatch(source, />\s*Drill\s*</, "Canvas cards should use user-facing details language, not BI jargon");
+  assert.match(source, /View details/, "Canvas cards should expose a clear details affordance");
+});
+
+test("Canvas widget chrome hides draft scaffolding from normal fresh cards", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  assert.match(source, /shouldShowStatusChip/, "freshness visibility should be centralized and conditional");
+  assert.match(source, /shouldShowStatusChip\(widget\.status\) && <StatusChip status=\{widget\.status\} \/>/, "fresh status should only appear through the conditional helper");
+  assert.doesNotMatch(source, /\{widget\.sources\.length\} source/, "zero-source counts should not be rendered mechanically on every card");
+  assert.match(source, /provenanceSummary/, "cards should summarize provenance instead of dumping raw source counts");
+});
+
+test("Canvas header copy presents Hermes as the strategic layout driver", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ReadOnlyCanvasView.tsx"),
+    "utf8",
+  );
+  assert.match(source, /Hermes-built strategic canvas/);
+  assert.match(source, /Hermes arranges/);
+  assert.match(source, /Read-only mode/);
+  assert.doesNotMatch(source, /Controls disabled/);
+  assert.doesNotMatch(source, /Widget actions are disabled/);
 });
 
 test("buildReadOnlyCanvasFromBrief derives deterministic read-only widgets", () => {

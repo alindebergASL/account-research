@@ -338,7 +338,7 @@ export function StrategicSignalRadarTile({
               className="mt-1 text-[11px] text-muted line-clamp-2 min-h-[2em]"
               title={q.sample ?? ""}
             >
-              {q.sample ?? "No signals yet."}
+              {q.sample ?? "No public signal found — verify in discovery."}
             </p>
           </div>
         );
@@ -374,8 +374,8 @@ export function OpportunityRiskSplitTile({
             {d.opportunities.count}
           </span>
         </div>
-        <p className="mt-1 text-[11px] text-ink line-clamp-2 min-h-[2em]">
-          {d.opportunities.top?.text ?? "—"}
+        <p className="mt-1 text-[12px] text-ink line-clamp-3 min-h-[3.2em] leading-snug">
+          {d.opportunities.top?.text ?? "No priority opportunity found in the saved brief."}
         </p>
       </div>
       <div
@@ -393,8 +393,8 @@ export function OpportunityRiskSplitTile({
             {d.risks.count}
           </span>
         </div>
-        <p className="mt-1 text-[11px] text-ink line-clamp-2 min-h-[2em]">
-          {d.risks.top?.text ?? "—"}
+        <p className="mt-1 text-[12px] text-ink line-clamp-3 min-h-[3.2em] leading-snug">
+          {d.risks.top?.text ?? "No priority risk found in the saved brief."}
         </p>
       </div>
     </div>
