@@ -1,5 +1,11 @@
 import type { Brief, BriefExtension } from "@/lib/schema";
 import type { CanvasWidget, Canvas, Confidence, Source } from "./schema";
+import {
+  buildAITakeaways,
+  buildMomentumStrip,
+  buildOpportunityRiskSplit,
+  buildStrategicSignalRadar,
+} from "./strategicInsights";
 
 // Build a read-only, deterministic Canvas from an existing Brief.
 //
@@ -175,6 +181,48 @@ export function buildReadOnlyCanvasFromBrief({
       value: `${brief.ai_tech_maturity.rating}/5`,
       helper: "Rating from the saved brief.",
     },
+  });
+
+  // ---- Strategic insight workspace (Canvas v2 Phase 1) -------------------
+  // These four Hermes-sourced widgets render at the top of the grid (right
+  // below the executive cockpit) so the first viewport reads as a strategic
+  // workspace, not a tile catalogue. All derivations are deterministic from
+  // the saved brief; no model calls.
+  widgets.push({
+    ...baseWidget("insight-ai-takeaways", "AI takeaways", 12, 4, {
+      source: "hermes",
+      why_included:
+        "Deterministic synthesis of maturity, top initiative, top risk, buying path, and recommended next action from the saved brief.",
+    }),
+    kind: "ai_takeaways",
+    data: buildAITakeaways(brief),
+  });
+  widgets.push({
+    ...baseWidget("insight-signal-radar", "Strategic signal radar", 6, 4, {
+      source: "hermes",
+      why_included:
+        "Buckets brief.recent_signals + brief.competitive_signals into strategy / tech / procurement / leadership quadrants by deterministic keyword match.",
+    }),
+    kind: "strategic_signal_radar",
+    data: buildStrategicSignalRadar(brief),
+  });
+  widgets.push({
+    ...baseWidget("insight-opportunity-risk", "Opportunity / risk split", 6, 4, {
+      source: "hermes",
+      why_included:
+        "Pairs brief.top_initiatives against brief.risks side-by-side and labels the balance.",
+    }),
+    kind: "opportunity_risk_split",
+    data: buildOpportunityRiskSplit(brief),
+  });
+  widgets.push({
+    ...baseWidget("insight-momentum-strip", "Momentum", 12, 2, {
+      source: "hermes",
+      why_included:
+        "Counts signals, initiatives, active pilots, and active programs from the saved brief; labels overall velocity.",
+    }),
+    kind: "momentum_strip",
+    data: buildMomentumStrip(brief),
   });
 
   // ---- Priority + signals row -------------------------------------------

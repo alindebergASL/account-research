@@ -7,6 +7,10 @@ import {
   OpenQuestionsTile,
   MetricTile,
   ExtensionTile,
+  StrategicSignalRadarTile,
+  OpportunityRiskSplitTile,
+  MomentumStripTile,
+  AITakeawaysTile,
 } from "../../components/canvas/tiles";
 import {
   SectionRefDetail,
@@ -15,6 +19,10 @@ import {
   OpenQuestionsDetail,
   MetricDetail,
   ExtensionDetail,
+  StrategicSignalRadarDetail,
+  OpportunityRiskSplitDetail,
+  MomentumStripDetail,
+  AITakeawaysDetail,
 } from "../../components/canvas/details";
 
 export interface WidgetDescriptor {
@@ -31,6 +39,10 @@ export const ALL_WIDGET_KINDS: readonly WidgetKind[] = [
   "open_questions",
   "metric",
   "extension",
+  "strategic_signal_radar",
+  "opportunity_risk_split",
+  "momentum_strip",
+  "ai_takeaways",
 ];
 
 const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
@@ -69,6 +81,30 @@ const REGISTRY: Record<WidgetKind, WidgetDescriptor> = {
     label: "Insight",
     Tile: ExtensionTile as ComponentType<{ widget: CanvasWidget }>,
     Detail: ExtensionDetail as ComponentType<{ widget: CanvasWidget }>,
+  },
+  strategic_signal_radar: {
+    kind: "strategic_signal_radar",
+    label: "Strategic signal radar",
+    Tile: StrategicSignalRadarTile as ComponentType<{ widget: CanvasWidget }>,
+    Detail: StrategicSignalRadarDetail as ComponentType<{ widget: CanvasWidget }>,
+  },
+  opportunity_risk_split: {
+    kind: "opportunity_risk_split",
+    label: "Opportunity / risk split",
+    Tile: OpportunityRiskSplitTile as ComponentType<{ widget: CanvasWidget }>,
+    Detail: OpportunityRiskSplitDetail as ComponentType<{ widget: CanvasWidget }>,
+  },
+  momentum_strip: {
+    kind: "momentum_strip",
+    label: "Momentum",
+    Tile: MomentumStripTile as ComponentType<{ widget: CanvasWidget }>,
+    Detail: MomentumStripDetail as ComponentType<{ widget: CanvasWidget }>,
+  },
+  ai_takeaways: {
+    kind: "ai_takeaways",
+    label: "AI takeaways",
+    Tile: AITakeawaysTile as ComponentType<{ widget: CanvasWidget }>,
+    Detail: AITakeawaysDetail as ComponentType<{ widget: CanvasWidget }>,
   },
 };
 
