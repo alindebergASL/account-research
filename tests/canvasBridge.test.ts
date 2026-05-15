@@ -344,11 +344,15 @@ test("production canvas registry covers every widget kind including extension", 
     [...ALL_WIDGET_KINDS].sort(),
     [
       "action_panel",
+      "ai_takeaways",
       "evidence_board",
       "extension",
       "metric",
+      "momentum_strip",
       "open_questions",
+      "opportunity_risk_split",
       "section_ref",
+      "strategic_signal_radar",
     ],
   );
   for (const kind of ALL_WIDGET_KINDS) {
@@ -855,4 +859,321 @@ test("ReadOnlyCanvasView mounts ExecutiveCockpit before the widget grid", () => 
     cockpitIndex < gridIndex,
     "ExecutiveCockpit must be mounted before the widget grid",
   );
+});
+
+// ---- Canvas v2 strategic workspace (Phase 1) -------------------------------
+
+import {
+  buildStrategicSignalRadar,
+  buildOpportunityRiskSplit,
+  buildMomentumStrip,
+  buildAITakeaways,
+} from "../web/lib/canvas/strategicInsights";
+
+test("Strategic Signal Radar buckets signals into four quadrants without throwing", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const radar = buildStrategicSignalRadar(brief);
+  assert.equal(radar.quadrants.length, 4);
+  const keys = radar.quadrants.map((q) => q.key);
+  assert.deepEqual(
+    [...keys].sort(),
+    ["leadership", "procurement", "strategy", "tech"],
+    "radar must always expose all four quadrants",
+  );
+  for (const q of radar.quadrants) {
+    assert.equal(typeof q.count, "number");
+    assert.ok(q.count >= 0);
+    assert.equal(typeof q.label, "string");
+    assert.ok(q.label.length > 0);
+  }
+});
+
+test("Strategic Signal Radar tolerates empty signals (no throw, all-zero quadrants)", () => {
+  const brief = Brief.parse({
+    ...sampleBriefJson,
+    recent_signals: [],
+    competitive_signals: [],
+  });
+  const radar = buildStrategicSignalRadar(brief);
+  assert.equal(radar.quadrants.length, 4);
+  for (const q of radar.quadrants) {
+    assert.equal(q.count, 0);
+    assert.equal(q.sample, undefined);
+    assert.equal(q.confidence, undefined);
+  }
+});
+
+test("Strategic Signal Radar attributes a known signal to its quadrant", () => {
+  const brief = Brief.parse({
+    ...sampleBriefJson,
+    recent_signals: [
+      {
+        text: "Selected new CISO from a top academic medical center.",
+        source: "Becker's Hospital Review",
+        confidence: "High",
+      },
+    ],
+    competitive_signals: [],
+  });
+  const radar = buildStrategicSignalRadar(brief);
+  const leadership = radar.quadrants.find((q) => q.key === "leadership");
+  assert.ok(leadership);
+  assert.equal(leadership?.count, 1);
+  assert.equal(leadership?.confidence, "High");
+  assert.ok(leadership?.sample && leadership.sample.includes("CISO"));
+});
+
+test("Opportunity / Risk Split surfaces top initiative + top risk and computes balance", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const split = buildOpportunityRiskSplit(brief);
+  assert.equal(split.opportunities.count, brief.top_initiatives.length);
+  assert.equal(split.risks.count, brief.risks.length);
+  assert.ok(split.opportunities.top);
+  assert.equal(
+    split.opportunities.top?.text,
+    brief.top_initiatives[0]?.title,
+  );
+  assert.equal(split.risks.top?.text, brief.risks[0]);
+  assert.ok(["opportunity-heavy", "risk-heavy", "balanced"].includes(split.balance));
+});
+
+test("Opportunity / Risk Split handles empty arrays gracefully", () => {
+  const brief = Brief.parse({
+    ...sampleBriefJson,
+    top_initiatives: [],
+    risks: [],
+  });
+  const split = buildOpportunityRiskSplit(brief);
+  assert.equal(split.opportunities.count, 0);
+  assert.equal(split.risks.count, 0);
+  assert.equal(split.opportunities.top, null);
+  assert.equal(split.risks.top, null);
+  assert.equal(split.balance, "balanced");
+});
+
+test("Momentum Strip computes four segments and a velocity label from brief metadata", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const strip = buildMomentumStrip(brief);
+  assert.equal(strip.segments.length, 4);
+  const segKeys = strip.segments.map((s) => s.key);
+  assert.deepEqual(
+    [...segKeys].sort(),
+    ["initiatives", "pilots", "programs", "signals"],
+  );
+  const totalCalc = strip.segments.reduce((n, s) => n + s.count, 0);
+  assert.equal(strip.total, totalCalc);
+  assert.ok(
+    ["High momentum", "Steady", "Low momentum", "Quiet"].includes(
+      strip.velocity_label,
+    ),
+  );
+});
+
+test("Momentum Strip returns Quiet on a brief with no signals/initiatives/pilots/programs", () => {
+  const brief = Brief.parse({
+    ...sampleBriefJson,
+    recent_signals: [],
+    top_initiatives: [],
+    technical_footprint: {
+      ...sampleBriefJson.technical_footprint,
+      active_pilots: [],
+    },
+    programs_procurement: {
+      ...sampleBriefJson.programs_procurement,
+      active_rfps_contracts: [],
+    },
+  });
+  const strip = buildMomentumStrip(brief);
+  assert.equal(strip.total, 0);
+  assert.equal(strip.velocity_label, "Quiet");
+});
+
+test("AI Takeaways panel produces 3-5 deterministic takeaways with provenance", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const tk = buildAITakeaways(brief);
+  assert.ok(tk.takeaways.length >= 3);
+  assert.ok(tk.takeaways.length <= 5);
+  for (const t of tk.takeaways) {
+    assert.equal(typeof t.headline, "string");
+    assert.ok(t.headline.length > 0);
+    assert.equal(typeof t.detail, "string");
+    assert.ok(t.detail.length > 0);
+    assert.equal(typeof t.source_field, "string");
+    assert.ok(t.source_field.length > 0);
+  }
+  // must reference brief.next_action verbatim in the action takeaway
+  assert.ok(
+    tk.takeaways.some(
+      (t) =>
+        t.source_field === "next_action" && t.detail === brief.next_action,
+    ),
+    "next_action takeaway should quote brief.next_action verbatim",
+  );
+});
+
+test("AI Takeaways skips takeaways whose source field is empty", () => {
+  const brief = Brief.parse({
+    ...sampleBriefJson,
+    next_action: "",
+    buying_path: "",
+    risks: [],
+  });
+  const tk = buildAITakeaways(brief);
+  for (const t of tk.takeaways) {
+    assert.notEqual(t.source_field, "next_action");
+    assert.notEqual(t.source_field, "buying_path");
+    assert.notEqual(t.source_field, "risks");
+  }
+});
+
+test("Canvas.parse accepts the four new strategic widget kinds", () => {
+  const baseEnvelope = {
+    description: "",
+    source: "hermes",
+    created_at: "2026-05-15T00:00:00.000Z",
+    updated_at: "2026-05-15T00:00:00.000Z",
+    why_included: "Deterministic strategic insight.",
+    sources: [],
+    controls: {
+      can_refresh: false,
+      can_remove: false,
+      can_edit: false,
+      can_export: false,
+    },
+    status: "fresh",
+    evidence: [],
+  };
+  const parsed = Canvas.parse({
+    account_id: "x",
+    account_name: "Strategic Workspace",
+    version: 1,
+    generated_at: "2026-05-15T00:00:00.000Z",
+    widgets: [
+      {
+        ...baseEnvelope,
+        id: "insight-signal-radar",
+        kind: "strategic_signal_radar",
+        title: "Strategic signal radar",
+        layout: { x: 0, y: 0, w: 6, h: 4, pinned: false, collapsed: false },
+        data: {
+          quadrants: [
+            { key: "strategy", label: "Strategy", count: 2, confidence: "High" },
+            { key: "tech", label: "Tech & AI", count: 1 },
+            { key: "procurement", label: "Procurement", count: 0 },
+            { key: "leadership", label: "Leadership", count: 0 },
+          ],
+        },
+      },
+      {
+        ...baseEnvelope,
+        id: "insight-opportunity-risk",
+        kind: "opportunity_risk_split",
+        title: "Opportunity / risk split",
+        layout: { x: 6, y: 0, w: 6, h: 4, pinned: false, collapsed: false },
+        data: {
+          opportunities: {
+            count: 3,
+            top: { text: "Cloud", confidence: "High", tag: "Lakehouse" },
+          },
+          risks: { count: 2, top: { text: "Security" } },
+          balance: "opportunity-heavy",
+        },
+      },
+      {
+        ...baseEnvelope,
+        id: "insight-momentum-strip",
+        kind: "momentum_strip",
+        title: "Momentum",
+        layout: { x: 0, y: 4, w: 12, h: 2, pinned: false, collapsed: false },
+        data: {
+          segments: [
+            { key: "signals", label: "Signals", count: 3 },
+            { key: "initiatives", label: "Initiatives", count: 4 },
+            { key: "pilots", label: "Pilots", count: 1 },
+            { key: "programs", label: "Programs", count: 2 },
+          ],
+          total: 10,
+          velocity_label: "High momentum",
+        },
+      },
+      {
+        ...baseEnvelope,
+        id: "insight-ai-takeaways",
+        kind: "ai_takeaways",
+        title: "AI takeaways",
+        layout: { x: 0, y: 6, w: 12, h: 4, pinned: false, collapsed: false },
+        data: {
+          takeaways: [
+            {
+              headline: "Maturity 4/5",
+              detail: "Deploying at scale",
+              source_field: "ai_tech_maturity",
+            },
+          ],
+        },
+      },
+    ],
+    meta: {
+      layout_mode: "grid",
+      pinned_order: [],
+      agent_readiness: {
+        mode: "read_only_preview",
+        generated_from: "saved_brief",
+        controls_enabled: false,
+        source_count: 0,
+        evidence_count: 0,
+      },
+    },
+  });
+  assert.equal(parsed.widgets.length, 4);
+  assert.equal(parsed.widgets[0].kind, "strategic_signal_radar");
+  assert.equal(parsed.widgets[1].kind, "opportunity_risk_split");
+  assert.equal(parsed.widgets[2].kind, "momentum_strip");
+  assert.equal(parsed.widgets[3].kind, "ai_takeaways");
+});
+
+test("buildReadOnlyCanvasFromBrief emits the four strategic Hermes widgets with controls disabled", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const ids = [
+    "insight-ai-takeaways",
+    "insight-signal-radar",
+    "insight-opportunity-risk",
+    "insight-momentum-strip",
+  ];
+  for (const id of ids) {
+    const w = canvas.widgets.find((x) => x.id === id);
+    assert.ok(w, `widget ${id} should be emitted`);
+    if (!w) continue;
+    assert.equal(w.source, "hermes");
+    assert.equal(w.status, "fresh");
+    assert.equal(w.controls.can_edit, false);
+    assert.equal(w.controls.can_remove, false);
+    assert.equal(w.controls.can_refresh, false);
+    assert.equal(w.controls.can_export, false);
+    assert.ok(w.why_included && w.why_included.length > 0);
+  }
+  // pre-existing surfaces are preserved
+  assert.ok(canvas.widgets.some((w) => w.id === "evidence-board"));
+  assert.ok(canvas.widgets.some((w) => w.id === "section-top-initiatives"));
+  assert.ok(canvas.widgets.some((w) => w.id === "action-next"));
+});
+
+test("registry covers the four new strategic widget kinds", () => {
+  const required = [
+    "strategic_signal_radar",
+    "opportunity_risk_split",
+    "momentum_strip",
+    "ai_takeaways",
+  ];
+  for (const kind of required) {
+    assert.ok(
+      ALL_WIDGET_KINDS.includes(kind as never),
+      `${kind} should be in ALL_WIDGET_KINDS`,
+    );
+    const d = getDescriptor(kind as never);
+    assert.equal(d.kind, kind);
+    assert.equal(typeof d.Tile, "function");
+    assert.equal(typeof d.Detail, "function");
+  }
 });

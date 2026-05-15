@@ -6,6 +6,10 @@ import type {
   OpenQuestionsWidget,
   MetricWidget,
   ExtensionWidget,
+  StrategicSignalRadarWidget,
+  OpportunityRiskSplitWidget,
+  MomentumStripWidget,
+  AITakeawaysWidget,
 } from "../../lib/canvas/schema";
 import {
   ConfidenceBar,
@@ -290,5 +294,195 @@ export function UnknownTile({ widget }: { widget: CanvasWidget }) {
       <TileHeader title={widget.title} kindLabel="Widget" />
       <p className="text-sm text-muted">Unknown widget kind: {widget.kind}</p>
     </div>
+  );
+}
+
+// ---- Canvas v2 strategic workspace tiles ----------------------------------
+
+const QUADRANT_COLOR: Record<string, string> = {
+  strategy: "var(--tone-signal)",
+  tech: "var(--accent)",
+  procurement: "var(--tone-opportunity)",
+  leadership: "var(--tone-risk)",
+};
+
+// 2x2 grid of quadrant tiles: count + sample snippet + confidence chip.
+export function StrategicSignalRadarTile({
+  widget,
+}: {
+  widget: import("zod").infer<typeof StrategicSignalRadarWidget>;
+}) {
+  const quads = widget.data.quadrants;
+  return (
+    <div className="grid grid-cols-2 gap-2 min-w-0">
+      {quads.map((q) => {
+        const color = QUADRANT_COLOR[q.key] ?? "var(--muted)";
+        return (
+          <div
+            key={q.key}
+            className="rounded-lg border border-[var(--line)] bg-white p-2 min-w-0"
+            style={{ borderLeftColor: color, borderLeftWidth: "3px" }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-muted truncate">
+                {q.label}
+              </span>
+              <span
+                className="font-display text-lg leading-none tracking-tight"
+                style={{ color: q.count > 0 ? color : "var(--muted)" }}
+              >
+                {q.count}
+              </span>
+            </div>
+            <p
+              className="mt-1 text-[11px] text-muted line-clamp-2 min-h-[2em]"
+              title={q.sample ?? ""}
+            >
+              {q.sample ?? "No signals yet."}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Opportunity (green) vs Risk (red) side-by-side with the top item.
+export function OpportunityRiskSplitTile({
+  widget,
+}: {
+  widget: import("zod").infer<typeof OpportunityRiskSplitWidget>;
+}) {
+  const d = widget.data;
+  return (
+    <div className="grid grid-cols-2 gap-2 min-w-0">
+      <div
+        className="rounded-lg border border-[var(--line)] p-2 min-w-0"
+        style={{
+          borderLeftColor: "var(--tone-opportunity)",
+          borderLeftWidth: "3px",
+        }}
+      >
+        <div className="flex items-baseline justify-between">
+          <span className="text-[10px] uppercase tracking-wider text-muted">
+            Opportunities
+          </span>
+          <span
+            className="font-display text-lg leading-none tracking-tight"
+            style={{ color: "var(--tone-opportunity)" }}
+          >
+            {d.opportunities.count}
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] text-ink line-clamp-2 min-h-[2em]">
+          {d.opportunities.top?.text ?? "—"}
+        </p>
+      </div>
+      <div
+        className="rounded-lg border border-[var(--line)] p-2 min-w-0"
+        style={{ borderLeftColor: "var(--tone-risk)", borderLeftWidth: "3px" }}
+      >
+        <div className="flex items-baseline justify-between">
+          <span className="text-[10px] uppercase tracking-wider text-muted">
+            Risks
+          </span>
+          <span
+            className="font-display text-lg leading-none tracking-tight"
+            style={{ color: "var(--tone-risk)" }}
+          >
+            {d.risks.count}
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] text-ink line-clamp-2 min-h-[2em]">
+          {d.risks.top?.text ?? "—"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const MOMENTUM_COLOR: Record<string, string> = {
+  signals: "var(--tone-signal)",
+  initiatives: "var(--tone-opportunity)",
+  pilots: "var(--accent)",
+  programs: "var(--muted)",
+};
+
+// Compact horizontal strip + velocity label.
+export function MomentumStripTile({
+  widget,
+}: {
+  widget: import("zod").infer<typeof MomentumStripWidget>;
+}) {
+  const d = widget.data;
+  const denom = Math.max(d.total, 1);
+  return (
+    <div className="space-y-2 min-w-0">
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-[var(--bg)]">
+        {d.segments.map((s) => {
+          const pct = d.total > 0 ? (s.count / denom) * 100 : 0;
+          if (pct === 0) return null;
+          return (
+            <div
+              key={s.key}
+              style={{ width: `${pct}%`, background: MOMENTUM_COLOR[s.key] }}
+              title={`${s.label}: ${s.count}`}
+            />
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-4 gap-2 min-w-0">
+        {d.segments.map((s) => (
+          <div key={s.key} className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-muted truncate">
+              {s.label}
+            </div>
+            <div
+              className="font-display text-base leading-none tracking-tight"
+              style={{
+                color: s.count > 0 ? MOMENTUM_COLOR[s.key] : "var(--muted)",
+              }}
+            >
+              {s.count}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted">{d.velocity_label}</p>
+    </div>
+  );
+}
+
+// Compact bulleted takeaways list.
+export function AITakeawaysTile({
+  widget,
+}: {
+  widget: import("zod").infer<typeof AITakeawaysWidget>;
+}) {
+  const items = widget.data.takeaways.slice(0, 4);
+  if (items.length === 0) {
+    return <p className="text-sm text-muted">No takeaways available.</p>;
+  }
+  return (
+    <ul className="space-y-2 min-w-0">
+      {items.map((t, i) => (
+        <li
+          key={`${t.source_field}-${i}`}
+          className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5 min-w-0"
+        >
+          <div className="text-[10px] uppercase tracking-wider text-muted truncate">
+            {t.headline}
+          </div>
+          <p className="text-[12px] leading-snug text-ink line-clamp-2" title={t.detail}>
+            {t.detail}
+          </p>
+        </li>
+      ))}
+      {widget.data.takeaways.length > items.length && (
+        <li className="text-[10px] text-muted">
+          +{widget.data.takeaways.length - items.length} more · open to view
+        </li>
+      )}
+    </ul>
   );
 }

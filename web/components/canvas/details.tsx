@@ -6,6 +6,10 @@ import type {
   OpenQuestionsWidget,
   MetricWidget,
   ExtensionWidget,
+  StrategicSignalRadarWidget,
+  OpportunityRiskSplitWidget,
+  MomentumStripWidget,
+  AITakeawaysWidget,
   Source,
   Evidence,
 } from "../../lib/canvas/schema";
@@ -422,6 +426,250 @@ export function ExtensionDetail({
             </table>
           )}
         </div>
+      )}
+      <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
+    </div>
+  );
+}
+
+// ---- Canvas v2 strategic workspace details --------------------------------
+
+const QUADRANT_DETAIL_COLOR: Record<string, string> = {
+  strategy: "var(--tone-signal)",
+  tech: "var(--accent)",
+  procurement: "var(--tone-opportunity)",
+  leadership: "var(--tone-risk)",
+};
+
+export function StrategicSignalRadarDetail({
+  widget,
+}: {
+  widget: import("zod").infer<typeof StrategicSignalRadarWidget>;
+}) {
+  const quads = widget.data.quadrants;
+  return (
+    <div>
+      <Meta why_included={widget.why_included} source={widget.source} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {quads.map((q) => {
+          const color = QUADRANT_DETAIL_COLOR[q.key] ?? "var(--muted)";
+          return (
+            <div
+              key={q.key}
+              className="rounded-lg border border-[var(--line)] p-3"
+              style={{ borderLeftColor: color, borderLeftWidth: "4px" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs uppercase tracking-wider text-muted">
+                  {q.label}
+                </span>
+                <span
+                  className="font-display text-2xl leading-none tracking-tight"
+                  style={{ color: q.count > 0 ? color : "var(--muted)" }}
+                >
+                  {q.count}
+                </span>
+              </div>
+              {q.sample ? (
+                <p className="mt-2 text-sm leading-snug text-ink">{q.sample}</p>
+              ) : (
+                <p className="mt-2 text-sm text-muted">
+                  No signals match this quadrant yet.
+                </p>
+              )}
+              {q.confidence && (
+                <div className="mt-2">
+                  <ConfidenceChip value={q.confidence} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
+    </div>
+  );
+}
+
+export function OpportunityRiskSplitDetail({
+  widget,
+}: {
+  widget: import("zod").infer<typeof OpportunityRiskSplitWidget>;
+}) {
+  const d = widget.data;
+  return (
+    <div>
+      <Meta why_included={widget.why_included} source={widget.source} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div
+          className="rounded-lg border border-[var(--line)] p-3"
+          style={{
+            borderLeftColor: "var(--tone-opportunity)",
+            borderLeftWidth: "4px",
+          }}
+        >
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs uppercase tracking-wider text-muted">
+              Opportunities
+            </span>
+            <span
+              className="font-display text-3xl leading-none tracking-tight"
+              style={{ color: "var(--tone-opportunity)" }}
+            >
+              {d.opportunities.count}
+            </span>
+          </div>
+          {d.opportunities.top ? (
+            <>
+              <p className="mt-2 text-sm font-medium leading-snug text-ink">
+                {d.opportunities.top.text}
+              </p>
+              {d.opportunities.top.tag && (
+                <p className="mt-1 text-xs text-muted whitespace-pre-line">
+                  {d.opportunities.top.tag}
+                </p>
+              )}
+              {d.opportunities.top.confidence && (
+                <div className="mt-2">
+                  <ConfidenceChip value={d.opportunities.top.confidence} />
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-muted">No opportunities recorded.</p>
+          )}
+        </div>
+        <div
+          className="rounded-lg border border-[var(--line)] p-3"
+          style={{
+            borderLeftColor: "var(--tone-risk)",
+            borderLeftWidth: "4px",
+          }}
+        >
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs uppercase tracking-wider text-muted">
+              Risks
+            </span>
+            <span
+              className="font-display text-3xl leading-none tracking-tight"
+              style={{ color: "var(--tone-risk)" }}
+            >
+              {d.risks.count}
+            </span>
+          </div>
+          {d.risks.top ? (
+            <p className="mt-2 text-sm font-medium leading-snug text-ink">
+              {d.risks.top.text}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-muted">No risks recorded.</p>
+          )}
+        </div>
+      </div>
+      <p className="mt-3 text-xs uppercase tracking-wider text-muted">
+        Balance: {d.balance.replace("-", " ")}
+      </p>
+      <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
+    </div>
+  );
+}
+
+const MOMENTUM_DETAIL_COLOR: Record<string, string> = {
+  signals: "var(--tone-signal)",
+  initiatives: "var(--tone-opportunity)",
+  pilots: "var(--accent)",
+  programs: "var(--muted)",
+};
+
+export function MomentumStripDetail({
+  widget,
+}: {
+  widget: import("zod").infer<typeof MomentumStripWidget>;
+}) {
+  const d = widget.data;
+  const denom = Math.max(d.total, 1);
+  return (
+    <div>
+      <Meta why_included={widget.why_included} source={widget.source} />
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-[var(--bg)] mb-3">
+        {d.segments.map((s) => {
+          const pct = d.total > 0 ? (s.count / denom) * 100 : 0;
+          if (pct === 0) return null;
+          return (
+            <div
+              key={s.key}
+              style={{ width: `${pct}%`, background: MOMENTUM_DETAIL_COLOR[s.key] }}
+              title={`${s.label}: ${s.count}`}
+            />
+          );
+        })}
+      </div>
+      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {d.segments.map((s) => (
+          <li
+            key={s.key}
+            className="rounded-lg border border-[var(--line)] p-3"
+            style={{
+              borderLeftColor: MOMENTUM_DETAIL_COLOR[s.key],
+              borderLeftWidth: "4px",
+            }}
+          >
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs uppercase tracking-wider text-muted">
+                {s.label}
+              </span>
+              <span
+                className="font-display text-2xl leading-none tracking-tight"
+                style={{
+                  color: s.count > 0 ? MOMENTUM_DETAIL_COLOR[s.key] : "var(--muted)",
+                }}
+              >
+                {s.count}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs uppercase tracking-wider text-muted">
+        Velocity: {d.velocity_label} · {d.total} item{d.total === 1 ? "" : "s"}
+      </p>
+      <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
+    </div>
+  );
+}
+
+export function AITakeawaysDetail({
+  widget,
+}: {
+  widget: import("zod").infer<typeof AITakeawaysWidget>;
+}) {
+  const items = widget.data.takeaways;
+  return (
+    <div>
+      <Meta why_included={widget.why_included} source={widget.source} />
+      {items.length === 0 ? (
+        <p className="text-sm text-muted">No takeaways available.</p>
+      ) : (
+        <ul className="space-y-3">
+          {items.map((t, i) => (
+            <li
+              key={`${t.source_field}-${i}`}
+              className="rounded-lg border border-[var(--line)] p-3"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs uppercase tracking-wider text-muted">
+                  {t.headline}
+                </span>
+                <code className="text-[10px] text-muted">
+                  {t.source_field}
+                </code>
+              </div>
+              <p className="mt-2 text-sm leading-snug text-ink whitespace-pre-line">
+                {t.detail}
+              </p>
+            </li>
+          ))}
+        </ul>
       )}
       <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
     </div>
