@@ -14,6 +14,7 @@ import {
   sectionKeyTone,
   confidenceBucket,
   confidenceWeight,
+  summarizeLandscapeLabel,
 } from "../web/lib/canvas/visualHelpers";
 
 const sampleBriefJson = JSON.parse(
@@ -651,6 +652,26 @@ test("confidenceWeight maps buckets to bar widths and handles unknowns", () => {
   assert.equal(confidenceWeight("Not found"), 0.12);
   assert.equal(confidenceWeight(undefined), 0.12);
   assert.equal(confidenceWeight("garbage"), 0.12);
+});
+
+test("summarizeLandscapeLabel keeps chart row labels compact and word-safe", () => {
+  assert.equal(
+    summarizeLandscapeLabel(
+      "Furhat Robotics completed a formal second acquisition of Misty Robotics business assets in April/May 2024, deepening integration of Misty into Furhat's global product portfolio.",
+      72,
+    ),
+    "Furhat Robotics completed a formal second acquisition of Misty Robotics…",
+  );
+  assert.equal(
+    summarizeLandscapeLabel(
+      "Roadmap risk: multi-timezone parent/subsidiary approvals may slow deal cycles for education partnerships.",
+      72,
+    ),
+    "Roadmap risk",
+  );
+  assert.equal(summarizeLandscapeLabel("  Short   row label  "), "Short row label");
+  assert.equal(summarizeLandscapeLabel(""), "—");
+  assert.equal(summarizeLandscapeLabel(undefined), "—");
 });
 
 test("Canvas-native modules: structured evidence is seeded on the right section_refs", () => {
