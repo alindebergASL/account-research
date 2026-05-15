@@ -22,6 +22,7 @@ import {
   parseFractionValue,
   sectionKeyTone,
   sourceTypeLabel,
+  summarizeLandscapeLabel,
   totalConfidence,
   type AccentTone,
   type ConfidenceBucket,
@@ -38,6 +39,7 @@ export {
   parseFractionValue,
   sectionKeyTone,
   sourceTypeLabel,
+  summarizeLandscapeLabel,
 };
 export type { AccentTone, ConfidenceBucket, ConfidenceCounts };
 
@@ -421,11 +423,12 @@ export function InitiativeLandscape({
               : bucket === "low"
                 ? "var(--conf-low)"
                 : fallbackColor;
+        const label = summarizeLandscapeLabel(it.text);
         return (
           <li key={i} className="space-y-1">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="min-w-0 truncate text-ink" title={it.text}>
-                {it.text}
+            <div className="flex items-start justify-between gap-3 text-xs">
+              <span className="min-w-0 text-ink leading-snug" title={it.text}>
+                {label}
               </span>
               {typeof it.confidence === "string" && (
                 <span

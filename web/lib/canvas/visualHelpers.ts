@@ -100,6 +100,33 @@ export function confidenceWeight(value: unknown): number {
   }
 }
 
+// Produces compact labels for confidence-weighted landscape rows. These rows
+// are visual summaries, not the source of truth; full evidence text remains
+// available in the drill-in detail below the chart and in the title tooltip.
+export function summarizeLandscapeLabel(value: unknown, max = 76): string {
+  if (typeof value !== "string") return "—";
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "—";
+
+  const limit = Math.max(24, max);
+  if (normalized.length <= limit) return normalized;
+
+  const boundaries = [":", " — ", " – ", " - ", ";", "."];
+  for (const boundary of boundaries) {
+    const idx = normalized.indexOf(boundary);
+    if (idx >= 8 && idx <= limit) {
+      const end = boundary.trim().length === 1 ? idx : idx + boundary.length;
+      const candidate = normalized.slice(0, end).trim();
+      if (candidate.length >= 8) return candidate;
+    }
+  }
+
+  const hard = normalized.slice(0, limit + 1);
+  const lastSpace = hard.lastIndexOf(" ");
+  const cut = lastSpace >= 32 ? lastSpace : limit;
+  return `${normalized.slice(0, cut).trim()}…`;
+}
+
 // Returns the tone class (used by SemanticAccent) for a given
 // section_ref section_key. Falls back to "neutral" for anything the
 // canvas hasn't given a dedicated palette to.
