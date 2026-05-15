@@ -6,6 +6,7 @@ import type { Canvas, CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
 import WidgetTile from "./WidgetTile";
 import DrillModal from "../DrillModal";
+import ExecutiveCockpit from "./ExecutiveCockpit";
 
 function gridSpanClass(span: number): string {
   const safe = Math.min(Math.max(Math.round(span), 1), 12);
@@ -109,6 +110,8 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
           </span>
         </div>
       </header>
+
+      <ExecutiveCockpit canvas={canvas} />
 
       {/* Grid */}
       <div

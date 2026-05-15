@@ -700,3 +700,138 @@ test("non-landscape section_refs (e.g. snapshot) keep evidence empty", () => {
   assert.ok(snapshot);
   assert.equal(snapshot?.evidence.length, 0);
 });
+
+// ---- Executive Cockpit selectors (PR: canvas-executive-cockpit-row) --------
+
+import {
+  buildExecutiveCockpit,
+  selectMaturity,
+  selectTopOpportunity,
+  selectTopRisk,
+  selectEvidenceSummary,
+  selectNextAction,
+} from "../web/lib/canvas/cockpit";
+
+test("buildExecutiveCockpit derives every cell from the sample brief", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const cockpit = buildExecutiveCockpit(canvas);
+  assert.ok(cockpit.maturity, "maturity cell should be derived");
+  assert.ok(cockpit.topOpportunity, "top opportunity cell should be derived");
+  assert.ok(cockpit.topRisk, "top risk cell should be derived");
+  assert.ok(cockpit.evidence, "evidence summary cell should be derived");
+  assert.ok(cockpit.nextAction, "next action cell should be derived");
+});
+
+test("selectMaturity parses metric-ai-maturity fraction values", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const m = selectMaturity(canvas);
+  assert.ok(m);
+  assert.equal(m?.current, brief.ai_tech_maturity.rating);
+  assert.equal(m?.max, 5);
+  assert.equal(typeof m?.rationale, "string");
+});
+
+test("selectTopOpportunity returns the first initiative title from structured evidence", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const op = selectTopOpportunity(canvas);
+  assert.ok(op);
+  assert.equal(op?.text, brief.top_initiatives[0]?.title);
+});
+
+test("selectTopRisk returns the first risk from structured evidence", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const r = selectTopRisk(canvas);
+  assert.ok(r);
+  assert.equal(r?.text, brief.risks[0]);
+});
+
+test("selectEvidenceSummary total matches the evidence-board item count", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const board = canvas.widgets.find((w) => w.id === "evidence-board");
+  assert.ok(board);
+  if (!board || board.kind !== "evidence_board") return;
+  const summary = selectEvidenceSummary(canvas);
+  assert.ok(summary);
+  assert.equal(summary?.total, board.data.items.length);
+  const bucketSum =
+    (summary?.counts.high ?? 0) +
+    (summary?.counts.medium ?? 0) +
+    (summary?.counts.low ?? 0) +
+    (summary?.counts.na ?? 0);
+  assert.equal(bucketSum, board.data.items.length);
+});
+
+test("selectNextAction surfaces brief.next_action verbatim", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const a = selectNextAction(canvas);
+  assert.ok(a);
+  assert.equal(a?.detail, brief.next_action);
+});
+
+test("buildExecutiveCockpit on a zero-widget canvas returns all null and does not throw", () => {
+  const empty: Parameters<typeof buildExecutiveCockpit>[0] = {
+    account_id: "x",
+    account_name: "Empty",
+    version: 1,
+    generated_at: "2026-05-13T00:00:00.000Z",
+    widgets: [],
+    meta: {
+      layout_mode: "grid",
+      pinned_order: [],
+      agent_readiness: {
+        mode: "read_only_preview",
+        generated_from: "saved_brief",
+        controls_enabled: false,
+        source_count: 0,
+        evidence_count: 0,
+      },
+    },
+  };
+  const cockpit = buildExecutiveCockpit(empty);
+  assert.equal(cockpit.maturity, null);
+  assert.equal(cockpit.topOpportunity, null);
+  assert.equal(cockpit.topRisk, null);
+  assert.equal(cockpit.evidence, null);
+  assert.equal(cockpit.nextAction, null);
+});
+
+test("non-fraction maturity value returns null without breaking other selectors", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  // Surgically replace the maturity metric value with a non-fraction string.
+  const mutated = {
+    ...canvas,
+    widgets: canvas.widgets.map((w) =>
+      w.id === "metric-ai-maturity" && w.kind === "metric"
+        ? { ...w, data: { ...w.data, value: "?" } }
+        : w,
+    ),
+  } as typeof canvas;
+  assert.equal(selectMaturity(mutated), null);
+  // Other selectors continue to derive their cells.
+  assert.ok(selectTopOpportunity(mutated));
+  assert.ok(selectTopRisk(mutated));
+  assert.ok(selectEvidenceSummary(mutated));
+  assert.ok(selectNextAction(mutated));
+});
+
+test("ReadOnlyCanvasView mounts ExecutiveCockpit before the widget grid", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ReadOnlyCanvasView.tsx"),
+    "utf8",
+  );
+  const cockpitIndex = source.indexOf("<ExecutiveCockpit");
+  const gridIndex = source.indexOf('data-testid="widget-grid"');
+  assert.ok(cockpitIndex >= 0, "ReadOnlyCanvasView must import / render ExecutiveCockpit");
+  assert.ok(gridIndex >= 0, "ReadOnlyCanvasView must keep the widget-grid testid");
+  assert.ok(
+    cockpitIndex < gridIndex,
+    "ExecutiveCockpit must be mounted before the widget grid",
+  );
+});
