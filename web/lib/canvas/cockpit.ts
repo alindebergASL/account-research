@@ -110,14 +110,34 @@ export function selectEvidenceSummary(
 }
 
 // Local action normaliser so we don't have to reach into tiles.tsx /
-// details.tsx (and pull React with it). Mirrors the shape of the
-// existing helpers there: handles both legacy {label, detail?} and
-// the richer {text, why, owner?, severity}.
+// details.tsx (and pull React with it). Handles all three supported
+// ActionItem shapes:
+//   - legacy { label, detail? }
+//   - lab    { text, why, owner?, severity }
+//   - hermes { recommendation, rationale, expected_outcome, ... }
 type RawAction =
   | { label: string; detail?: string }
-  | { text: string; why: string; owner?: string; severity?: "low" | "medium" | "high" };
+  | { text: string; why: string; owner?: string; severity?: "low" | "medium" | "high" }
+  | {
+      recommendation: string;
+      rationale: string;
+      expected_outcome: string;
+      risk?: string;
+      evidence?: unknown[];
+      approval_state?: "suggested" | "approved" | "dismissed";
+      owner?: string;
+      severity?: "low" | "medium" | "high";
+    };
 
 function normaliseAction(raw: RawAction): CockpitAction {
+  if ("recommendation" in raw) {
+    // The cockpit cell surfaces the actual recommendation text (the cell
+    // body); rationale / expected_outcome live in the drill-in panel.
+    return {
+      label: "Recommended next action",
+      detail: raw.recommendation,
+    };
+  }
   if ("label" in raw) {
     return { label: raw.label, detail: raw.detail ?? "" };
   }

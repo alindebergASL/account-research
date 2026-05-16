@@ -232,16 +232,103 @@ export function EvidenceBoardDetail({
 
 // ---- action_panel ---------------------------------------------------------
 
-function normalizeAction(a: import("zod").infer<typeof ActionPanelWidget>["data"]["actions"][number]) {
+type RichAction = {
+  title: string;
+  rationale?: string;
+  expectedOutcome?: string;
+  risk?: string;
+  legacyDetail?: string;
+  evidence: Array<{
+    text: string;
+    source?: string;
+    confidence?: string;
+    tag?: string;
+  }>;
+  severity?: "low" | "medium" | "high";
+  owner?: string;
+  approvalState?: "suggested" | "approved" | "dismissed";
+};
+
+function normalizeAction(
+  a: import("zod").infer<typeof ActionPanelWidget>["data"]["actions"][number],
+): RichAction {
+  if ("recommendation" in a) {
+    return {
+      title: a.recommendation,
+      rationale: a.rationale,
+      expectedOutcome: a.expected_outcome,
+      risk: a.risk,
+      evidence: a.evidence ?? [],
+      severity: a.severity,
+      owner: a.owner,
+      approvalState: a.approval_state,
+    };
+  }
   if ("label" in a) {
     return {
       title: a.label,
-      detail: a.detail,
-      severity: undefined as ("low" | "medium" | "high" | undefined),
-      owner: undefined as string | undefined,
+      legacyDetail: a.detail,
+      evidence: [],
     };
   }
-  return { title: a.text, detail: a.why, severity: a.severity, owner: a.owner };
+  return {
+    title: a.text,
+    legacyDetail: a.why,
+    evidence: [],
+    severity: a.severity,
+    owner: a.owner,
+  };
+}
+
+function ApprovalStateChip({
+  state,
+}: {
+  state?: "suggested" | "approved" | "dismissed";
+}) {
+  if (!state) return null;
+  const label =
+    state === "approved"
+      ? "Approved"
+      : state === "dismissed"
+        ? "Dismissed"
+        : "Suggested";
+  return (
+    <span className="chip chip-na text-[10px] capitalize">{label}</span>
+  );
+}
+
+function ActionEvidence({
+  items,
+}: {
+  items: RichAction["evidence"];
+}) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="mt-3">
+      <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
+        Evidence
+      </div>
+      <ul className="space-y-1.5 text-xs">
+        {items.map((ev, i) => (
+          <li
+            key={`${ev.source ?? "ev"}-${i}`}
+            className="rounded-md border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5"
+          >
+            <p className="leading-snug text-ink">{ev.text}</p>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted">
+              {ev.source && <code>{ev.source}</code>}
+              {ev.confidence && (
+                <ConfidenceChip value={ev.confidence} />
+              )}
+              {ev.tag && (
+                <span className="chip chip-na text-[10px]">{ev.tag}</span>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 export function ActionPanelDetail({
@@ -249,28 +336,81 @@ export function ActionPanelDetail({
 }: {
   widget: import("zod").infer<typeof ActionPanelWidget>;
 }) {
+  const actions = widget.data.actions;
   return (
     <div>
       <Meta why_included={widget.why_included} source={widget.source} />
+      <p className="mb-3 rounded-md bg-[var(--bg)] px-3 py-2 text-xs text-muted">
+        Suggested only · approval and execution are not enabled in this preview.
+      </p>
       <ul className="space-y-3">
-        {widget.data.actions.map((raw, i) => {
+        {actions.map((raw, i) => {
           const a = normalizeAction(raw);
+          const isRich = !!(a.rationale || a.expectedOutcome || a.risk);
           return (
             <li
               key={i}
               className="rounded-lg border border-[var(--line)] p-3 text-sm"
             >
               <div className="flex items-start justify-between gap-3">
-                <div className="font-medium">{a.title}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ApprovalStateChip state={a.approvalState} />
+                    {isRich && (
+                      <span className="text-[10px] uppercase tracking-wider text-muted">
+                        Recommendation
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 font-medium leading-snug">{a.title}</div>
+                </div>
                 <SeverityChip s={a.severity} />
               </div>
-              {a.detail && (
-                <p className="mt-1 leading-snug text-muted whitespace-pre-line">
-                  {a.detail}
-                </p>
+
+              {isRich ? (
+                <>
+                  {a.rationale && (
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-muted">
+                        Rationale
+                      </div>
+                      <p className="mt-0.5 leading-snug text-ink whitespace-pre-line">
+                        {a.rationale}
+                      </p>
+                    </div>
+                  )}
+                  {a.expectedOutcome && (
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-muted">
+                        Expected outcome
+                      </div>
+                      <p className="mt-0.5 leading-snug text-ink whitespace-pre-line">
+                        {a.expectedOutcome}
+                      </p>
+                    </div>
+                  )}
+                  {a.risk && (
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-muted">
+                        Risk / caveat
+                      </div>
+                      <p className="mt-0.5 leading-snug text-ink whitespace-pre-line">
+                        {a.risk}
+                      </p>
+                    </div>
+                  )}
+                  <ActionEvidence items={a.evidence} />
+                </>
+              ) : (
+                a.legacyDetail && (
+                  <p className="mt-1 leading-snug text-muted whitespace-pre-line">
+                    {a.legacyDetail}
+                  </p>
+                )
               )}
+
               {a.owner && (
-                <p className="mt-1 text-xs text-muted">Owner: {a.owner}</p>
+                <p className="mt-3 text-xs text-muted">Owner: {a.owner}</p>
               )}
             </li>
           );

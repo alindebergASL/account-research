@@ -107,13 +107,50 @@ export function EvidenceBoardTile({
 
 // ---- action_panel ---------------------------------------------------------
 
-// Normalises both ActionItem shapes (legacy {label, detail?} and richer
-// {text, why, owner?, severity}) into a single render shape.
-function normalizeAction(a: import("zod").infer<typeof ActionPanelWidget>["data"]["actions"][number]) {
+// Normalises all three ActionItem shapes into a single render shape:
+//   - legacy   { label, detail? }
+//   - lab      { text, why, owner?, severity }
+//   - hermes   { recommendation, rationale, expected_outcome, risk?,
+//                evidence?, approval_state, owner?, severity }
+export type NormalizedAction = {
+  title: string;
+  detail: string;
+  secondary?: string;
+  severity?: "low" | "medium" | "high";
+  approvalState?: "suggested" | "approved" | "dismissed";
+};
+
+export function normalizeAction(
+  a: import("zod").infer<typeof ActionPanelWidget>["data"]["actions"][number],
+): NormalizedAction {
+  if ("recommendation" in a) {
+    return {
+      title: a.recommendation,
+      detail: a.expected_outcome || a.rationale,
+      secondary: a.expected_outcome ? a.rationale : undefined,
+      severity: a.severity,
+      approvalState: a.approval_state,
+    };
+  }
   if ("label" in a) {
-    return { title: a.label, detail: a.detail ?? "", severity: undefined as ("low" | "medium" | "high" | undefined) };
+    return {
+      title: a.label,
+      detail: a.detail ?? "",
+      severity: undefined,
+    };
   }
   return { title: a.text, detail: a.why, severity: a.severity };
+}
+
+function approvalStateLabel(state?: NormalizedAction["approvalState"]): string {
+  switch (state) {
+    case "approved":
+      return "Approved";
+    case "dismissed":
+      return "Dismissed";
+    default:
+      return "Suggested";
+  }
 }
 
 export function ActionPanelTile({
@@ -121,16 +158,33 @@ export function ActionPanelTile({
 }: {
   widget: import("zod").infer<typeof ActionPanelWidget>;
 }) {
-  const first = widget.data.actions[0]
-    ? normalizeAction(widget.data.actions[0])
-    : null;
+  const actions = widget.data.actions;
+  const first = actions[0] ? normalizeAction(actions[0]) : null;
+  const remaining = Math.max(0, actions.length - 1);
   return (
     <div>
       <TileHeader title={widget.title} kindLabel="Recommended action" />
       {first ? (
-        <p className="text-sm leading-snug line-clamp-5">
-          {first.detail || first.title}
-        </p>
+        <div className="space-y-2">
+          {first.approvalState && (
+            <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-white/85">
+              {approvalStateLabel(first.approvalState)}
+            </span>
+          )}
+          <p className="text-sm font-semibold leading-snug line-clamp-3">
+            {first.title}
+          </p>
+          {first.detail && (
+            <p className="text-xs leading-snug opacity-80 line-clamp-3">
+              {first.detail}
+            </p>
+          )}
+          {remaining > 0 && (
+            <p className="text-[11px] opacity-70">
+              +{remaining} more recommended move{remaining === 1 ? "" : "s"} · open to view
+            </p>
+          )}
+        </div>
       ) : (
         <p className="text-sm text-muted">No actions.</p>
       )}

@@ -5,6 +5,7 @@ import path from "node:path";
 import { Canvas } from "../web/lib/canvas/schema";
 import { Brief, type BriefExtension } from "../web/lib/schema";
 import { buildReadOnlyCanvasFromBrief } from "../web/lib/canvas/fromBrief";
+import { buildRecommendedActions } from "../web/lib/canvas/recommendedActions";
 import { ALL_WIDGET_KINDS, getDescriptor } from "../web/lib/canvas/registry";
 import { isSafeExternalUrl } from "../web/components/canvas/details";
 import {
@@ -495,12 +496,17 @@ test("action_panel exposes next_action and no invented account-specific action",
   const panel = canvas.widgets.find((w) => w.kind === "action_panel");
   assert.ok(panel);
   if (panel && panel.kind === "action_panel") {
-    assert.equal(panel.data.actions.length, 1);
+    // PR-N: action_panel now emits the Hermes recommended-action queue,
+    // so we may see multiple ranked actions. The primary recommendation
+    // must still be brief.next_action verbatim (no fabrication).
+    assert.ok(panel.data.actions.length >= 1);
     const first = panel.data.actions[0];
-    if ("label" in first) {
+    if ("recommendation" in first) {
+      assert.equal(first.recommendation, brief.next_action);
+    } else if ("label" in first) {
       assert.equal(first.detail, brief.next_action);
     } else {
-      assert.fail("expected legacy {label, detail} action shape");
+      assert.fail("expected legacy {label, detail} or hermes {recommendation, ...} shape");
     }
   }
 });
@@ -1343,5 +1349,163 @@ test("registry covers the four new strategic widget kinds", () => {
     assert.equal(d.kind, kind);
     assert.equal(typeof d.Tile, "function");
     assert.equal(typeof d.Detail, "function");
+  }
+});
+
+// ---- Hermes recommended action queue --------------------------------------
+
+test("Canvas schema accepts the Hermes recommended-action shape", () => {
+  const parsed = Canvas.parse({
+    account_id: "rec-1",
+    account_name: "Rec",
+    version: 1,
+    generated_at: "2026-05-14T00:00:00.000Z",
+    widgets: [
+      {
+        id: "action-next",
+        kind: "action_panel",
+        title: "Recommended next moves",
+        description: "",
+        source: "hermes",
+        created_at: "2026-05-14T00:00:00.000Z",
+        updated_at: "2026-05-14T00:00:00.000Z",
+        sources: [],
+        layout: { x: 0, y: 0, w: 12, h: 4, pinned: false, collapsed: false },
+        controls: {
+          can_refresh: false,
+          can_remove: false,
+          can_edit: false,
+          can_export: false,
+        },
+        status: "fresh",
+        evidence: [],
+        data: {
+          actions: [
+            {
+              recommendation: "Request a 30-minute meeting with the CMIO.",
+              rationale: "Saved brief ranks this as primary.",
+              expected_outcome: "First conversation booked.",
+              evidence: [
+                { text: "brief.next_action", source: "brief.next_action", tag: "primary" },
+              ],
+              approval_state: "suggested",
+              severity: "high",
+            },
+          ],
+        },
+      },
+    ],
+    meta: { layout_mode: "grid", pinned_order: ["action-next"] },
+  });
+  const w = parsed.widgets[0];
+  assert.equal(w.kind, "action_panel");
+  if (w.kind === "action_panel") {
+    const a = w.data.actions[0];
+    assert.ok("recommendation" in a);
+    if ("recommendation" in a) {
+      assert.equal(a.approval_state, "suggested");
+      assert.equal(a.severity, "high");
+    }
+  }
+});
+
+test("buildRecommendedActions emits 2-4 rich actions for the sample brief", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const actions = buildRecommendedActions(brief);
+  assert.ok(actions.length >= 2, `expected >= 2 actions, got ${actions.length}`);
+  assert.ok(actions.length <= 4, `expected <= 4 actions, got ${actions.length}`);
+  for (const a of actions) {
+    assert.equal(typeof a.recommendation, "string");
+    assert.ok(a.recommendation.length > 0);
+    assert.equal(typeof a.rationale, "string");
+    assert.ok(a.rationale.length > 0);
+    assert.equal(typeof a.expected_outcome, "string");
+    assert.ok(a.expected_outcome.length > 0);
+    assert.equal(a.approval_state, "suggested");
+    assert.ok(["low", "medium", "high"].includes(a.severity));
+    assert.ok(Array.isArray(a.evidence));
+  }
+});
+
+test("buildRecommendedActions first action equals brief.next_action verbatim", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const actions = buildRecommendedActions(brief);
+  assert.ok(actions.length >= 1);
+  assert.equal(actions[0].recommendation, brief.next_action);
+  assert.equal(actions[0].severity, "high");
+});
+
+test("buildRecommendedActions evidence is drawn from saved brief fields verbatim", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const actions = buildRecommendedActions(brief);
+  const primary = actions[0];
+  // Primary evidence references brief.next_action verbatim
+  const primaryEv = primary.evidence.find((e) => e.tag === "primary");
+  assert.ok(primaryEv);
+  assert.equal(primaryEv!.text, brief.next_action);
+
+  // Risk action (if present) cites the brief.risks[0] string verbatim
+  const riskAction = actions.find((a) => a.risk !== undefined);
+  if (riskAction) {
+    assert.equal(riskAction.risk, brief.risks[0]);
+    const riskEv = riskAction.evidence.find((e) => e.tag === "risk");
+    assert.ok(riskEv);
+    assert.equal(riskEv!.text, brief.risks[0]);
+  }
+});
+
+test("buildRecommendedActions returns [] for a sparse brief; fromBrief falls back to legacy shape", () => {
+  const sparse = Brief.parse({
+    ...sampleBriefJson,
+    next_action: "",
+    top_initiatives: [],
+    personas: [],
+    buying_path: "",
+    risks: [],
+    competitive_signals: [],
+    recent_signals: [],
+    first_angle: "",
+  });
+  const actions = buildRecommendedActions(sparse);
+  assert.equal(actions.length, 0);
+
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sparse", brief: sparse });
+  const panel = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(panel);
+  if (panel && panel.kind === "action_panel") {
+    assert.ok(panel.data.actions.length >= 1);
+    const first = panel.data.actions[0];
+    assert.ok("label" in first, "sparse brief should fall back to legacy {label, detail}");
+    if ("label" in first) {
+      assert.equal(first.detail, "");
+    }
+  }
+});
+
+test("action_panel widget keeps all controls disabled", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const panel = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(panel);
+  assert.equal(panel!.controls.can_refresh, false);
+  assert.equal(panel!.controls.can_remove, false);
+  assert.equal(panel!.controls.can_edit, false);
+  assert.equal(panel!.controls.can_export, false);
+});
+
+test("canvas action tiles + details expose no Run/Execute/Approve/Dismiss button labels", () => {
+  const tilesSrc = readFileSync(
+    path.join(__dirname, "..", "web", "components", "canvas", "tiles.tsx"),
+    "utf8",
+  );
+  const detailsSrc = readFileSync(
+    path.join(__dirname, "..", "web", "components", "canvas", "details.tsx"),
+    "utf8",
+  );
+  for (const src of [tilesSrc, detailsSrc]) {
+    assert.ok(!/>\s*Run\s*</.test(src), "found >Run< button label");
+    assert.ok(!/>\s*Execute\s*</.test(src), "found >Execute< button label");
+    assert.ok(!/>\s*Approve\s*</.test(src), "found >Approve< button label");
+    assert.ok(!/>\s*Dismiss\s*</.test(src), "found >Dismiss< button label");
   }
 });

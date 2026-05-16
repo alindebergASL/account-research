@@ -108,8 +108,10 @@ export const EvidenceBoardData = z.object({
 });
 
 // ActionItem accepts BOTH the existing minimal shape and the richer
-// lab-aligned shape with `text` / `why` / `owner` / `severity`. Renderers
-// fall back gracefully when fields are absent.
+// lab-aligned shape with `text` / `why` / `owner` / `severity`, PLUS the
+// PR-N Hermes recommended-action shape (recommendation / rationale /
+// expected_outcome / risk / evidence / approval_state). Renderers
+// normalise across all three; no shape is mandatory.
 export const ActionItem = z.union([
   z.object({
     label: z.string(),
@@ -118,6 +120,18 @@ export const ActionItem = z.union([
   z.object({
     text: z.string(),
     why: z.string(),
+    owner: z.string().optional(),
+    severity: z.enum(["low", "medium", "high"]).default("medium"),
+  }),
+  z.object({
+    recommendation: z.string(),
+    rationale: z.string(),
+    expected_outcome: z.string(),
+    risk: z.string().optional(),
+    evidence: z.array(EvidenceItem).default([]),
+    approval_state: z
+      .enum(["suggested", "approved", "dismissed"])
+      .default("suggested"),
     owner: z.string().optional(),
     severity: z.enum(["low", "medium", "high"]).default("medium"),
   }),
