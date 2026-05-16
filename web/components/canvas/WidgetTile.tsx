@@ -154,9 +154,12 @@ export default function WidgetTile({
     : "inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted mb-1";
   // Slightly stronger title hierarchy than the previous text-sm — closer
   // to the Brief view's executive feel without becoming the same component.
+  // Wrap to two lines so tablet-width viewports (around 780px) don't clip
+  // the right edge of long titles; everything beyond that is still
+  // available in the drill-in modal.
   const titleClass = isAction
-    ? "block max-w-full truncate text-left text-[15px] font-semibold leading-tight tracking-tight text-white"
-    : "block max-w-full truncate text-left text-[15px] font-semibold leading-tight tracking-tight text-ink";
+    ? "block max-w-full text-left text-[15px] font-semibold leading-snug tracking-tight text-white line-clamp-2"
+    : "block max-w-full text-left text-[15px] font-semibold leading-snug tracking-tight text-ink line-clamp-2";
   const footerClass = isAction
     ? "mt-4 pt-3 border-t border-white/15 flex items-center justify-between gap-3 text-xs text-white/75"
     : "mt-4 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-3 text-xs text-muted";
@@ -207,14 +210,33 @@ export default function WidgetTile({
         ) : (
           <span aria-hidden="true" />
         )}
+        {/*
+          Open affordance. Whole card is already the click target; this is a
+          subtle iconographic cue, not repeated "View details" text on every
+          card. The article carries the accessible name in `aria-label`, so
+          this element stays aria-hidden and visual-only. On the dark
+          action_panel we paint explicit border + background so contrast
+          stays readable (PR #17 guard rail).
+        */}
         <span
+          aria-hidden="true"
+          title="Open details"
           className={
             isAction
-              ? "inline-flex items-center gap-0.5 text-white/80 group-hover:text-white whitespace-nowrap font-medium"
-              : "inline-flex items-center gap-0.5 text-muted group-hover:text-accent whitespace-nowrap font-medium"
+              ? "inline-flex shrink-0 items-center justify-center rounded-full size-7 border transition-colors"
+              : "inline-flex shrink-0 items-center justify-center rounded-full size-7 border border-[var(--line)] bg-white text-muted group-hover:text-accent group-hover:border-accent/50 group-hover:bg-accent/5 transition-colors"
+          }
+          style={
+            isAction
+              ? {
+                  borderColor: "rgba(255,255,255,0.32)",
+                  backgroundColor: "rgba(255,255,255,0.06)",
+                  color: "white",
+                }
+              : undefined
           }
         >
-          View details <ChevronRight className="size-3" aria-hidden="true" />
+          <ChevronRight className="size-3.5" aria-hidden="true" />
         </span>
       </footer>
     </motion.article>

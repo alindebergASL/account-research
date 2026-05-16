@@ -135,8 +135,109 @@ test("WidgetTile opens when the card surface is clicked, not only the details li
   assert.match(source, /role="button"/);
   assert.match(source, /tabIndex=\{0\}/);
   assert.match(source, /onKeyDown=\{handleCardKeyDown\}/);
-  assert.doesNotMatch(source, />\s*Drill\s*</, "Canvas cards should use user-facing details language, not BI jargon");
-  assert.match(source, /View details/, "Canvas cards should expose a clear details affordance");
+  assert.doesNotMatch(
+    source,
+    />\s*Drill\s*</,
+    "Canvas cards should use user-facing details language, not BI jargon",
+  );
+  // The accessible name still describes the affordance to screen readers;
+  // it's not duplicated as visible text on every card.
+  assert.match(
+    source,
+    /aria-label=\{`View details for \$\{widget\.title\}`\}/,
+    "WidgetTile must keep an accessible name describing the drill-in target",
+  );
+});
+
+test("Canvas card footer affordance is a subtle icon, not repeated visible text", () => {
+  const widgetTileSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  // Repeated "View details" text on every card was the user-reported noise:
+  // it should no longer appear as visible JSX text. The aria-label keeps
+  // screen reader semantics intact; the icon pill is the visual cue.
+  assert.doesNotMatch(
+    widgetTileSource,
+    />\s*View details\s*</,
+    "Canvas cards must not render 'View details' as visible footer text on every card",
+  );
+  assert.doesNotMatch(
+    widgetTileSource,
+    />\s*View details\s+<ChevronRight/,
+    "Canvas cards must not pair 'View details' text with the chevron in visible chrome",
+  );
+});
+
+test("Canvas card titles wrap to two lines instead of single-line truncation", () => {
+  const widgetTileSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  // truncate clips to a single line and was the main reason long titles got
+  // cut at the 780px tablet breakpoint. The polish PR moves them to a
+  // two-line clamp so the right edge doesn't lose meaning.
+  assert.doesNotMatch(
+    widgetTileSource,
+    /titleClass[\s\S]{0,400}\btruncate\b/,
+    "Card titles must not use single-line truncate; they should wrap to two lines",
+  );
+  assert.match(
+    widgetTileSource,
+    /line-clamp-2/,
+    "Card titles must wrap to a two-line clamp",
+  );
+});
+
+test("Canvas chrome stays free of 0-source rendering and product-y synthesis labels", () => {
+  const widgetTileSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  const tilesSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  const cockpitSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ExecutiveCockpit.tsx"),
+    "utf8",
+  );
+  const readOnlyCanvasSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ReadOnlyCanvasView.tsx"),
+    "utf8",
+  );
+  assert.match(
+    readOnlyCanvasSource,
+    /sourceCount > 0 &&/,
+    "Canvas detail footer should suppress empty source counts instead of rendering 0 sources",
+  );
+  assert.match(
+    readOnlyCanvasSource,
+    /evidenceCount > 0 &&/,
+    "Canvas detail footer should suppress empty evidence counts instead of rendering 0 evidence items",
+  );
+  for (const [name, source] of [
+    ["WidgetTile.tsx", widgetTileSource],
+    ["tiles.tsx", tilesSource],
+    ["ExecutiveCockpit.tsx", cockpitSource],
+    ["ReadOnlyCanvasView.tsx", readOnlyCanvasSource],
+  ] as const) {
+    assert.doesNotMatch(
+      source,
+      /"0 source[s]?"/,
+      `${name} must not render a literal "0 sources" string`,
+    );
+    assert.doesNotMatch(
+      source,
+      /Brief[-\s]derived/i,
+      `${name} must not render the "Brief-derived" product-y label`,
+    );
+    assert.doesNotMatch(
+      source,
+      /Hermes synthesis( from saved brief)?/i,
+      `${name} must not render the "Hermes synthesis" product-y label`,
+    );
+  }
 });
 
 test("Canvas widget chrome hides draft scaffolding from normal fresh cards", () => {
