@@ -6,6 +6,7 @@ import {
   buildOpportunityRiskSplit,
   buildStrategicSignalRadar,
 } from "./strategicInsights";
+import { buildRecommendedActions } from "./recommendedActions";
 
 // Build a read-only, deterministic Canvas from an existing Brief.
 //
@@ -424,13 +425,22 @@ export function buildReadOnlyCanvasFromBrief({
   );
 
   // ---- Action + open questions ------------------------------------------
+  // Hermes recommended-action queue: deterministic ranked moves derived
+  // from next_action, top initiatives, personas / buying path, and risks.
+  // Read-only; approval and execution are NOT enabled in this preview.
+  const recommendedActions = buildRecommendedActions(brief);
   widgets.push({
-    ...baseWidget("action-next", "Recommended next action", 8, 2, {
-      why_included: "From brief.next_action.",
+    ...baseWidget("action-next", "Recommended next moves", 12, 4, {
+      source: "hermes",
+      why_included:
+        "Hermes-ranked action queue derived deterministically from next_action, initiatives, risks, personas, and evidence in the saved brief.",
     }),
     kind: "action_panel",
     data: {
-      actions: [{ label: "Next action", detail: brief.next_action }],
+      actions:
+        recommendedActions.length > 0
+          ? recommendedActions
+          : [{ label: "Next action", detail: brief.next_action }],
     },
   });
 
