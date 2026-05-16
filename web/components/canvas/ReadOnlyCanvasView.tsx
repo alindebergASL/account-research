@@ -54,12 +54,17 @@ function widgetEvidenceCount(widget: CanvasWidget): number {
 }
 
 function ModalFooter({ widget }: { widget: CanvasWidget }) {
+  const sourceCount = widget.sources.length;
   const evidenceCount = widgetEvidenceCount(widget);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       <span>Provenance: {widget.source.replace(/_/g, " ")}</span>
-      <span>{widget.sources.length} source{widget.sources.length === 1 ? "" : "s"}</span>
-      <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
+      {sourceCount > 0 && (
+        <span>{sourceCount} source{sourceCount === 1 ? "" : "s"}</span>
+      )}
+      {evidenceCount > 0 && (
+        <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
+      )}
       <span>Read-only mode · action approvals not enabled</span>
       <span>Updated {formatGeneratedAt(widget.updated_at)}</span>
     </div>

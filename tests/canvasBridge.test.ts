@@ -202,10 +202,25 @@ test("Canvas chrome stays free of 0-source rendering and product-y synthesis lab
     path.join(__dirname, "../web/components/canvas/ExecutiveCockpit.tsx"),
     "utf8",
   );
+  const readOnlyCanvasSource = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ReadOnlyCanvasView.tsx"),
+    "utf8",
+  );
+  assert.match(
+    readOnlyCanvasSource,
+    /sourceCount > 0 &&/,
+    "Canvas detail footer should suppress empty source counts instead of rendering 0 sources",
+  );
+  assert.match(
+    readOnlyCanvasSource,
+    /evidenceCount > 0 &&/,
+    "Canvas detail footer should suppress empty evidence counts instead of rendering 0 evidence items",
+  );
   for (const [name, source] of [
     ["WidgetTile.tsx", widgetTileSource],
     ["tiles.tsx", tilesSource],
     ["ExecutiveCockpit.tsx", cockpitSource],
+    ["ReadOnlyCanvasView.tsx", readOnlyCanvasSource],
   ] as const) {
     assert.doesNotMatch(
       source,
