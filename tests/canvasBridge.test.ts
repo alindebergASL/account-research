@@ -262,7 +262,7 @@ test("Canvas header copy presents Hermes as the strategic layout driver", () => 
   );
   assert.match(source, /Hermes-built strategic canvas/);
   assert.match(source, /Hermes arranges/);
-  assert.match(source, /Read-only mode/);
+  assert.match(source, /Review mode/);
   assert.doesNotMatch(source, /Controls disabled/);
   assert.doesNotMatch(source, /Widget actions are disabled/);
   assert.doesNotMatch(source, />\s*widgets\s*</i, "header should not expose internal widget terminology");
@@ -884,12 +884,16 @@ test("Canvas-native modules: structured evidence is seeded on the right section_
   }
 });
 
-test("section-top-initiatives is widened to a full row for the landscape", () => {
+test("section-top-initiatives is paired with section-risks on the same row (6+6)", () => {
   const brief = Brief.parse(sampleBriefJson);
   const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
-  const w = canvas.widgets.find((x) => x.id === "section-top-initiatives");
-  assert.ok(w);
-  assert.equal(w?.layout.w, 12);
+  const opp = canvas.widgets.find((x) => x.id === "section-top-initiatives");
+  const risk = canvas.widgets.find((x) => x.id === "section-risks");
+  assert.ok(opp);
+  assert.ok(risk);
+  assert.equal(opp?.layout.w, 6);
+  assert.equal(risk?.layout.w, 6);
+  assert.equal(opp?.layout.y, risk?.layout.y);
 });
 
 test("non-landscape section_refs (e.g. snapshot) keep evidence empty", () => {
@@ -1507,5 +1511,625 @@ test("canvas action tiles + details expose no Run/Execute/Approve/Dismiss button
     assert.ok(!/>\s*Execute\s*</.test(src), "found >Execute< button label");
     assert.ok(!/>\s*Approve\s*</.test(src), "found >Approve< button label");
     assert.ok(!/>\s*Dismiss\s*</.test(src), "found >Dismiss< button label");
+  }
+});
+
+// ---- Canvas generative workspace polish (PR: canvas-generative-workspace-polish)
+
+import { widgetFraming } from "../web/lib/canvas/framing";
+
+function makeBaseEnvelope(overrides: Record<string, unknown> = {}) {
+  return {
+    description: "",
+    source: "system",
+    created_at: "2026-05-18T00:00:00.000Z",
+    updated_at: "2026-05-18T00:00:00.000Z",
+    sources: [],
+    layout: { x: 0, y: 0, w: 6, h: 3, pinned: false, collapsed: false },
+    controls: {
+      can_refresh: false,
+      can_remove: false,
+      can_edit: false,
+      can_export: false,
+    },
+    status: "fresh",
+    evidence: [],
+    ...overrides,
+  };
+}
+
+test("widgetFraming returns 'Recommended move' eyebrow for action_panel", () => {
+  const w = {
+    ...makeBaseEnvelope(),
+    id: "action-next",
+    kind: "action_panel",
+    title: "Recommended next moves",
+    data: { actions: [] },
+  } as never;
+  const f = widgetFraming(w);
+  assert.equal(f.eyebrow, "Recommended move");
+});
+
+test("widgetFraming returns configured eyebrows for section_key risks / personas / programs_procurement", () => {
+  const risks = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "section-risks",
+    kind: "section_ref",
+    title: "Risks",
+    data: { section_key: "risks", preview: "" },
+  } as never);
+  assert.equal(risks.eyebrow, "Caveats before acting");
+
+  const personas = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "section-personas",
+    kind: "section_ref",
+    title: "Personas",
+    data: { section_key: "personas", preview: "" },
+  } as never);
+  assert.equal(personas.eyebrow, "Likely buying committee");
+
+  const pp = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "section-pp",
+    kind: "section_ref",
+    title: "Programs & procurement",
+    data: { section_key: "programs_procurement", preview: "" },
+  } as never);
+  assert.equal(pp.eyebrow, "Procurement context");
+});
+
+test("widgetFraming returns empty oneLine when underlying data is empty (no fabrication)", () => {
+  const empty = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "x",
+    kind: "ai_takeaways",
+    title: "AI takeaways",
+    data: { takeaways: [] },
+  } as never);
+  assert.equal(empty.oneLine, "");
+
+  const emptyAction = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "x",
+    kind: "action_panel",
+    title: "Recommended next moves",
+    data: { actions: [] },
+  } as never);
+  assert.equal(emptyAction.oneLine, "");
+
+  const emptyOQ = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "x",
+    kind: "open_questions",
+    title: "Open questions",
+    data: { questions: [] },
+  } as never);
+  assert.equal(emptyOQ.oneLine, "");
+});
+
+test("buildReadOnlyCanvasFromBrief places action-next first in the grid (y=0, w=12)", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const action = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(action);
+  assert.equal(action?.layout.y, 0);
+  assert.equal(action?.layout.x, 0);
+  assert.equal(action?.layout.w, 12);
+  // No other widget should sit on row 0 above-or-equal-to action-next.
+  const sameRow = canvas.widgets.filter((w) => w.layout.y === 0 && w.id !== "action-next");
+  assert.equal(sameRow.length, 0, "action-next must be the only widget on row y=0");
+});
+
+test("buildReadOnlyCanvasFromBrief widgets are non-overlapping on the 12-col grid", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  // Inflate every widget into the (x,y) cells it occupies, then assert
+  // no two widgets claim the same cell.
+  const occupied = new Map<string, string>(); // key "x,y" -> widget id
+  for (const w of canvas.widgets) {
+    for (let dy = 0; dy < w.layout.h; dy++) {
+      for (let dx = 0; dx < w.layout.w; dx++) {
+        const k = `${w.layout.x + dx},${w.layout.y + dy}`;
+        const prev = occupied.get(k);
+        assert.equal(
+          prev,
+          undefined,
+          `cell ${k} is claimed by both ${prev} and ${w.id}`,
+        );
+        occupied.set(k, w.id);
+      }
+    }
+  }
+});
+
+test("WidgetTile renders the framing eyebrow + oneLine as a synthesized sentence", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  assert.match(src, /widgetFraming/);
+  assert.match(src, /data-testid="widget-framing"/);
+  assert.match(src, /min-w-0/);
+  assert.match(src, /break-words/);
+});
+
+test("ActionPanelTile primary line is unclamped and renders expected_outcome + rationale", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  // The primary line block should not carry a CSS clamp on the title.
+  const startIdx = src.indexOf("function ActionPanelTile");
+  const endIdx = src.indexOf("\nexport function OpenQuestionsTile");
+  const actionTile = src.slice(startIdx, endIdx);
+  assert.ok(
+    !/text-sm font-semibold leading-snug line-clamp-3/.test(actionTile),
+    "primary recommendation must not use line-clamp-3",
+  );
+  assert.match(actionTile, /Expected outcome/);
+  assert.match(actionTile, /\bWhy\b/);
+});
+
+test("ExtensionTile table renderer wraps the table in a horizontally scrollable container", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  assert.match(src, /overflow-x-auto/);
+});
+
+test("ReadOnlyCanvasView header uses flex-wrap so narrow viewports do not overflow", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ReadOnlyCanvasView.tsx"),
+    "utf8",
+  );
+  assert.match(src, /flex-wrap/);
+});
+
+test("globals.css clamps horizontal overflow to prevent narrow-viewport runaway", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/app/globals.css"),
+    "utf8",
+  );
+  assert.match(src, /overflow-x:\s*hidden/);
+});
+
+// ---- PR #25 polish: copy sweep, pointer, dossier, mobile table -----------
+
+import {
+  extractTiming,
+  extractTarget,
+  truncateForPointer,
+} from "../web/lib/canvas/actionExtract";
+
+test("extractTiming: 'today' is detected", () => {
+  assert.equal(extractTiming("Send a follow-up note today."), "Today");
+});
+
+test("extractTiming: 'Before end of quarter' is detected", () => {
+  const t = extractTiming(
+    "Before end of quarter, sequence the buying committee.",
+  );
+  assert.ok(t !== null);
+  assert.match(t!.toLowerCase(), /quarter/);
+});
+
+test("extractTiming: returns null when no timing phrase matches", () => {
+  assert.equal(extractTiming("Generic ask without timing."), null);
+});
+
+test("extractTiming: handles empty / undefined", () => {
+  assert.equal(extractTiming(""), null);
+  assert.equal(extractTiming(undefined), null);
+});
+
+test("extractTarget: CMIO via warm intro is captured", () => {
+  const t = extractTarget({
+    recommendation:
+      "Request a 30-minute meeting with the CMIO via warm intro from the regional advisory board.",
+  });
+  assert.ok(t !== null);
+  // Must contain CMIO and/or warm intro pathway
+  assert.match(t!, /CMIO|warm intro/);
+});
+
+test("extractTarget: returns null for generic ask without target", () => {
+  assert.equal(
+    extractTarget({ recommendation: "Generic ask with no target." }),
+    null,
+  );
+});
+
+test("extractTarget: owner takes priority when set", () => {
+  assert.equal(
+    extractTarget({ owner: "Jane Doe", recommendation: "anything" }),
+    "Jane Doe",
+  );
+});
+
+test("truncateForPointer: respects max length and appends ellipsis", () => {
+  const long = "x".repeat(200);
+  const out = truncateForPointer(long, 80);
+  assert.ok(out.length <= 80);
+  assert.ok(out.endsWith("…"));
+});
+
+test("ExecutiveCockpit renders compact pointer (data-testid + non-duplicative copy)", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ExecutiveCockpit.tsx"),
+    "utf8",
+  );
+  assert.match(src, /data-testid="cockpit-pointer"/);
+  // The pointer cell must surface a fixed status line and an empty-state.
+  assert.match(src, /Priority move ready/);
+  assert.match(src, /No priority move yet/);
+  // It must surface a pointer to the Recommended Move card.
+  assert.match(src, /See Recommended Move below/);
+  // It must NOT echo the action body via the truncation helper anymore.
+  assert.ok(
+    !/truncateForPointer\s*\(/.test(src),
+    "ExecutiveCockpit must not call truncateForPointer (no body duplication)",
+  );
+});
+
+test("ActionPanelTile renders dossier substructure (TIMING / TARGET / ASK / WHY NOW / EXPECTED OUTCOME)", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  // Pull out the ActionPanelTile region including its MoveRow helper
+  // (declared above the component).
+  const start = src.indexOf("function MoveRow");
+  const end = src.indexOf("\n// ---- open_questions");
+  const region = src.slice(start, end);
+  assert.match(region, /data-testid="recommended-move-row"/);
+  // Section labels (normalized casing).
+  assert.match(region, /Timing/);
+  assert.match(region, /Target \/ route/);
+  assert.match(region, /Ask/);
+  assert.match(region, /Why now/);
+  assert.match(region, /Expected outcome/);
+});
+
+test("tiles.tsx contains both stacked and desktop testids for the extension table", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  assert.match(src, /data-testid="extension-table-stacked"/);
+  assert.match(src, /data-testid="extension-table-desktop"/);
+});
+
+test("Canvas source files no longer surface internal field names or preview/execution copy", () => {
+  const files = [
+    "web/components/canvas/tiles.tsx",
+    "web/components/canvas/details.tsx",
+    "web/components/canvas/WidgetTile.tsx",
+    "web/components/canvas/ReadOnlyCanvasView.tsx",
+    "web/components/canvas/ExecutiveCockpit.tsx",
+  ];
+  for (const rel of files) {
+    const raw = readFileSync(path.join(__dirname, "..", rel), "utf8");
+    // Strip JSX expression containers `{…}` (non-greedy, balanced enough
+    // for these files) so we only scan literal JSX text content.
+    const src = raw.replace(/\{[^{}]*\}/g, "{}");
+    // `next_action` and `next action` as JSX text content (between `>` and
+    // `<` on a single line; multi-line spans get picked up by the source
+    // sweep instead).
+    assert.ok(
+      !/>[^<\n]*\bnext_action\b[^<\n]*</.test(src),
+      `${rel} should not surface "next_action" as visible text`,
+    );
+    assert.ok(
+      !/>[^<\n]*\bnext action\b[^<\n]*</i.test(src),
+      `${rel} should not surface "next action" as visible text`,
+    );
+    // `preview` should not appear as user-visible JSX text in those files.
+    assert.ok(
+      !/>[^<\n]*\bpreview\b[^<\n]*</i.test(src),
+      `${rel} should not surface "preview" as visible text`,
+    );
+    // Literal banned phrases (anywhere in source).
+    assert.ok(
+      !/Execution is not enabled/.test(raw),
+      `${rel} should not contain "Execution is not enabled"`,
+    );
+    assert.ok(
+      !/approval\/execution/.test(raw),
+      `${rel} should not contain "approval/execution"`,
+    );
+    assert.ok(
+      !/approval and execution/.test(raw),
+      `${rel} should not contain "approval and execution"`,
+    );
+    // `severity:` literal in JSX text content (not as object key in JS).
+    assert.ok(
+      !/>[^<\n]*severity:/i.test(src),
+      `${rel} should not surface "severity:" as visible text`,
+    );
+    // Action button labels remain hidden.
+    for (const w of ["Run", "Execute", "Approve", "Dismiss"]) {
+      const re = new RegExp(`>\\s*${w}\\s*<`);
+      assert.ok(!re.test(raw), `${rel} should not contain >${w}< button label`);
+    }
+  }
+});
+
+test("framing eyebrows are de-branded (no literal HERMES prefix)", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/lib/canvas/framing.ts"),
+    "utf8",
+  );
+  // The eyebrow strings themselves should not begin with the HERMES brand.
+  assert.ok(
+    !/eyebrow:\s*"HERMES/i.test(src),
+    "framing eyebrows must not be prefixed with HERMES",
+  );
+  assert.ok(
+    !/"Hermes insight"/.test(src),
+    "framing should not emit 'Hermes insight' eyebrow",
+  );
+  assert.ok(
+    !/"Hermes note"/.test(src),
+    "framing should not emit 'Hermes note' eyebrow",
+  );
+  assert.ok(
+    !/"Hermes takeaways"/.test(src),
+    "framing should not emit 'Hermes takeaways' eyebrow",
+  );
+  assert.ok(
+    !/"Hermes read on AI maturity"/.test(src),
+    "framing should not emit 'Hermes read on AI maturity' eyebrow",
+  );
+});
+
+test("framing oneLine for action_panel no longer mentions next_action verbatim", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/lib/canvas/framing.ts"),
+    "utf8",
+  );
+  assert.ok(
+    !/primary line drawn from next_action verbatim/.test(src),
+    "framing must not surface 'primary line drawn from next_action verbatim'",
+  );
+});
+
+test("ActionPanelDetail includes review-only intro line and dossier section headings", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/details.tsx"),
+    "utf8",
+  );
+  // Intro line.
+  assert.match(
+    src,
+    /Synthesized from saved account evidence — review-only recommendation\./,
+  );
+  // Dossier sections (each heading appears in the source).
+  assert.match(src, /Recommended move/);
+  assert.match(src, /Why this matters/);
+  assert.match(src, /Expected outcome/);
+  assert.match(src, /Evidence backing/);
+  assert.match(src, /Caveat \/ risk/);
+  assert.match(src, /Priority \/ status/);
+  // Priority labels replace severity wording.
+  assert.match(src, /Priority: High/);
+});
+
+test("SeverityChip renders 'Priority: <Level>' rather than 'severity: <level>'", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/visuals.tsx"),
+    "utf8",
+  );
+  // The chip body should now be 'Priority:' not 'severity:'.
+  assert.match(src, /Priority:\s*\{label\}/);
+  // And the older lowercase form should be gone.
+  assert.ok(
+    !/severity:\s*\{s\}/.test(src),
+    "old `severity: {s}` chip body must be gone",
+  );
+});
+
+test("Canvas chrome no longer surfaces de-internalized strings", () => {
+  const files = [
+    "web/components/canvas/tiles.tsx",
+    "web/components/canvas/details.tsx",
+    "web/components/canvas/WidgetTile.tsx",
+    "web/components/canvas/ReadOnlyCanvasView.tsx",
+    "web/app/globals.css",
+  ];
+  const forbidden: Array<[string, RegExp]> = [
+    ["READ-ONLY MODE", /READ-ONLY MODE/],
+    ["Provenance: hermes", /Provenance:\s*\{?\s*widget\.source/],
+    ["INSIGHT · TABLE", /INSIGHT · TABLE/i],
+    ["Hermes-ranked", /Hermes-ranked/],
+    ["Rating from the saved brief", /Rating from the saved brief/],
+    [
+      "approval and execution are not enabled",
+      /approval and execution are not enabled/,
+    ],
+  ];
+  for (const rel of files) {
+    const src = readFileSync(path.join(__dirname, "..", rel), "utf8");
+    for (const [label, re] of forbidden) {
+      assert.ok(
+        !re.test(src),
+        `${rel} should not contain forbidden string "${label}"`,
+      );
+    }
+    // Action button labels should not appear as visible JSX content.
+    for (const word of ["Run", "Execute", "Approve", "Dismiss"]) {
+      const re = new RegExp(`>\\s*${word}\\s*<`);
+      assert.ok(
+        !re.test(src),
+        `${rel} should not contain >${word}< button label`,
+      );
+    }
+  }
+});
+
+// ---- PR #25 final polish: conservative extractTarget + generated UI sweep --
+
+test("extractTarget: CMIO via warm intro returns clean fragment (no ask-verb)", () => {
+  const t = extractTarget({
+    recommendation:
+      "Request a 30-minute meeting with the CMIO via warm intro from the regional advisory board.",
+  });
+  // Either null OR a clean fragment that does NOT contain ask verbs.
+  if (t !== null) {
+    assert.ok(
+      !/\b(request|book|send|share|present|propose|schedule|set up|email|reach out|arrange|prepare|align|sequence|follow up|meet|confirm)\b/i.test(
+        t,
+      ),
+      `extractTarget result should not contain banned ask verbs, got: ${t}`,
+    );
+    assert.ok(!/\)/.test(t), `extractTarget result should not contain ')', got: ${t}`);
+  }
+});
+
+test("extractTarget: 'CDO/CIO office at Tufts Medicine' surfaces CDO/CIO office (not just CDO)", () => {
+  const t = extractTarget({
+    recommendation: "Schedule a meeting with the CDO/CIO office at Tufts Medicine",
+  });
+  assert.ok(t !== null, "expected a non-null target");
+  assert.match(t!, /CDO\/CIO office/i);
+});
+
+test("extractTarget: 'VP of Digital at Bass Pro Shops' surfaces VP of Digital (not just VP)", () => {
+  const t = extractTarget({
+    recommendation: "Reach out to the VP of Digital at Bass Pro Shops",
+  });
+  assert.ok(t !== null, "expected a non-null target");
+  assert.match(t!, /VP of Digital/i);
+});
+
+test("extractTarget: 'Request a meeting with the VP' is too generic → null", () => {
+  assert.equal(
+    extractTarget({ recommendation: "Request a meeting with the VP" }),
+    null,
+  );
+});
+
+test("extractTarget: unmatched closing paren and ask-verb fragment is cleaned or null", () => {
+  const t = extractTarget({
+    recommendation:
+      "Coordinate with RobotLAB channel contact) to request a 30-minute discovery call focused on...",
+  });
+  if (t !== null) {
+    assert.ok(!/\)/.test(t), `result must not contain ')', got: ${t}`);
+    assert.ok(
+      !/\b(request|book|send|share|present|propose|schedule|set up|email|reach out|arrange|prepare|align|sequence|follow up|meet|confirm)\b/i.test(
+        t,
+      ),
+      `result must not contain banned ask-verbs, got: ${t}`,
+    );
+  }
+});
+
+// ---- Blocker 4: generated-UI sweep ----------------------------------------
+
+function collectVisibleStrings(canvas: ReturnType<typeof buildReadOnlyCanvasFromBrief>): string[] {
+  const out: string[] = [];
+  out.push(canvas.account_name);
+  for (const w of canvas.widgets) {
+    if (typeof w.title === "string") out.push(w.title);
+    if (typeof w.description === "string") out.push(w.description);
+    if (typeof w.why_included === "string") out.push(w.why_included);
+    for (const s of w.sources ?? []) {
+      if (s.title) out.push(s.title);
+      if (s.url) out.push(s.url);
+    }
+    for (const ev of w.evidence ?? []) {
+      if (ev.text) out.push(ev.text);
+      if (ev.source) out.push(ev.source);
+      if (ev.tag) out.push(ev.tag);
+    }
+    // Per-widget data inspection.
+    if (w.kind === "action_panel") {
+      for (const a of w.data.actions) {
+        if ("recommendation" in a) {
+          out.push(a.recommendation);
+          if (a.rationale) out.push(a.rationale);
+          if (a.expected_outcome) out.push(a.expected_outcome);
+          if (a.risk) out.push(a.risk);
+          for (const ev of a.evidence ?? []) {
+            if (ev.text) out.push(ev.text);
+            if (ev.source) out.push(ev.source);
+            if (ev.tag) out.push(ev.tag);
+          }
+        } else if ("label" in a) {
+          out.push(a.label);
+          if (a.detail) out.push(a.detail);
+        } else {
+          out.push(a.text);
+          if (a.why) out.push(a.why);
+        }
+      }
+    } else if (w.kind === "section_ref") {
+      if (w.data.preview) out.push(w.data.preview);
+      if (w.data.full_text) out.push(w.data.full_text);
+    } else if (w.kind === "ai_takeaways") {
+      for (const t of w.data.takeaways) {
+        out.push(t.headline);
+        out.push(t.detail);
+      }
+    }
+    // Add framing strings.
+    const framing = widgetFraming(w);
+    if (framing.eyebrow) out.push(framing.eyebrow);
+    if (framing.oneLine) out.push(framing.oneLine);
+  }
+  return out;
+}
+
+test("generated canvas: no widget exposes internal next_action substrings as visible text", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const strings = collectVisibleStrings(canvas);
+  const forbidden = [
+    "next_action",
+    "brief.next_action",
+    "Prioritized by Hermes from next_action",
+  ];
+  for (const s of strings) {
+    for (const f of forbidden) {
+      assert.ok(
+        !s.includes(f),
+        `visible string must not include "${f}": ${JSON.stringify(s)}`,
+      );
+    }
+  }
+});
+
+test("generated canvas: action-next first action evidence has no 'brief.next_action' as source", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const panel = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(panel && panel.kind === "action_panel");
+  if (panel && panel.kind === "action_panel") {
+    const a = panel.data.actions[0];
+    assert.ok("recommendation" in a, "first action should be rich shape");
+    if ("recommendation" in a) {
+      for (const ev of a.evidence ?? []) {
+        assert.notEqual(
+          ev.source,
+          "brief.next_action",
+          "evidence source must be a customer-facing label, not 'brief.next_action'",
+        );
+      }
+    }
+  }
+});
+
+test("generated canvas: action-next widget framing oneLine has no forbidden substrings", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const panel = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(panel);
+  const f = widgetFraming(panel!);
+  const forbidden = ["next_action", "brief.next_action", "Prioritized by Hermes from next_action"];
+  for (const sub of forbidden) {
+    assert.ok(!f.oneLine.includes(sub), `oneLine includes ${sub}: ${f.oneLine}`);
+    assert.ok(!f.eyebrow.includes(sub), `eyebrow includes ${sub}: ${f.eyebrow}`);
   }
 });

@@ -20,6 +20,7 @@ import {
   parseFractionValue,
   sectionKeyTone,
 } from "./visuals";
+import { extractTiming, extractTarget } from "../../lib/canvas/actionExtract";
 
 function TileHeader(_props: { title: string; kindLabel: string }) {
   // Header chrome lives in WidgetTile so all widget kinds share the same
@@ -153,29 +154,103 @@ function approvalStateLabel(state?: NormalizedAction["approvalState"]): string {
   }
 }
 
+// Pulls the rich expected_outcome / rationale strings off a raw action so
+// the primary tile line can render them fully without clamping. Returns
+// empty strings when the action is the legacy {label, detail} shape.
+function richPrimaryLines(
+  raw: import("zod").infer<typeof ActionPanelWidget>["data"]["actions"][number],
+): { expectedOutcome: string; rationale: string; owner?: string; recommendation: string } {
+  if ("recommendation" in raw) {
+    return {
+      expectedOutcome: raw.expected_outcome ?? "",
+      rationale: raw.rationale ?? "",
+      owner: raw.owner,
+      recommendation: raw.recommendation,
+    };
+  }
+  if ("text" in raw && "why" in raw) {
+    return {
+      expectedOutcome: "",
+      rationale: raw.why ?? "",
+      owner: raw.owner,
+      recommendation: raw.text,
+    };
+  }
+  if ("label" in raw) {
+    return {
+      expectedOutcome: "",
+      rationale: "",
+      recommendation: raw.label,
+    };
+  }
+  return { expectedOutcome: "", rationale: "", recommendation: "" };
+}
+
+// One row in the Recommended Move dossier. Renders only when value is
+// non-empty so heuristics that don't match drop their row entirely.
+function MoveRow({ label, value }: { label: string; value: string | null | undefined }) {
+  if (!value || value.trim().length === 0) return null;
+  return (
+    <div data-testid="recommended-move-row" className="space-y-0.5">
+      <dt className="text-[10px] uppercase tracking-widest opacity-70">
+        {label}
+      </dt>
+      <dd className="text-sm leading-snug break-words">{value}</dd>
+    </div>
+  );
+}
+
 export function ActionPanelTile({
   widget,
 }: {
   widget: import("zod").infer<typeof ActionPanelWidget>;
 }) {
   const actions = widget.data.actions;
-  const first = actions[0] ? normalizeAction(actions[0]) : null;
+  const rawFirst = actions[0];
+  const first = rawFirst ? normalizeAction(rawFirst) : null;
+  const primaryRich = rawFirst ? richPrimaryLines(rawFirst) : null;
   const remaining = Math.max(0, actions.length - 1);
+
+  // Derive scannable substructure from the primary recommendation.
+  // Heuristics return null when nothing matches, and `MoveRow` then
+  // omits the row — no fabricated content.
+  const ask = primaryRich?.recommendation || first?.title || "";
+  const timing = primaryRich ? extractTiming(primaryRich.recommendation) : null;
+  const target =
+    primaryRich && "recommendation" in primaryRich
+      ? extractTarget({
+          recommendation: primaryRich.recommendation,
+          owner: primaryRich.owner,
+        })
+      : null;
+  const whyNow = primaryRich?.rationale ?? "";
+  const expected = primaryRich?.expectedOutcome ?? "";
+
   return (
     <div>
       <TileHeader title={widget.title} kindLabel="Recommended action" />
       {first ? (
-        <div className="space-y-2">
+        <div className="space-y-2 min-w-0">
           {first.approvalState && (
             <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-white/85">
               {approvalStateLabel(first.approvalState)}
             </span>
           )}
-          <p className="text-sm font-semibold leading-snug line-clamp-3">
-            {first.title}
-          </p>
-          {first.detail && (
-            <p className="text-xs leading-snug opacity-80 line-clamp-3">
+          {/*
+            Executive dossier substructure. Each row only renders when
+            its value is present; this is the "no fabrication" rule.
+            The primary recommendation (ASK) is never clamped — it is
+            the spine of the workspace.
+          */}
+          <dl className="space-y-2 min-w-0">
+            <MoveRow label="Timing" value={timing} />
+            <MoveRow label="Target / route" value={target} />
+            <MoveRow label="Ask" value={ask} />
+            <MoveRow label="Why now" value={whyNow} />
+            <MoveRow label="Expected outcome" value={expected} />
+          </dl>
+          {(!whyNow && !expected) && first.detail && (
+            <p className="text-xs leading-snug opacity-80 break-words">
               {first.detail}
             </p>
           )}
@@ -302,30 +377,76 @@ export function ExtensionTile({
         </ul>
       )}
       {d.ext_kind === "table" && (
-        <div className="text-xs overflow-hidden">
+        <>
           {d.columns && d.columns.length > 0 ? (
-            <table className="w-full">
-              <thead>
-                <tr className="text-muted text-left">
-                  {d.columns.slice(0, 3).map((c, i) => (
-                    <th key={i} className="font-medium py-1 pr-2">
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(d.rows ?? []).slice(0, 2).map((row, i) => (
-                  <tr key={i} className="border-t border-[var(--line)]">
-                    {row.slice(0, 3).map((cell, j) => (
-                      <td key={j} className="py-1 pr-2 truncate max-w-[120px]">
-                        {cell}
-                      </td>
+            <>
+              {/* Mobile: stacked card-per-row layout */}
+              <div
+                data-testid="extension-table-stacked"
+                className="sm:hidden space-y-2"
+              >
+                {(d.rows ?? []).slice(0, 2).map((row, i) => {
+                  const heading = row[0] ?? "";
+                  const restCols = d.columns!.slice(1, 3);
+                  const restCells = row.slice(1, 3);
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5"
+                    >
+                      <div className="text-sm font-medium leading-snug break-words">
+                        {heading || "—"}
+                      </div>
+                      {restCols.length > 0 && (
+                        <dl className="mt-1 space-y-1">
+                          {restCols.map((col, j) => (
+                            <div key={j} className="min-w-0">
+                              <dt className="text-[10px] uppercase tracking-wider text-muted">
+                                {col}
+                              </dt>
+                              <dd className="text-xs leading-snug break-words">
+                                {restCells[j] ?? "—"}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </div>
+                  );
+                })}
+                {(d.rows?.length ?? 0) === 0 && (
+                  <p className="text-sm text-muted">No rows.</p>
+                )}
+              </div>
+              {/* Desktop: table layout */}
+              <div
+                data-testid="extension-table-desktop"
+                className="hidden sm:block text-xs overflow-x-auto -mx-2 px-2"
+              >
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-muted text-left">
+                      {d.columns.slice(0, 3).map((c, i) => (
+                        <th key={i} className="font-medium py-1 pr-2">
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(d.rows ?? []).slice(0, 2).map((row, i) => (
+                      <tr key={i} className="border-t border-[var(--line)]">
+                        {row.slice(0, 3).map((cell, j) => (
+                          <td key={j} className="py-1 pr-2 truncate max-w-[120px]">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
             <p className="text-sm text-muted">Empty table.</p>
           )}
@@ -334,7 +455,7 @@ export function ExtensionTile({
               +{(d.rows?.length ?? 0) - 2} more rows · open to view
             </p>
           )}
-        </div>
+        </>
       )}
     </div>
   );

@@ -226,28 +226,40 @@ function NextActionCell({
     color: "white",
     borderColor: "var(--ink)",
   };
-  const text = data?.detail || data?.label || "";
+  const rawText = data?.detail || data?.label || "";
+  // Pointer-only: render a fixed status label plus an in-page link to the
+  // Recommended Move card. The cockpit cell must not duplicate the body
+  // copy of the action card itself.
+  const hasPriority = !!(data && rawText.trim().length > 0);
   return (
     <div
       className={`${CELL_BASE} lg:col-span-1`}
       style={inkStyle}
-      data-testid="cockpit-cell-next-action"
+      data-testid="cockpit-pointer"
     >
       <div className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-white/70">
         <Target className="size-3" aria-hidden="true" />
-        <span>Next action</span>
+        <span>Priority move</span>
       </div>
-      {data && text ? (
-        <p
-          className="text-sm font-medium leading-snug line-clamp-3"
-          style={{ color: "white" }}
-          title={text}
-        >
-          {text}
-        </p>
+      {hasPriority ? (
+        <>
+          <p
+            className="text-sm font-medium leading-snug line-clamp-1"
+            style={{ color: "white" }}
+          >
+            Priority move ready
+          </p>
+          <a
+            href="#action-next"
+            className="text-[11px] underline-offset-2 hover:underline"
+            style={{ color: "rgba(255,255,255,0.7)" }}
+          >
+            See Recommended Move below
+          </a>
+        </>
       ) : (
         <p className="text-sm" style={{ color: "rgba(255,255,255,0.7)" }}>
-          No recommended action captured.
+          No priority move yet
         </p>
       )}
     </div>

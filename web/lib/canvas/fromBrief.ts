@@ -177,92 +177,56 @@ export function buildReadOnlyCanvasFromBrief({
     });
   }
 
-  // ---- Header row: snapshot + maturity gauge -----------------------------
-  addSectionRef(
-    "section-snapshot",
-    "Account snapshot",
-    "snapshot",
-    brief.snapshot,
-    8,
-    3,
-  );
+  // ---- Row 1: Recommended next moves (organizing spine) -----------------
+  // The recommended-action queue is now the first widget after the
+  // executive cockpit so the account workspace opens on the move it is
+  // organizing around, not a mosaic of secondary tiles. Height is sized
+  // to accommodate the full primary line (timing + recommendation +
+  // rationale + expected outcome + risk) without clamping.
+  const recommendedActions = buildRecommendedActions(brief);
   widgets.push({
-    ...baseWidget("metric-ai-maturity", "AI maturity", 4, 3),
-    kind: "metric",
+    ...baseWidget("action-next", "Recommended next moves", 12, 5, {
+      source: "hermes",
+      why_included:
+        "Prioritized from brief evidence, account signals, risks, and personas.",
+    }),
+    kind: "action_panel",
     data: {
-      label: "AI / tech maturity",
-      value: `${brief.ai_tech_maturity.rating}/5`,
-      helper: "Rating from the saved brief.",
+      actions:
+        recommendedActions.length > 0
+          ? recommendedActions
+          : [{ label: "Next action", detail: brief.next_action }],
     },
   });
 
-  // ---- Strategic insight workspace (Canvas v2 Phase 1) -------------------
-  // These four Hermes-sourced widgets render at the top of the grid (right
-  // below the executive cockpit) so the first viewport reads as a strategic
-  // workspace, not a tile catalogue. All derivations are deterministic from
-  // the saved brief; no model calls.
-  widgets.push({
-    ...baseWidget("insight-ai-takeaways", "AI takeaways", 12, 4, {
-      source: "hermes",
-      why_included:
-        "Deterministic synthesis of maturity, top initiative, top risk, buying path, and recommended next action from the saved brief.",
-    }),
-    kind: "ai_takeaways",
-    data: buildAITakeaways(brief),
-  });
-  widgets.push({
-    ...baseWidget("insight-signal-radar", "Strategic signal radar", 6, 4, {
-      source: "hermes",
-      why_included:
-        "Buckets brief.recent_signals + brief.competitive_signals into strategy / tech / procurement / leadership quadrants by deterministic keyword match.",
-    }),
-    kind: "strategic_signal_radar",
-    data: buildStrategicSignalRadar(brief),
-  });
-  widgets.push({
-    ...baseWidget("insight-opportunity-risk", "Opportunity / risk split", 6, 4, {
-      source: "hermes",
-      why_included:
-        "Pairs brief.top_initiatives against brief.risks side-by-side and labels the balance.",
-    }),
-    kind: "opportunity_risk_split",
-    data: buildOpportunityRiskSplit(brief),
-  });
-  widgets.push({
-    ...baseWidget("insight-momentum-strip", "Momentum", 12, 2, {
-      source: "hermes",
-      why_included:
-        "Counts signals, initiatives, active pilots, and active programs from the saved brief; labels overall velocity.",
-    }),
-    kind: "momentum_strip",
-    data: buildMomentumStrip(brief),
-  });
-
-  // ---- Priority + signals row -------------------------------------------
+  // ---- Row 2: Top opportunity + Top risk (paired) -----------------------
   addSectionRef(
-    "section-priority",
-    "Why this account · why now",
-    "priority_summary",
-    brief.priority_summary,
+    "section-top-initiatives",
+    "Top initiatives",
+    "top_initiatives",
+    listPreview(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
     6,
-    3,
-  );
-  addSectionRef(
-    "section-recent-signals",
-    "Recent strategic signals",
-    "recent_signals",
-    listPreview(brief.recent_signals.map((s) => s.text)),
-    6,
-    3,
-    listFullText(brief.recent_signals.map((s) => s.text)),
-    brief.recent_signals.map((s) => ({
-      text: s.text,
-      source: s.source,
-      confidence: s.confidence,
+    4,
+    listFullText(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
+    brief.top_initiatives.map((i) => ({
+      text: i.title,
+      source: i.source,
+      confidence: i.confidence,
+      tag: i.detail,
     })),
   );
+  addSectionRef(
+    "section-risks",
+    "Risks & watch-outs",
+    "risks",
+    listPreview(brief.risks),
+    6,
+    4,
+    listFullText(brief.risks),
+    brief.risks.map((r) => ({ text: r })),
+  );
 
-  // ---- Evidence board + small metrics row -------------------------------
+  // ---- Row 3: Evidence confidence (full row) ----------------------------
   const evidence: { text: string; source?: string; confidence?: Confidence }[] = [];
   for (const s of brief.recent_signals) {
     evidence.push({ text: s.text, source: s.source, confidence: s.confidence });
@@ -294,41 +258,85 @@ export function buildReadOnlyCanvasFromBrief({
     });
   }
   widgets.push({
-    ...baseWidget("evidence-board", "Evidence board", 8, 4, {
+    ...baseWidget("evidence-board", "Evidence board", 12, 4, {
       why_included: "Citation snippets from signals, initiatives, and personas.",
     }),
     kind: "evidence_board",
     data: { items: evidence.slice(0, EVIDENCE_CAP) },
   });
-  // Source and initiative counts are already carried in the header and
-  // strategic modules. Avoid count-only cards that read as sparse dashboard
-  // scaffolding instead of executive guidance.
 
-  // ---- Substance rows ---------------------------------------------------
+  // ---- Row 4: Signal radar + Opportunity/Risk split + Momentum ----------
+  widgets.push({
+    ...baseWidget("insight-signal-radar", "Strategic signal radar", 4, 4, {
+      source: "hermes",
+      why_included:
+        "Buckets brief.recent_signals + brief.competitive_signals into strategy / tech / procurement / leadership quadrants by deterministic keyword match.",
+    }),
+    kind: "strategic_signal_radar",
+    data: buildStrategicSignalRadar(brief),
+  });
+  widgets.push({
+    ...baseWidget("insight-opportunity-risk", "Opportunity / risk split", 4, 4, {
+      source: "hermes",
+      why_included:
+        "Pairs brief.top_initiatives against brief.risks side-by-side and labels the balance.",
+    }),
+    kind: "opportunity_risk_split",
+    data: buildOpportunityRiskSplit(brief),
+  });
+  widgets.push({
+    ...baseWidget("insight-momentum-strip", "Momentum", 4, 4, {
+      source: "hermes",
+      why_included:
+        "Counts signals, initiatives, active pilots, and active programs from the saved brief; labels overall velocity.",
+    }),
+    kind: "momentum_strip",
+    data: buildMomentumStrip(brief),
+  });
+
+  // ---- Row 5: Personas, Buying Path, First Angle, AI Takeaways ----------
   addSectionRef(
-    "section-ai-maturity",
-    "AI / tech maturity",
-    "ai_tech_maturity",
-    `Rating ${brief.ai_tech_maturity.rating}/5 — ${brief.ai_tech_maturity.rationale}`,
+    "section-personas",
+    "Key personas",
+    "personas",
+    listPreview(brief.personas.map((p) => `${p.name} — ${p.title}`)),
+    6,
+    3,
+    listFullText(brief.personas.map((p) => `${p.name} — ${p.title}`)),
+    brief.personas.map((p) => ({
+      text: `${p.name} — ${p.title}`,
+      source: p.source,
+      confidence: p.confidence,
+      tag: p.priority,
+    })),
+  );
+  addSectionRef(
+    "section-buying-path",
+    "Buying / decision path",
+    "buying_path",
+    brief.buying_path,
     6,
     3,
   );
   addSectionRef(
-    "section-top-initiatives",
-    "Top initiatives",
-    "top_initiatives",
-    listPreview(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
-    12,
+    "section-first-angle",
+    "First conversation angle",
+    "first_angle",
+    brief.first_angle,
+    6,
     3,
-    listFullText(brief.top_initiatives.map((i) => `${i.title}: ${i.detail}`)),
-    brief.top_initiatives.map((i) => ({
-      text: i.title,
-      source: i.source,
-      confidence: i.confidence,
-      tag: i.detail,
-    })),
   );
+  widgets.push({
+    ...baseWidget("insight-ai-takeaways", "AI takeaways", 6, 3, {
+      source: "hermes",
+      why_included:
+        "Deterministic synthesis of maturity, top initiative, top risk, buying path, and recommended next action from the saved brief.",
+    }),
+    kind: "ai_takeaways",
+    data: buildAITakeaways(brief),
+  });
 
+  // ---- Row 6: Footprint, Programs/Procurement, Open Questions -----------
   const tf = brief.technical_footprint;
   addSectionRef(
     "section-technical-footprint",
@@ -372,46 +380,21 @@ export function buildReadOnlyCanvasFromBrief({
     3,
   );
 
+  // Recent + competitive signals retain their landscape view but slot
+  // beneath the strategic insight row so the spine stays clean above.
   addSectionRef(
-    "section-personas",
-    "Key personas",
-    "personas",
-    listPreview(brief.personas.map((p) => `${p.name} — ${p.title}`)),
+    "section-recent-signals",
+    "Recent strategic signals",
+    "recent_signals",
+    listPreview(brief.recent_signals.map((s) => s.text)),
     6,
     3,
-    listFullText(brief.personas.map((p) => `${p.name} — ${p.title}`)),
-    brief.personas.map((p) => ({
-      text: `${p.name} — ${p.title}`,
-      source: p.source,
-      confidence: p.confidence,
-      tag: p.priority,
+    listFullText(brief.recent_signals.map((s) => s.text)),
+    brief.recent_signals.map((s) => ({
+      text: s.text,
+      source: s.source,
+      confidence: s.confidence,
     })),
-  );
-  addSectionRef(
-    "section-buying-path",
-    "Buying / decision path",
-    "buying_path",
-    brief.buying_path,
-    6,
-    2,
-  );
-  addSectionRef(
-    "section-first-angle",
-    "First conversation angle",
-    "first_angle",
-    brief.first_angle,
-    6,
-    2,
-  );
-  addSectionRef(
-    "section-risks",
-    "Risks & watch-outs",
-    "risks",
-    listPreview(brief.risks),
-    6,
-    3,
-    listFullText(brief.risks),
-    brief.risks.map((r) => ({ text: r })),
   );
   addSectionRef(
     "section-competitive-signals",
@@ -423,26 +406,6 @@ export function buildReadOnlyCanvasFromBrief({
     listFullText(brief.competitive_signals),
     brief.competitive_signals.map((c) => ({ text: c })),
   );
-
-  // ---- Action + open questions ------------------------------------------
-  // Hermes recommended-action queue: deterministic ranked moves derived
-  // from next_action, top initiatives, personas / buying path, and risks.
-  // Read-only; approval and execution are NOT enabled in this preview.
-  const recommendedActions = buildRecommendedActions(brief);
-  widgets.push({
-    ...baseWidget("action-next", "Recommended next moves", 12, 4, {
-      source: "hermes",
-      why_included:
-        "Hermes-ranked action queue derived deterministically from next_action, initiatives, risks, personas, and evidence in the saved brief.",
-    }),
-    kind: "action_panel",
-    data: {
-      actions:
-        recommendedActions.length > 0
-          ? recommendedActions
-          : [{ label: "Next action", detail: brief.next_action }],
-    },
-  });
 
   const questions: string[] = [];
   if (brief.personas.length === 0) {
@@ -468,7 +431,7 @@ export function buildReadOnlyCanvasFromBrief({
   }
   if (questions.length > 0) {
     widgets.push({
-      ...baseWidget("open-questions", "Discovery gaps", 4, 2, {
+      ...baseWidget("open-questions", "Discovery gaps", 6, 3, {
         why_included: "Surface gaps without inventing facts.",
       }),
       kind: "open_questions",
@@ -476,7 +439,45 @@ export function buildReadOnlyCanvasFromBrief({
     });
   }
 
-  // ---- Sources -----------------------------------------------------------
+  // ---- Row 7: Extensions ------------------------------------------------
+  for (const ext of brief.extensions) {
+    widgets.push(buildExtensionWidget(ext, packer, generatedAt));
+  }
+
+  // ---- Row 8: Snapshot, Priority summary, AI maturity, Sources ----------
+  addSectionRef(
+    "section-snapshot",
+    "Account snapshot",
+    "snapshot",
+    brief.snapshot,
+    8,
+    3,
+  );
+  widgets.push({
+    ...baseWidget("metric-ai-maturity", "AI maturity", 4, 3),
+    kind: "metric",
+    data: {
+      label: "AI / tech maturity",
+      value: `${brief.ai_tech_maturity.rating}/5`,
+      helper: "Based on the saved account brief.",
+    },
+  });
+  addSectionRef(
+    "section-priority",
+    "Why this account · why now",
+    "priority_summary",
+    brief.priority_summary,
+    6,
+    3,
+  );
+  addSectionRef(
+    "section-ai-maturity",
+    "AI / tech maturity",
+    "ai_tech_maturity",
+    `Rating ${brief.ai_tech_maturity.rating}/5 — ${brief.ai_tech_maturity.rationale}`,
+    6,
+    3,
+  );
   addSectionRef(
     "section-sources",
     "Key sources",
@@ -486,12 +487,6 @@ export function buildReadOnlyCanvasFromBrief({
     2,
     listFullText(brief.sources.map((s) => s.title)),
   );
-
-  // ---- Extensions as first-class widgets --------------------------------
-  // Layout per spec: card/list w=6, table/narrative w=12.
-  for (const ext of brief.extensions) {
-    widgets.push(buildExtensionWidget(ext, packer, generatedAt));
-  }
 
   const evidenceCount = widgets.reduce(
     (n, w) => n + w.evidence.length + (w.kind === "evidence_board" ? w.data.items.length : 0),

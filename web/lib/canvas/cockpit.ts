@@ -134,7 +134,7 @@ function normaliseAction(raw: RawAction): CockpitAction {
     // The cockpit cell surfaces the actual recommendation text (the cell
     // body); rationale / expected_outcome live in the drill-in panel.
     return {
-      label: "Recommended next action",
+      label: "Priority move",
       detail: raw.recommendation,
     };
   }
