@@ -18,7 +18,6 @@ import {
   ConfidenceBar,
   ConfidenceCountsInline,
   InitiativeLandscape,
-  SeverityChip,
   ToneIcon,
   aggregateConfidence,
   sectionKeyTone,
@@ -351,38 +350,19 @@ function ApprovalStateChip({
   );
 }
 
-function ActionEvidence({
-  items,
-}: {
-  items: RichAction["evidence"];
-}) {
-  if (!items || items.length === 0) return null;
+function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-3">
-      <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
-        Evidence
-      </div>
-      <ul className="space-y-1.5 text-xs">
-        {items.map((ev, i) => (
-          <li
-            key={`${ev.source ?? "ev"}-${i}`}
-            className="rounded-md border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5"
-          >
-            <p className="leading-snug text-ink">{ev.text}</p>
-            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted">
-              {ev.source && <code>{ev.source}</code>}
-              {ev.confidence && (
-                <ConfidenceChip value={ev.confidence} />
-              )}
-              {ev.tag && (
-                <span className="chip chip-na text-[10px]">{ev.tag}</span>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <h3 className="text-[10px] uppercase tracking-widest text-muted">
+      {children}
+    </h3>
   );
+}
+
+function priorityLabel(s?: "low" | "medium" | "high"): string | null {
+  if (!s) return null;
+  if (s === "high") return "Priority: High";
+  if (s === "medium") return "Priority: Medium";
+  return "Priority: Low";
 }
 
 export function ActionPanelDetail({
@@ -394,78 +374,129 @@ export function ActionPanelDetail({
   return (
     <div>
       <Meta why_included={widget.why_included} source={widget.source} />
-      <p className="mb-3 rounded-md bg-[var(--bg)] px-3 py-2 text-xs text-muted">
-        Suggested only · Execution is not enabled in this preview.
+      <p className="mb-3 text-xs text-muted">
+        Synthesized from saved account evidence — review-only recommendation.
       </p>
-      <ul className="space-y-3">
+      <p className="mb-3 text-[11px] text-muted">
+        Prioritized from brief evidence, account signals, risks, and personas.
+      </p>
+      <ul className="space-y-4">
         {actions.map((raw, i) => {
           const a = normalizeAction(raw);
           const isRich = !!(a.rationale || a.expectedOutcome || a.risk);
+          const evidenceItems = a.evidence ?? [];
+          const tieBack = evidenceItems.find(
+            (ev) => ev.tag === "initiative" || ev.tag === "signal",
+          );
+          const priority = priorityLabel(a.severity);
           return (
             <li
               key={i}
-              className="rounded-lg border border-[var(--line)] p-3 text-sm"
+              className="rounded-lg border border-[var(--line)] p-4 text-sm space-y-4"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <ApprovalStateChip state={a.approvalState} />
-                    {isRich && (
-                      <span className="text-[10px] uppercase tracking-wider text-muted">
-                        Recommendation
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-1 font-medium leading-snug">{a.title}</div>
-                </div>
-                <SeverityChip s={a.severity} />
-              </div>
+              {/* 1. Recommended move */}
+              <section>
+                <SectionHeading>Recommended move</SectionHeading>
+                <p className="mt-1 text-base font-medium leading-snug whitespace-pre-line">
+                  {a.title}
+                </p>
+              </section>
 
-              {isRich ? (
-                <>
+              {/* 2. Why this matters */}
+              {(a.rationale || tieBack) && (
+                <section>
+                  <SectionHeading>Why this matters</SectionHeading>
                   {a.rationale && (
-                    <div className="mt-3">
-                      <div className="text-[10px] uppercase tracking-wider text-muted">
-                        Rationale
-                      </div>
-                      <p className="mt-0.5 leading-snug text-ink whitespace-pre-line">
-                        {a.rationale}
-                      </p>
-                    </div>
+                    <p className="mt-1 leading-snug text-ink whitespace-pre-line">
+                      {a.rationale}
+                    </p>
                   )}
-                  {a.expectedOutcome && (
-                    <div className="mt-3">
-                      <div className="text-[10px] uppercase tracking-wider text-muted">
-                        Expected outcome
-                      </div>
-                      <p className="mt-0.5 leading-snug text-ink whitespace-pre-line">
-                        {a.expectedOutcome}
-                      </p>
-                    </div>
+                  {tieBack && (
+                    <p className="mt-1 text-xs text-muted leading-snug">
+                      Ties back to: {tieBack.text}
+                    </p>
                   )}
-                  {a.risk && (
-                    <div className="mt-3">
-                      <div className="text-[10px] uppercase tracking-wider text-muted">
-                        Risk / caveat
-                      </div>
-                      <p className="mt-0.5 leading-snug text-ink whitespace-pre-line">
-                        {a.risk}
-                      </p>
-                    </div>
-                  )}
-                  <ActionEvidence items={a.evidence} />
-                </>
-              ) : (
-                a.legacyDetail && (
-                  <p className="mt-1 leading-snug text-muted whitespace-pre-line">
-                    {a.legacyDetail}
-                  </p>
-                )
+                </section>
               )}
 
-              {a.owner && (
-                <p className="mt-3 text-xs text-muted">Owner: {a.owner}</p>
+              {/* 3. Expected outcome */}
+              {a.expectedOutcome && (
+                <section>
+                  <SectionHeading>Expected outcome</SectionHeading>
+                  <p className="mt-1 leading-snug text-ink whitespace-pre-line">
+                    {a.expectedOutcome}
+                  </p>
+                </section>
               )}
+
+              {/* 4. Evidence backing */}
+              <section>
+                <SectionHeading>Evidence backing</SectionHeading>
+                {evidenceItems.length === 0 ? (
+                  <p className="mt-1 text-xs text-muted">
+                    Evidence backing is thin.
+                  </p>
+                ) : (
+                  <ul className="mt-1 space-y-1.5 text-xs">
+                    {evidenceItems.map((ev, j) => (
+                      <li
+                        key={`${ev.source ?? "ev"}-${j}`}
+                        className="rounded-md border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5"
+                      >
+                        <p className="leading-snug text-ink">{ev.text}</p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted">
+                          {ev.source && isSafeExternalUrl(ev.source) ? (
+                            <a
+                              href={ev.source}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="text-accent hover:underline"
+                            >
+                              source
+                            </a>
+                          ) : ev.source ? (
+                            <code>{ev.source}</code>
+                          ) : null}
+                          {ev.confidence && (
+                            <ConfidenceChip value={ev.confidence} />
+                          )}
+                          {ev.tag && (
+                            <span className="chip chip-na text-[10px]">
+                              {ev.tag}
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {/* 5. Caveat / risk */}
+              <section>
+                <SectionHeading>Caveat / risk</SectionHeading>
+                <p className="mt-1 leading-snug text-ink whitespace-pre-line">
+                  {a.risk || "No specific caveats surfaced in the saved brief."}
+                </p>
+              </section>
+
+              {/* 6. Priority / status */}
+              <section>
+                <SectionHeading>Priority / status</SectionHeading>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                  {priority && (
+                    <span className="chip chip-na">{priority}</span>
+                  )}
+                  <span className="chip chip-na">Status: Review-only</span>
+                  <ApprovalStateChip state={a.approvalState} />
+                  {!isRich && a.legacyDetail && (
+                    <span className="text-muted">{a.legacyDetail}</span>
+                  )}
+                </div>
+                {a.owner && (
+                  <p className="mt-2 text-xs text-muted">Owner: {a.owner}</p>
+                )}
+              </section>
             </li>
           );
         })}
@@ -632,34 +663,77 @@ export function ExtensionDetail({
         </ul>
       )}
       {d.ext_kind === "table" && (
-        <div className="overflow-auto">
+        <>
           {(d.columns?.length ?? 0) === 0 ? (
             <p className="text-sm text-muted">Empty table.</p>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wider text-muted border-b border-[var(--line)]">
-                  {d.columns!.map((c, i) => (
-                    <th key={i} className="py-2 pr-3 font-medium">
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(d.rows ?? []).map((row, i) => (
-                  <tr key={i} className="border-b border-[var(--line)]">
-                    {row.map((cell, j) => (
-                      <td key={j} className="py-2 pr-3 align-top">
-                        {cell}
-                      </td>
+            <>
+              {/* Mobile: stacked card-per-row layout */}
+              <div
+                data-testid="extension-table-stacked"
+                className="sm:hidden space-y-3"
+              >
+                {(d.rows ?? []).map((row, i) => {
+                  const heading = row[0] ?? "";
+                  const restCols = d.columns!.slice(1);
+                  const restCells = row.slice(1);
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-md border border-[var(--line)] bg-white p-3"
+                    >
+                      <div className="text-sm font-medium leading-snug break-words">
+                        {heading || "—"}
+                      </div>
+                      {restCols.length > 0 && (
+                        <dl className="mt-2 space-y-1.5">
+                          {restCols.map((col, j) => (
+                            <div key={j} className="min-w-0">
+                              <dt className="text-[10px] uppercase tracking-wider text-muted">
+                                {col}
+                              </dt>
+                              <dd className="text-sm leading-snug break-words">
+                                {restCells[j] ?? "—"}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Desktop: table layout */}
+              <div
+                data-testid="extension-table-desktop"
+                className="hidden sm:block overflow-auto"
+              >
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wider text-muted border-b border-[var(--line)]">
+                      {d.columns!.map((c, i) => (
+                        <th key={i} className="py-2 pr-3 font-medium">
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(d.rows ?? []).map((row, i) => (
+                      <tr key={i} className="border-b border-[var(--line)]">
+                        {row.map((cell, j) => (
+                          <td key={j} className="py-2 pr-3 align-top">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-        </div>
+        </>
       )}
       <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
     </div>

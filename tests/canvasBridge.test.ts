@@ -1695,6 +1695,237 @@ test("globals.css clamps horizontal overflow to prevent narrow-viewport runaway"
   assert.match(src, /overflow-x:\s*hidden/);
 });
 
+// ---- PR #25 polish: copy sweep, pointer, dossier, mobile table -----------
+
+import {
+  extractTiming,
+  extractTarget,
+  truncateForPointer,
+} from "../web/lib/canvas/actionExtract";
+
+test("extractTiming: 'today' is detected", () => {
+  assert.equal(extractTiming("Send a follow-up note today."), "Today");
+});
+
+test("extractTiming: 'Before end of quarter' is detected", () => {
+  const t = extractTiming(
+    "Before end of quarter, sequence the buying committee.",
+  );
+  assert.ok(t !== null);
+  assert.match(t!.toLowerCase(), /quarter/);
+});
+
+test("extractTiming: returns null when no timing phrase matches", () => {
+  assert.equal(extractTiming("Generic ask without timing."), null);
+});
+
+test("extractTiming: handles empty / undefined", () => {
+  assert.equal(extractTiming(""), null);
+  assert.equal(extractTiming(undefined), null);
+});
+
+test("extractTarget: CMIO via warm intro is captured", () => {
+  const t = extractTarget({
+    recommendation:
+      "Request a 30-minute meeting with the CMIO via warm intro from the regional advisory board.",
+  });
+  assert.ok(t !== null);
+  // Must contain CMIO and/or warm intro pathway
+  assert.match(t!, /CMIO|warm intro/);
+});
+
+test("extractTarget: returns null for generic ask without target", () => {
+  assert.equal(
+    extractTarget({ recommendation: "Generic ask with no target." }),
+    null,
+  );
+});
+
+test("extractTarget: owner takes priority when set", () => {
+  assert.equal(
+    extractTarget({ owner: "Jane Doe", recommendation: "anything" }),
+    "Jane Doe",
+  );
+});
+
+test("truncateForPointer: respects max length and appends ellipsis", () => {
+  const long = "x".repeat(200);
+  const out = truncateForPointer(long, 80);
+  assert.ok(out.length <= 80);
+  assert.ok(out.endsWith("…"));
+});
+
+test("ExecutiveCockpit renders compact pointer (data-testid + truncation helper)", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ExecutiveCockpit.tsx"),
+    "utf8",
+  );
+  assert.match(src, /data-testid="cockpit-pointer"/);
+  // It must use a truncation helper for the cell body and a line-clamp-1
+  // so the dark cell never renders the full multi-paragraph next_action.
+  assert.match(src, /truncateForPointer/);
+  assert.match(src, /line-clamp-1/);
+  // It must surface a pointer to the Recommended Move card.
+  assert.match(src, /See Recommended Move below/);
+});
+
+test("ActionPanelTile renders dossier substructure (TIMING / TARGET / ASK / WHY NOW / EXPECTED OUTCOME)", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  // Pull out the ActionPanelTile region including its MoveRow helper
+  // (declared above the component).
+  const start = src.indexOf("function MoveRow");
+  const end = src.indexOf("\n// ---- open_questions");
+  const region = src.slice(start, end);
+  assert.match(region, /data-testid="recommended-move-row"/);
+  // Section labels (normalized casing).
+  assert.match(region, /Timing/);
+  assert.match(region, /Target \/ route/);
+  assert.match(region, /Ask/);
+  assert.match(region, /Why now/);
+  assert.match(region, /Expected outcome/);
+});
+
+test("tiles.tsx contains both stacked and desktop testids for the extension table", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  assert.match(src, /data-testid="extension-table-stacked"/);
+  assert.match(src, /data-testid="extension-table-desktop"/);
+});
+
+test("Canvas source files no longer surface internal field names or preview/execution copy", () => {
+  const files = [
+    "web/components/canvas/tiles.tsx",
+    "web/components/canvas/details.tsx",
+    "web/components/canvas/WidgetTile.tsx",
+    "web/components/canvas/ReadOnlyCanvasView.tsx",
+    "web/components/canvas/ExecutiveCockpit.tsx",
+  ];
+  for (const rel of files) {
+    const raw = readFileSync(path.join(__dirname, "..", rel), "utf8");
+    // Strip JSX expression containers `{…}` (non-greedy, balanced enough
+    // for these files) so we only scan literal JSX text content.
+    const src = raw.replace(/\{[^{}]*\}/g, "{}");
+    // `next_action` and `next action` as JSX text content (between `>` and
+    // `<` on a single line; multi-line spans get picked up by the source
+    // sweep instead).
+    assert.ok(
+      !/>[^<\n]*\bnext_action\b[^<\n]*</.test(src),
+      `${rel} should not surface "next_action" as visible text`,
+    );
+    assert.ok(
+      !/>[^<\n]*\bnext action\b[^<\n]*</i.test(src),
+      `${rel} should not surface "next action" as visible text`,
+    );
+    // `preview` should not appear as user-visible JSX text in those files.
+    assert.ok(
+      !/>[^<\n]*\bpreview\b[^<\n]*</i.test(src),
+      `${rel} should not surface "preview" as visible text`,
+    );
+    // Literal banned phrases (anywhere in source).
+    assert.ok(
+      !/Execution is not enabled/.test(raw),
+      `${rel} should not contain "Execution is not enabled"`,
+    );
+    assert.ok(
+      !/approval\/execution/.test(raw),
+      `${rel} should not contain "approval/execution"`,
+    );
+    assert.ok(
+      !/approval and execution/.test(raw),
+      `${rel} should not contain "approval and execution"`,
+    );
+    // `severity:` literal in JSX text content (not as object key in JS).
+    assert.ok(
+      !/>[^<\n]*severity:/i.test(src),
+      `${rel} should not surface "severity:" as visible text`,
+    );
+    // Action button labels remain hidden.
+    for (const w of ["Run", "Execute", "Approve", "Dismiss"]) {
+      const re = new RegExp(`>\\s*${w}\\s*<`);
+      assert.ok(!re.test(raw), `${rel} should not contain >${w}< button label`);
+    }
+  }
+});
+
+test("framing eyebrows are de-branded (no literal HERMES prefix)", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/lib/canvas/framing.ts"),
+    "utf8",
+  );
+  // The eyebrow strings themselves should not begin with the HERMES brand.
+  assert.ok(
+    !/eyebrow:\s*"HERMES/i.test(src),
+    "framing eyebrows must not be prefixed with HERMES",
+  );
+  assert.ok(
+    !/"Hermes insight"/.test(src),
+    "framing should not emit 'Hermes insight' eyebrow",
+  );
+  assert.ok(
+    !/"Hermes note"/.test(src),
+    "framing should not emit 'Hermes note' eyebrow",
+  );
+  assert.ok(
+    !/"Hermes takeaways"/.test(src),
+    "framing should not emit 'Hermes takeaways' eyebrow",
+  );
+  assert.ok(
+    !/"Hermes read on AI maturity"/.test(src),
+    "framing should not emit 'Hermes read on AI maturity' eyebrow",
+  );
+});
+
+test("framing oneLine for action_panel no longer mentions next_action verbatim", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/lib/canvas/framing.ts"),
+    "utf8",
+  );
+  assert.ok(
+    !/primary line drawn from next_action verbatim/.test(src),
+    "framing must not surface 'primary line drawn from next_action verbatim'",
+  );
+});
+
+test("ActionPanelDetail includes review-only intro line and dossier section headings", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/details.tsx"),
+    "utf8",
+  );
+  // Intro line.
+  assert.match(
+    src,
+    /Synthesized from saved account evidence — review-only recommendation\./,
+  );
+  // Dossier sections (each heading appears in the source).
+  assert.match(src, /Recommended move/);
+  assert.match(src, /Why this matters/);
+  assert.match(src, /Expected outcome/);
+  assert.match(src, /Evidence backing/);
+  assert.match(src, /Caveat \/ risk/);
+  assert.match(src, /Priority \/ status/);
+  // Priority labels replace severity wording.
+  assert.match(src, /Priority: High/);
+});
+
+test("SeverityChip renders 'Priority: <Level>' rather than 'severity: <level>'", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/visuals.tsx"),
+    "utf8",
+  );
+  // The chip body should now be 'Priority:' not 'severity:'.
+  assert.match(src, /Priority:\s*\{label\}/);
+  // And the older lowercase form should be gone.
+  assert.ok(
+    !/severity:\s*\{s\}/.test(src),
+    "old `severity: {s}` chip body must be gone",
+  );
+});
+
 test("Canvas chrome no longer surfaces de-internalized strings", () => {
   const files = [
     "web/components/canvas/tiles.tsx",

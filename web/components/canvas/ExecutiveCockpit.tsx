@@ -9,6 +9,7 @@ import {
 } from "../../lib/canvas/cockpit";
 import { ConfidenceChip } from "../DrillModal";
 import { ConfidenceBar, ConfidenceCountsInline, MiniGauge } from "./visuals";
+import { truncateForPointer } from "../../lib/canvas/actionExtract";
 
 // Executive Cockpit — a short, presentational status strip above the
 // Canvas widget grid. Five compact cells summarising what an account
@@ -226,25 +227,37 @@ function NextActionCell({
     color: "white",
     borderColor: "var(--ink)",
   };
-  const text = data?.detail || data?.label || "";
+  const rawText = data?.detail || data?.label || "";
+  // Pointer-only: render a compact label so the cockpit doesn't
+  // duplicate the long body that the Recommended Move card carries.
+  const compactLabel = truncateForPointer(rawText, 80);
   return (
     <div
       className={`${CELL_BASE} lg:col-span-1`}
       style={inkStyle}
-      data-testid="cockpit-cell-next-action"
+      data-testid="cockpit-pointer"
     >
       <div className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-white/70">
         <Target className="size-3" aria-hidden="true" />
-        <span>Next action</span>
+        <span>Priority move</span>
       </div>
-      {data && text ? (
-        <p
-          className="text-sm font-medium leading-snug line-clamp-3"
-          style={{ color: "white" }}
-          title={text}
-        >
-          {text}
-        </p>
+      {data && compactLabel ? (
+        <>
+          <p
+            className="text-sm font-medium leading-snug line-clamp-1"
+            style={{ color: "white" }}
+            title={rawText}
+          >
+            {compactLabel}
+          </p>
+          <a
+            href="#action-next"
+            className="text-[11px] underline-offset-2 hover:underline"
+            style={{ color: "rgba(255,255,255,0.7)" }}
+          >
+            See Recommended Move below
+          </a>
+        </>
       ) : (
         <p className="text-sm" style={{ color: "rgba(255,255,255,0.7)" }}>
           No recommended action captured.

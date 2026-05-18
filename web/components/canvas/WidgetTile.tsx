@@ -164,8 +164,8 @@ export default function WidgetTile({
   // the right edge of long titles; everything beyond that is still
   // available in the drill-in modal.
   const titleClass = isAction
-    ? "block max-w-full text-left text-[15px] font-semibold leading-snug tracking-tight text-white line-clamp-2"
-    : "block max-w-full text-left text-[15px] font-semibold leading-snug tracking-tight text-ink line-clamp-2";
+    ? "block max-w-full text-left text-[15px] font-semibold leading-snug tracking-tight text-white whitespace-normal break-words line-clamp-2"
+    : "block max-w-full text-left text-[15px] font-semibold leading-snug tracking-tight text-ink whitespace-normal break-words line-clamp-2";
   const footerClass = isAction
     ? "mt-4 pt-3 border-t border-white/15 flex items-center justify-between gap-3 text-xs text-white/75"
     : "mt-4 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-3 text-xs text-muted";

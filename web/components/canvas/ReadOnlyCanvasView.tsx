@@ -88,7 +88,7 @@ function ModalFooter({ widget }: { widget: CanvasWidget }) {
       {evidenceCount > 0 && (
         <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
       )}
-      <span>Review mode · execution is not enabled in this preview</span>
+      <span>Review-only recommendation</span>
       <span>Updated {formatGeneratedAt(widget.updated_at)}</span>
     </div>
   );
@@ -172,7 +172,8 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
         {canvas.widgets.map((w) => (
           <div
             key={w.id}
-            className={`col-span-1 min-w-0 ${gridSpanClass(w.layout.w)}`}
+            id={w.id}
+            className={`col-span-1 min-w-0 ${gridSpanClass(w.layout.w)} scroll-mt-24`}
           >
             <WidgetTile widget={w} onOpen={() => setOpenId(w.id)} />
           </div>

@@ -271,6 +271,7 @@ export function semanticAccentStyle(
 // confidence-low (which is amber).
 export function SeverityChip({ s }: { s?: "low" | "medium" | "high" }) {
   if (!s) return null;
+  const label = s === "high" ? "High" : s === "medium" ? "Medium" : "Low";
   const style: React.CSSProperties =
     s === "high"
       ? {
@@ -294,7 +295,7 @@ export function SeverityChip({ s }: { s?: "low" | "medium" | "high" }) {
       className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium"
       style={style}
     >
-      severity: {s}
+      Priority: {label}
     </span>
   );
 }

@@ -151,7 +151,7 @@ export function widgetFraming(widget: CanvasWidget): WidgetFraming {
       if (widget.id === "metric-ai-maturity") {
         const value = firstNonEmpty(widget.data.value);
         return {
-          eyebrow: "Hermes read on AI maturity",
+          eyebrow: "AI maturity read",
           oneLine: value ? `Maturity rating ${value} based on the saved account brief.` : "",
         };
       }
@@ -193,7 +193,7 @@ export function widgetFraming(widget: CanvasWidget): WidgetFraming {
     case "ai_takeaways": {
       const n = widget.data.takeaways.length;
       return {
-        eyebrow: "Hermes takeaways",
+        eyebrow: "Key takeaways",
         oneLine: n > 0 ? `${n} takeaway${n === 1 ? "" : "s"} synthesized from the saved brief.` : "",
       };
     }
@@ -202,7 +202,7 @@ export function widgetFraming(widget: CanvasWidget): WidgetFraming {
       return {
         eyebrow: "Recommended move",
         oneLine: n > 0
-          ? `Ranked queue of ${n} move${n === 1 ? "" : "s"} — primary line drawn from next_action verbatim.`
+          ? `Ranked queue of ${n} move${n === 1 ? "" : "s"} drawn from the saved brief.`
           : "",
       };
     }
@@ -217,12 +217,12 @@ export function widgetFraming(widget: CanvasWidget): WidgetFraming {
       const ek = widget.data.ext_kind;
       const eyebrow =
         ek === "card"
-          ? "Hermes insight"
+          ? "Insight"
           : ek === "table"
             ? "Reference table"
             : ek === "list"
               ? "Reference list"
-              : "Hermes note";
+              : "Note";
       let oneLine = "";
       if (ek === "card" || ek === "narrative") {
         oneLine = truncateOneLine(widget.data.body ?? "");
