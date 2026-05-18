@@ -153,32 +153,75 @@ function approvalStateLabel(state?: NormalizedAction["approvalState"]): string {
   }
 }
 
+// Pulls the rich expected_outcome / rationale strings off a raw action so
+// the primary tile line can render them fully without clamping. Returns
+// empty strings when the action is the legacy {label, detail} shape.
+function richPrimaryLines(
+  raw: import("zod").infer<typeof ActionPanelWidget>["data"]["actions"][number],
+): { expectedOutcome: string; rationale: string } {
+  if ("recommendation" in raw) {
+    return {
+      expectedOutcome: raw.expected_outcome ?? "",
+      rationale: raw.rationale ?? "",
+    };
+  }
+  if ("text" in raw && "why" in raw) {
+    return { expectedOutcome: "", rationale: raw.why ?? "" };
+  }
+  return { expectedOutcome: "", rationale: "" };
+}
+
 export function ActionPanelTile({
   widget,
 }: {
   widget: import("zod").infer<typeof ActionPanelWidget>;
 }) {
   const actions = widget.data.actions;
-  const first = actions[0] ? normalizeAction(actions[0]) : null;
+  const rawFirst = actions[0];
+  const first = rawFirst ? normalizeAction(rawFirst) : null;
+  const primaryRich = rawFirst ? richPrimaryLines(rawFirst) : null;
   const remaining = Math.max(0, actions.length - 1);
   return (
     <div>
       <TileHeader title={widget.title} kindLabel="Recommended action" />
       {first ? (
-        <div className="space-y-2">
+        <div className="space-y-2 min-w-0">
           {first.approvalState && (
             <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-white/85">
               {approvalStateLabel(first.approvalState)}
             </span>
           )}
-          <p className="text-sm font-semibold leading-snug line-clamp-3">
+          {/*
+            Primary recommendation. No CSS clamp — the move is the spine
+            of the workspace, so the executive line is allowed to run to
+            its natural length.
+          */}
+          <p className="text-base font-semibold leading-snug break-words">
             {first.title}
           </p>
-          {first.detail && (
-            <p className="text-xs leading-snug opacity-80 line-clamp-3">
-              {first.detail}
+          {primaryRich && primaryRich.expectedOutcome && (
+            <p className="text-xs leading-snug opacity-90 break-words">
+              <span className="uppercase tracking-widest opacity-70 mr-1">
+                Expected outcome
+              </span>
+              {primaryRich.expectedOutcome}
             </p>
           )}
+          {primaryRich && primaryRich.rationale && (
+            <p className="text-xs leading-snug opacity-80 break-words">
+              <span className="uppercase tracking-widest opacity-70 mr-1">
+                Why
+              </span>
+              {primaryRich.rationale}
+            </p>
+          )}
+          {(!primaryRich ||
+            (!primaryRich.expectedOutcome && !primaryRich.rationale)) &&
+            first.detail && (
+              <p className="text-xs leading-snug opacity-80 break-words">
+                {first.detail}
+              </p>
+            )}
           {remaining > 0 && (
             <p className="text-[11px] opacity-70">
               +{remaining} more recommended move{remaining === 1 ? "" : "s"} · open to view
@@ -302,7 +345,7 @@ export function ExtensionTile({
         </ul>
       )}
       {d.ext_kind === "table" && (
-        <div className="text-xs overflow-hidden">
+        <div className="text-xs overflow-x-auto -mx-2 px-2">
           {d.columns && d.columns.length > 0 ? (
             <table className="w-full">
               <thead>

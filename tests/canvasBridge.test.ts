@@ -262,7 +262,7 @@ test("Canvas header copy presents Hermes as the strategic layout driver", () => 
   );
   assert.match(source, /Hermes-built strategic canvas/);
   assert.match(source, /Hermes arranges/);
-  assert.match(source, /Read-only mode/);
+  assert.match(source, /Review mode/);
   assert.doesNotMatch(source, /Controls disabled/);
   assert.doesNotMatch(source, /Widget actions are disabled/);
   assert.doesNotMatch(source, />\s*widgets\s*</i, "header should not expose internal widget terminology");
@@ -884,12 +884,16 @@ test("Canvas-native modules: structured evidence is seeded on the right section_
   }
 });
 
-test("section-top-initiatives is widened to a full row for the landscape", () => {
+test("section-top-initiatives is paired with section-risks on the same row (6+6)", () => {
   const brief = Brief.parse(sampleBriefJson);
   const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
-  const w = canvas.widgets.find((x) => x.id === "section-top-initiatives");
-  assert.ok(w);
-  assert.equal(w?.layout.w, 12);
+  const opp = canvas.widgets.find((x) => x.id === "section-top-initiatives");
+  const risk = canvas.widgets.find((x) => x.id === "section-risks");
+  assert.ok(opp);
+  assert.ok(risk);
+  assert.equal(opp?.layout.w, 6);
+  assert.equal(risk?.layout.w, 6);
+  assert.equal(opp?.layout.y, risk?.layout.y);
 });
 
 test("non-landscape section_refs (e.g. snapshot) keep evidence empty", () => {
@@ -1507,5 +1511,224 @@ test("canvas action tiles + details expose no Run/Execute/Approve/Dismiss button
     assert.ok(!/>\s*Execute\s*</.test(src), "found >Execute< button label");
     assert.ok(!/>\s*Approve\s*</.test(src), "found >Approve< button label");
     assert.ok(!/>\s*Dismiss\s*</.test(src), "found >Dismiss< button label");
+  }
+});
+
+// ---- Canvas generative workspace polish (PR: canvas-generative-workspace-polish)
+
+import { widgetFraming } from "../web/lib/canvas/framing";
+
+function makeBaseEnvelope(overrides: Record<string, unknown> = {}) {
+  return {
+    description: "",
+    source: "system",
+    created_at: "2026-05-18T00:00:00.000Z",
+    updated_at: "2026-05-18T00:00:00.000Z",
+    sources: [],
+    layout: { x: 0, y: 0, w: 6, h: 3, pinned: false, collapsed: false },
+    controls: {
+      can_refresh: false,
+      can_remove: false,
+      can_edit: false,
+      can_export: false,
+    },
+    status: "fresh",
+    evidence: [],
+    ...overrides,
+  };
+}
+
+test("widgetFraming returns 'Recommended move' eyebrow for action_panel", () => {
+  const w = {
+    ...makeBaseEnvelope(),
+    id: "action-next",
+    kind: "action_panel",
+    title: "Recommended next moves",
+    data: { actions: [] },
+  } as never;
+  const f = widgetFraming(w);
+  assert.equal(f.eyebrow, "Recommended move");
+});
+
+test("widgetFraming returns configured eyebrows for section_key risks / personas / programs_procurement", () => {
+  const risks = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "section-risks",
+    kind: "section_ref",
+    title: "Risks",
+    data: { section_key: "risks", preview: "" },
+  } as never);
+  assert.equal(risks.eyebrow, "Caveats before acting");
+
+  const personas = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "section-personas",
+    kind: "section_ref",
+    title: "Personas",
+    data: { section_key: "personas", preview: "" },
+  } as never);
+  assert.equal(personas.eyebrow, "Likely buying committee");
+
+  const pp = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "section-pp",
+    kind: "section_ref",
+    title: "Programs & procurement",
+    data: { section_key: "programs_procurement", preview: "" },
+  } as never);
+  assert.equal(pp.eyebrow, "Procurement context");
+});
+
+test("widgetFraming returns empty oneLine when underlying data is empty (no fabrication)", () => {
+  const empty = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "x",
+    kind: "ai_takeaways",
+    title: "AI takeaways",
+    data: { takeaways: [] },
+  } as never);
+  assert.equal(empty.oneLine, "");
+
+  const emptyAction = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "x",
+    kind: "action_panel",
+    title: "Recommended next moves",
+    data: { actions: [] },
+  } as never);
+  assert.equal(emptyAction.oneLine, "");
+
+  const emptyOQ = widgetFraming({
+    ...makeBaseEnvelope(),
+    id: "x",
+    kind: "open_questions",
+    title: "Open questions",
+    data: { questions: [] },
+  } as never);
+  assert.equal(emptyOQ.oneLine, "");
+});
+
+test("buildReadOnlyCanvasFromBrief places action-next first in the grid (y=0, w=12)", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const action = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(action);
+  assert.equal(action?.layout.y, 0);
+  assert.equal(action?.layout.x, 0);
+  assert.equal(action?.layout.w, 12);
+  // No other widget should sit on row 0 above-or-equal-to action-next.
+  const sameRow = canvas.widgets.filter((w) => w.layout.y === 0 && w.id !== "action-next");
+  assert.equal(sameRow.length, 0, "action-next must be the only widget on row y=0");
+});
+
+test("buildReadOnlyCanvasFromBrief widgets are non-overlapping on the 12-col grid", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  // Inflate every widget into the (x,y) cells it occupies, then assert
+  // no two widgets claim the same cell.
+  const occupied = new Map<string, string>(); // key "x,y" -> widget id
+  for (const w of canvas.widgets) {
+    for (let dy = 0; dy < w.layout.h; dy++) {
+      for (let dx = 0; dx < w.layout.w; dx++) {
+        const k = `${w.layout.x + dx},${w.layout.y + dy}`;
+        const prev = occupied.get(k);
+        assert.equal(
+          prev,
+          undefined,
+          `cell ${k} is claimed by both ${prev} and ${w.id}`,
+        );
+        occupied.set(k, w.id);
+      }
+    }
+  }
+});
+
+test("WidgetTile renders the framing eyebrow + oneLine as a synthesized sentence", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/WidgetTile.tsx"),
+    "utf8",
+  );
+  assert.match(src, /widgetFraming/);
+  assert.match(src, /data-testid="widget-framing"/);
+  assert.match(src, /min-w-0/);
+  assert.match(src, /break-words/);
+});
+
+test("ActionPanelTile primary line is unclamped and renders expected_outcome + rationale", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  // The primary line block should not carry a CSS clamp on the title.
+  const startIdx = src.indexOf("function ActionPanelTile");
+  const endIdx = src.indexOf("\nexport function OpenQuestionsTile");
+  const actionTile = src.slice(startIdx, endIdx);
+  assert.ok(
+    !/text-sm font-semibold leading-snug line-clamp-3/.test(actionTile),
+    "primary recommendation must not use line-clamp-3",
+  );
+  assert.match(actionTile, /Expected outcome/);
+  assert.match(actionTile, /\bWhy\b/);
+});
+
+test("ExtensionTile table renderer wraps the table in a horizontally scrollable container", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/tiles.tsx"),
+    "utf8",
+  );
+  assert.match(src, /overflow-x-auto/);
+});
+
+test("ReadOnlyCanvasView header uses flex-wrap so narrow viewports do not overflow", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/ReadOnlyCanvasView.tsx"),
+    "utf8",
+  );
+  assert.match(src, /flex-wrap/);
+});
+
+test("globals.css clamps horizontal overflow to prevent narrow-viewport runaway", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/app/globals.css"),
+    "utf8",
+  );
+  assert.match(src, /overflow-x:\s*hidden/);
+});
+
+test("Canvas chrome no longer surfaces de-internalized strings", () => {
+  const files = [
+    "web/components/canvas/tiles.tsx",
+    "web/components/canvas/details.tsx",
+    "web/components/canvas/WidgetTile.tsx",
+    "web/components/canvas/ReadOnlyCanvasView.tsx",
+    "web/app/globals.css",
+  ];
+  const forbidden: Array<[string, RegExp]> = [
+    ["READ-ONLY MODE", /READ-ONLY MODE/],
+    ["Provenance: hermes", /Provenance:\s*\{?\s*widget\.source/],
+    ["INSIGHT · TABLE", /INSIGHT · TABLE/i],
+    ["Hermes-ranked", /Hermes-ranked/],
+    ["Rating from the saved brief", /Rating from the saved brief/],
+    [
+      "approval and execution are not enabled",
+      /approval and execution are not enabled/,
+    ],
+  ];
+  for (const rel of files) {
+    const src = readFileSync(path.join(__dirname, "..", rel), "utf8");
+    for (const [label, re] of forbidden) {
+      assert.ok(
+        !re.test(src),
+        `${rel} should not contain forbidden string "${label}"`,
+      );
+    }
+    // Action button labels should not appear as visible JSX content.
+    for (const word of ["Run", "Execute", "Approve", "Dismiss"]) {
+      const re = new RegExp(`>\\s*${word}\\s*<`);
+      assert.ok(
+        !re.test(src),
+        `${rel} should not contain >${word}< button label`,
+      );
+    }
   }
 });

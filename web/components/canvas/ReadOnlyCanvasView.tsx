@@ -53,19 +53,42 @@ function widgetEvidenceCount(widget: CanvasWidget): number {
     (widget.kind === "evidence_board" ? widget.data.items.length : 0);
 }
 
+function provenanceLabel(source: CanvasWidget["source"]): string {
+  // De-internalize raw provenance tags ("hermes" / "system" / etc.) so the
+  // modal footer reads as authored prose rather than a debug line.
+  switch (source) {
+    case "hermes":
+      return "Synthesized from brief evidence";
+    case "system":
+      return "Derived from the saved brief";
+    case "model":
+      return "Modeled from the saved brief";
+    case "research":
+      return "Research-backed";
+    case "chat":
+      return "Added in chat";
+    case "user":
+      return "Added by user";
+    case "refresh":
+      return "Refreshed insight";
+    default:
+      return "Derived from the saved brief";
+  }
+}
+
 function ModalFooter({ widget }: { widget: CanvasWidget }) {
   const sourceCount = widget.sources.length;
   const evidenceCount = widgetEvidenceCount(widget);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-      <span>Provenance: {widget.source.replace(/_/g, " ")}</span>
+      <span>{provenanceLabel(widget.source)}</span>
       {sourceCount > 0 && (
         <span>{sourceCount} source{sourceCount === 1 ? "" : "s"}</span>
       )}
       {evidenceCount > 0 && (
         <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
       )}
-      <span>Read-only mode · action approvals not enabled</span>
+      <span>Review mode · execution is not enabled in this preview</span>
       <span>Updated {formatGeneratedAt(widget.updated_at)}</span>
     </div>
   );
@@ -95,12 +118,12 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
             className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 py-1 text-[10px] font-semibold text-ink shadow-sm"
             title="You can inspect details; editing and agent actions require a later approval flow."
           >
-            <Lock className="size-3" aria-hidden="true" /> Read-only mode
+            <Lock className="size-3" aria-hidden="true" /> Review mode
           </span>
         </div>
-        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <h1 className="font-display text-4xl tracking-tight leading-tight">
+        <div className="mt-3 flex flex-wrap gap-2 min-w-0 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl min-w-0">
+            <h1 className="font-display text-4xl tracking-tight leading-tight truncate">
               {canvas.account_name}
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted">

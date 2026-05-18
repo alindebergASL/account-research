@@ -41,6 +41,10 @@ html, body {
   color: var(--ink);
   font-family: Inter, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* Prevent any errant wide child (e.g. a long table or a tile content
+     run-on token) from forcing the page to scroll horizontally. Cards
+     opt back into local scrolling where useful (tables in tiles.tsx). */
+  overflow-x: hidden;
 }
 
 .card {

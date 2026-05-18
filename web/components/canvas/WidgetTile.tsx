@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import type { CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
+import { widgetFraming } from "../../lib/canvas/framing";
 import { ConfidenceChip } from "../DrillModal";
 import {
   ToneIcon,
@@ -91,8 +92,12 @@ function sectionLabel(sectionKey: string): string {
 }
 
 function kindLabel(widget: CanvasWidget, fallback: string): string {
+  // Prefer the Hermes-voiced eyebrow from framing.ts when the helper has
+  // one for this widget kind. Falls back to the legacy section / registry
+  // label so we never render an empty eyebrow.
+  const framing = widgetFraming(widget);
+  if (framing.eyebrow) return framing.eyebrow;
   if (widget.kind === "section_ref") return sectionLabel(widget.data.section_key);
-  if (widget.kind === "extension") return `${fallback} · ${widget.data.ext_kind}`;
   return fallback;
 }
 
@@ -116,6 +121,7 @@ export default function WidgetTile({
   const descriptor = getDescriptor(widget.kind);
   const Tile = descriptor.Tile;
   const label = kindLabel(widget, descriptor.label);
+  const framing = widgetFraming(widget);
   const tone = widgetTone(widget);
   const isAction = widget.kind === "action_panel";
 
@@ -191,6 +197,19 @@ export default function WidgetTile({
           <div className={titleClass} title={widget.title}>
             {widget.title}
           </div>
+          {framing.oneLine && (
+            <p
+              data-testid="widget-framing"
+              className={
+                isAction
+                  ? "mt-1 text-[12px] italic leading-snug text-white/75 line-clamp-1 break-words"
+                  : "mt-1 text-[12px] italic leading-snug text-muted line-clamp-1 break-words"
+              }
+              title={framing.oneLine}
+            >
+              {framing.oneLine}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {widget.confidence && <ConfidenceChip value={widget.confidence} />}
@@ -198,7 +217,7 @@ export default function WidgetTile({
         </div>
       </header>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 min-w-0 break-words">
         <Tile widget={widget as never} />
       </div>
 

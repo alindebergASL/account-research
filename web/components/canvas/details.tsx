@@ -23,6 +23,10 @@ import {
   aggregateConfidence,
   sectionKeyTone,
 } from "./visuals";
+import {
+  widgetFraming,
+  sectionWhyItMattersText,
+} from "../../lib/canvas/framing";
 
 export function isSafeExternalUrl(url: string): boolean {
   try {
@@ -133,6 +137,29 @@ function SourcesBlock({
 
 // ---- section_ref ----------------------------------------------------------
 
+// Renders a `<section>` only when the body slot is non-empty, so detail
+// modals never carry an empty heading. Used across the detail components
+// so we get a consistent "no empty headed section" rule.
+function NamedSection({
+  heading,
+  children,
+}: {
+  heading: string;
+  children: React.ReactNode;
+}) {
+  if (children === null || children === undefined || children === false) {
+    return null;
+  }
+  return (
+    <section className="mt-4">
+      <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
+        {heading}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function SectionRefDetail({
   widget,
 }: {
@@ -150,7 +177,13 @@ export function SectionRefDetail({
   ]);
   const useLandscape =
     hasStructured && landscapeKeys.has(widget.data.section_key);
-  const body = widget.data.full_text || widget.data.preview || "—";
+  const body = widget.data.full_text || widget.data.preview || "";
+
+  const framing = widgetFraming(widget);
+  const whyItMatters = sectionWhyItMattersText(widget.data.section_key);
+  const openQuestions = ((widget.data as { open_questions?: string[] }).open_questions ?? []).filter(
+    (q) => typeof q === "string" && q.trim().length > 0,
+  );
 
   return (
     <div>
@@ -168,17 +201,38 @@ export function SectionRefDetail({
         }
       >
         {tone !== "neutral" && <ToneIcon tone={tone} className="size-4" />}
-        <span>
-          Derived from standard brief section:{" "}
-          <code>{widget.data.section_key}</code>
-        </span>
+        <span>{framing.eyebrow || "Brief context"}</span>
       </div>
 
-      {useLandscape ? (
-        <InitiativeLandscape items={structured} max={20} tone={tone} />
-      ) : (
-        <p className="text-sm whitespace-pre-line leading-relaxed">{body}</p>
+      {framing.oneLine && (
+        <NamedSection heading="What this means">
+          <p className="text-sm leading-snug text-ink">{framing.oneLine}</p>
+        </NamedSection>
       )}
+      {whyItMatters && (
+        <NamedSection heading="Why it matters">
+          <p className="text-sm leading-snug text-ink">{whyItMatters}</p>
+        </NamedSection>
+      )}
+
+      <section className="mt-4">
+        {useLandscape ? (
+          <InitiativeLandscape items={structured} max={20} tone={tone} />
+        ) : body ? (
+          <p className="text-sm whitespace-pre-line leading-relaxed">{body}</p>
+        ) : null}
+      </section>
+
+      {openQuestions.length > 0 && (
+        <NamedSection heading="What to validate">
+          <ul className="list-disc pl-5 space-y-1 text-sm">
+            {openQuestions.map((q, i) => (
+              <li key={i}>{q}</li>
+            ))}
+          </ul>
+        </NamedSection>
+      )}
+
       <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
     </div>
   );
@@ -341,7 +395,7 @@ export function ActionPanelDetail({
     <div>
       <Meta why_included={widget.why_included} source={widget.source} />
       <p className="mb-3 rounded-md bg-[var(--bg)] px-3 py-2 text-xs text-muted">
-        Suggested only · approval and execution are not enabled in this preview.
+        Suggested only · Execution is not enabled in this preview.
       </p>
       <ul className="space-y-3">
         {actions.map((raw, i) => {
@@ -416,6 +470,33 @@ export function ActionPanelDetail({
           );
         })}
       </ul>
+      {widget.evidence.length > 0 && (
+        <section className="mt-5">
+          <div className="text-xs uppercase tracking-wider text-muted mb-2">
+            Related context
+          </div>
+          <ul className="list-disc pl-5 space-y-1 text-sm">
+            {widget.evidence.map((ev, i) => (
+              <li key={i} className="break-words">
+                <span>{ev.text}</span>
+                {ev.source && isSafeExternalUrl(ev.source) ? (
+                  <>
+                    {" "}
+                    <a
+                      href={ev.source}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-accent hover:underline"
+                    >
+                      source
+                    </a>
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <SourcesBlock sources={widget.sources} evidence={widget.evidence} />
     </div>
   );
@@ -514,9 +595,22 @@ export function ExtensionDetail({
         confidence={widget.confidence}
         source={widget.source}
       />
-      <div className="rounded-lg bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs text-muted mb-3">
-        Brief extension · {d.ext_kind}
-      </div>
+      {(() => {
+        const framing = widgetFraming(widget);
+        if (!framing.eyebrow && !framing.oneLine) return null;
+        return (
+          <div className="rounded-lg bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs text-muted mb-3">
+            {framing.eyebrow && (
+              <div className="uppercase tracking-wider text-[10px]">
+                {framing.eyebrow}
+              </div>
+            )}
+            {framing.oneLine && (
+              <div className="mt-0.5 text-ink">{framing.oneLine}</div>
+            )}
+          </div>
+        );
+      })()}
       {d.ext_kind === "card" && (
         <p className="text-sm leading-relaxed whitespace-pre-line">
           {d.body || "—"}
