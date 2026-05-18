@@ -444,24 +444,28 @@ export function ActionPanelDetail({
                         className="rounded-md border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5"
                       >
                         <p className="leading-snug text-ink">{ev.text}</p>
+                        {ev.source && (
+                          <div className="mt-0.5 text-[10px] text-muted">
+                            {isSafeExternalUrl(ev.source) ? (
+                              <a
+                                href={ev.source}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="text-accent hover:underline"
+                              >
+                                source
+                              </a>
+                            ) : (
+                              <span>{ev.source}</span>
+                            )}
+                          </div>
+                        )}
                         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted">
-                          {ev.source && isSafeExternalUrl(ev.source) ? (
-                            <a
-                              href={ev.source}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="text-accent hover:underline"
-                            >
-                              source
-                            </a>
-                          ) : ev.source ? (
-                            <code>{ev.source}</code>
-                          ) : null}
                           {ev.confidence && (
                             <ConfidenceChip value={ev.confidence} />
                           )}
                           {ev.tag && (
-                            <span className="chip chip-na text-[10px]">
+                            <span className="chip chip-na text-[10px] capitalize">
                               {ev.tag}
                             </span>
                           )}

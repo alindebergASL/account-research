@@ -9,7 +9,6 @@ import {
 } from "../../lib/canvas/cockpit";
 import { ConfidenceChip } from "../DrillModal";
 import { ConfidenceBar, ConfidenceCountsInline, MiniGauge } from "./visuals";
-import { truncateForPointer } from "../../lib/canvas/actionExtract";
 
 // Executive Cockpit — a short, presentational status strip above the
 // Canvas widget grid. Five compact cells summarising what an account
@@ -228,9 +227,10 @@ function NextActionCell({
     borderColor: "var(--ink)",
   };
   const rawText = data?.detail || data?.label || "";
-  // Pointer-only: render a compact label so the cockpit doesn't
-  // duplicate the long body that the Recommended Move card carries.
-  const compactLabel = truncateForPointer(rawText, 80);
+  // Pointer-only: render a fixed status label plus an in-page link to the
+  // Recommended Move card. The cockpit cell must not duplicate the body
+  // copy of the action card itself.
+  const hasPriority = !!(data && rawText.trim().length > 0);
   return (
     <div
       className={`${CELL_BASE} lg:col-span-1`}
@@ -241,14 +241,13 @@ function NextActionCell({
         <Target className="size-3" aria-hidden="true" />
         <span>Priority move</span>
       </div>
-      {data && compactLabel ? (
+      {hasPriority ? (
         <>
           <p
             className="text-sm font-medium leading-snug line-clamp-1"
             style={{ color: "white" }}
-            title={rawText}
           >
-            {compactLabel}
+            Priority move ready
           </p>
           <a
             href="#action-next"
@@ -260,7 +259,7 @@ function NextActionCell({
         </>
       ) : (
         <p className="text-sm" style={{ color: "rgba(255,255,255,0.7)" }}>
-          No recommended action captured.
+          No priority move yet
         </p>
       )}
     </div>

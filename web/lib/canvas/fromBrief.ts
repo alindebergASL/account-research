@@ -188,7 +188,7 @@ export function buildReadOnlyCanvasFromBrief({
     ...baseWidget("action-next", "Recommended next moves", 12, 5, {
       source: "hermes",
       why_included:
-        "Prioritized by Hermes from next_action, initiatives, risks, personas, and evidence in the saved brief.",
+        "Prioritized from brief evidence, account signals, risks, and personas.",
     }),
     kind: "action_panel",
     data: {

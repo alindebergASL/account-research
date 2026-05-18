@@ -90,7 +90,7 @@ function buildPrimaryAction(brief: Brief): RecommendedAction | null {
   const evidence: RecommendedAction["evidence"] = [
     {
       text: brief.next_action,
-      source: "brief.next_action",
+      source: "Primary recommendation from saved brief",
       tag: "primary",
     },
   ];

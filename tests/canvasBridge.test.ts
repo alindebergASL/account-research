@@ -1755,18 +1755,22 @@ test("truncateForPointer: respects max length and appends ellipsis", () => {
   assert.ok(out.endsWith("…"));
 });
 
-test("ExecutiveCockpit renders compact pointer (data-testid + truncation helper)", () => {
+test("ExecutiveCockpit renders compact pointer (data-testid + non-duplicative copy)", () => {
   const src = readFileSync(
     path.join(__dirname, "../web/components/canvas/ExecutiveCockpit.tsx"),
     "utf8",
   );
   assert.match(src, /data-testid="cockpit-pointer"/);
-  // It must use a truncation helper for the cell body and a line-clamp-1
-  // so the dark cell never renders the full multi-paragraph next_action.
-  assert.match(src, /truncateForPointer/);
-  assert.match(src, /line-clamp-1/);
+  // The pointer cell must surface a fixed status line and an empty-state.
+  assert.match(src, /Priority move ready/);
+  assert.match(src, /No priority move yet/);
   // It must surface a pointer to the Recommended Move card.
   assert.match(src, /See Recommended Move below/);
+  // It must NOT echo the action body via the truncation helper anymore.
+  assert.ok(
+    !/truncateForPointer\s*\(/.test(src),
+    "ExecutiveCockpit must not call truncateForPointer (no body duplication)",
+  );
 });
 
 test("ActionPanelTile renders dossier substructure (TIMING / TARGET / ASK / WHY NOW / EXPECTED OUTCOME)", () => {
@@ -1961,5 +1965,171 @@ test("Canvas chrome no longer surfaces de-internalized strings", () => {
         `${rel} should not contain >${word}< button label`,
       );
     }
+  }
+});
+
+// ---- PR #25 final polish: conservative extractTarget + generated UI sweep --
+
+test("extractTarget: CMIO via warm intro returns clean fragment (no ask-verb)", () => {
+  const t = extractTarget({
+    recommendation:
+      "Request a 30-minute meeting with the CMIO via warm intro from the regional advisory board.",
+  });
+  // Either null OR a clean fragment that does NOT contain ask verbs.
+  if (t !== null) {
+    assert.ok(
+      !/\b(request|book|send|share|present|propose|schedule|set up|email|reach out|arrange|prepare|align|sequence|follow up|meet|confirm)\b/i.test(
+        t,
+      ),
+      `extractTarget result should not contain banned ask verbs, got: ${t}`,
+    );
+    assert.ok(!/\)/.test(t), `extractTarget result should not contain ')', got: ${t}`);
+  }
+});
+
+test("extractTarget: 'CDO/CIO office at Tufts Medicine' surfaces CDO/CIO office (not just CDO)", () => {
+  const t = extractTarget({
+    recommendation: "Schedule a meeting with the CDO/CIO office at Tufts Medicine",
+  });
+  assert.ok(t !== null, "expected a non-null target");
+  assert.match(t!, /CDO\/CIO office/i);
+});
+
+test("extractTarget: 'VP of Digital at Bass Pro Shops' surfaces VP of Digital (not just VP)", () => {
+  const t = extractTarget({
+    recommendation: "Reach out to the VP of Digital at Bass Pro Shops",
+  });
+  assert.ok(t !== null, "expected a non-null target");
+  assert.match(t!, /VP of Digital/i);
+});
+
+test("extractTarget: 'Request a meeting with the VP' is too generic → null", () => {
+  assert.equal(
+    extractTarget({ recommendation: "Request a meeting with the VP" }),
+    null,
+  );
+});
+
+test("extractTarget: unmatched closing paren and ask-verb fragment is cleaned or null", () => {
+  const t = extractTarget({
+    recommendation:
+      "Coordinate with RobotLAB channel contact) to request a 30-minute discovery call focused on...",
+  });
+  if (t !== null) {
+    assert.ok(!/\)/.test(t), `result must not contain ')', got: ${t}`);
+    assert.ok(
+      !/\b(request|book|send|share|present|propose|schedule|set up|email|reach out|arrange|prepare|align|sequence|follow up|meet|confirm)\b/i.test(
+        t,
+      ),
+      `result must not contain banned ask-verbs, got: ${t}`,
+    );
+  }
+});
+
+// ---- Blocker 4: generated-UI sweep ----------------------------------------
+
+function collectVisibleStrings(canvas: ReturnType<typeof buildReadOnlyCanvasFromBrief>): string[] {
+  const out: string[] = [];
+  out.push(canvas.account_name);
+  for (const w of canvas.widgets) {
+    if (typeof w.title === "string") out.push(w.title);
+    if (typeof w.description === "string") out.push(w.description);
+    if (typeof w.why_included === "string") out.push(w.why_included);
+    for (const s of w.sources ?? []) {
+      if (s.title) out.push(s.title);
+      if (s.url) out.push(s.url);
+    }
+    for (const ev of w.evidence ?? []) {
+      if (ev.text) out.push(ev.text);
+      if (ev.source) out.push(ev.source);
+      if (ev.tag) out.push(ev.tag);
+    }
+    // Per-widget data inspection.
+    if (w.kind === "action_panel") {
+      for (const a of w.data.actions) {
+        if ("recommendation" in a) {
+          out.push(a.recommendation);
+          if (a.rationale) out.push(a.rationale);
+          if (a.expected_outcome) out.push(a.expected_outcome);
+          if (a.risk) out.push(a.risk);
+          for (const ev of a.evidence ?? []) {
+            if (ev.text) out.push(ev.text);
+            if (ev.source) out.push(ev.source);
+            if (ev.tag) out.push(ev.tag);
+          }
+        } else if ("label" in a) {
+          out.push(a.label);
+          if (a.detail) out.push(a.detail);
+        } else {
+          out.push(a.text);
+          if (a.why) out.push(a.why);
+        }
+      }
+    } else if (w.kind === "section_ref") {
+      if (w.data.preview) out.push(w.data.preview);
+      if (w.data.full_text) out.push(w.data.full_text);
+    } else if (w.kind === "ai_takeaways") {
+      for (const t of w.data.takeaways) {
+        out.push(t.headline);
+        out.push(t.detail);
+      }
+    }
+    // Add framing strings.
+    const framing = widgetFraming(w);
+    if (framing.eyebrow) out.push(framing.eyebrow);
+    if (framing.oneLine) out.push(framing.oneLine);
+  }
+  return out;
+}
+
+test("generated canvas: no widget exposes internal next_action substrings as visible text", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const strings = collectVisibleStrings(canvas);
+  const forbidden = [
+    "next_action",
+    "brief.next_action",
+    "Prioritized by Hermes from next_action",
+  ];
+  for (const s of strings) {
+    for (const f of forbidden) {
+      assert.ok(
+        !s.includes(f),
+        `visible string must not include "${f}": ${JSON.stringify(s)}`,
+      );
+    }
+  }
+});
+
+test("generated canvas: action-next first action evidence has no 'brief.next_action' as source", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const panel = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(panel && panel.kind === "action_panel");
+  if (panel && panel.kind === "action_panel") {
+    const a = panel.data.actions[0];
+    assert.ok("recommendation" in a, "first action should be rich shape");
+    if ("recommendation" in a) {
+      for (const ev of a.evidence ?? []) {
+        assert.notEqual(
+          ev.source,
+          "brief.next_action",
+          "evidence source must be a customer-facing label, not 'brief.next_action'",
+        );
+      }
+    }
+  }
+});
+
+test("generated canvas: action-next widget framing oneLine has no forbidden substrings", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const panel = canvas.widgets.find((w) => w.id === "action-next");
+  assert.ok(panel);
+  const f = widgetFraming(panel!);
+  const forbidden = ["next_action", "brief.next_action", "Prioritized by Hermes from next_action"];
+  for (const sub of forbidden) {
+    assert.ok(!f.oneLine.includes(sub), `oneLine includes ${sub}: ${f.oneLine}`);
+    assert.ok(!f.eyebrow.includes(sub), `eyebrow includes ${sub}: ${f.eyebrow}`);
   }
 });
