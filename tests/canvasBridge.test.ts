@@ -884,7 +884,11 @@ test("Canvas-native modules: structured evidence is seeded on the right section_
   }
 });
 
-test("section-top-initiatives is paired with section-risks on the same row (6+6)", () => {
+test("section-top-initiatives and section-risks each occupy 6 cols (half-width)", () => {
+  // The visual-grammar follow-up reorders the emitted hierarchy to
+  // enforce the top-cluster bar-style cap, which can split the
+  // previously-paired top-initiatives + risks row. Both widgets remain
+  // half-width (w=6) so the original landscape sizing is unchanged.
   const brief = Brief.parse(sampleBriefJson);
   const canvas = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
   const opp = canvas.widgets.find((x) => x.id === "section-top-initiatives");
@@ -893,7 +897,6 @@ test("section-top-initiatives is paired with section-risks on the same row (6+6)
   assert.ok(risk);
   assert.equal(opp?.layout.w, 6);
   assert.equal(risk?.layout.w, 6);
-  assert.equal(opp?.layout.y, risk?.layout.y);
 });
 
 test("non-landscape section_refs (e.g. snapshot) keep evidence empty", () => {
@@ -2538,5 +2541,197 @@ test("TensionMatrix: planner-emitted ORS evidence segregates initiatives and ris
     // Brief order is preserved within each tag.
     assert.equal(inits[0].text, brief.top_initiatives[0].title);
     assert.equal(risks[0].text, brief.risks[0]);
+  }
+});
+
+// ---- Emitted-hierarchy enforcement (visual-grammar follow-up) -------------
+
+import { isBarStyleEmittedWidget } from "../web/lib/canvas/visualGrammar";
+
+function sortedByLayout(widgets: { layout: { x: number; y: number } }[]) {
+  return [...widgets].sort((a, b) =>
+    a.layout.y !== b.layout.y ? a.layout.y - b.layout.y : a.layout.x - b.layout.x,
+  );
+}
+
+test("emitted hierarchy: action-next is first by y on every fixture", () => {
+  const fixtures = [
+    sampleBriefJson,
+    loadFixture("momentum_brief.json"),
+    loadFixture("stakeholder_brief.json"),
+    loadFixture("procurement_brief.json"),
+  ];
+  for (const raw of fixtures) {
+    const brief = Brief.parse(raw);
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: "f", brief });
+    const action = canvas.widgets.find((w) => w.id === "action-next");
+    assert.ok(action, "action-next missing");
+    if (!action) continue;
+    const minY = Math.min(...canvas.widgets.map((w) => w.layout.y));
+    assert.equal(action.layout.y, minY, "action-next must be at min y");
+    // No other widget shares the row with action-next.
+    const sameY = canvas.widgets.filter(
+      (w) => w.id !== "action-next" && w.layout.y === action.layout.y,
+    );
+    assert.equal(sameY.length, 0, "no widget shares action-next row");
+  }
+});
+
+test("emitted hierarchy: at most 1 bar-style widget in first 5 post-action slots", () => {
+  const fixtures: Array<{ name: string; raw: unknown }> = [
+    { name: "sample_brief.json", raw: sampleBriefJson },
+    { name: "momentum_brief.json", raw: loadFixture("momentum_brief.json") },
+    { name: "stakeholder_brief.json", raw: loadFixture("stakeholder_brief.json") },
+    { name: "procurement_brief.json", raw: loadFixture("procurement_brief.json") },
+  ];
+  for (const f of fixtures) {
+    const brief = Brief.parse(f.raw);
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: f.name, brief });
+    const sorted = sortedByLayout(canvas.widgets);
+    const actionIdx = sorted.findIndex((w) => w.id === "action-next");
+    assert.ok(actionIdx >= 0, `${f.name}: action-next missing`);
+    assert.equal(actionIdx, 0, `${f.name}: action-next not first by (y,x)`);
+    const postAction = sorted.slice(1, 6);
+    const bars = postAction.filter((w) => isBarStyleEmittedWidget(w));
+    assert.ok(
+      bars.length <= 1,
+      `${f.name}: expected <=1 bar-style in first 5 post-action, got ${bars.length} (${bars
+        .map((b) => b.id)
+        .join(", ")})`,
+    );
+  }
+});
+
+test("emitted hierarchy: planner promotes story-specific forms into the top cluster", () => {
+  // momentum → timeline on section-recent-signals
+  {
+    const brief = Brief.parse(loadFixture("momentum_brief.json"));
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: "m", brief });
+    const sorted = sortedByLayout(canvas.widgets);
+    const post = sorted.slice(1, 6);
+    const hasTimeline = post.some(
+      (w) =>
+        w.kind === "section_ref" &&
+        (w.data as { form?: string }).form === "timeline",
+    );
+    assert.ok(hasTimeline, "momentum: timeline form missing from top cluster");
+  }
+  // stakeholder-led → persona-map on section-personas
+  {
+    const brief = Brief.parse(loadFixture("stakeholder_brief.json"));
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: "s", brief });
+    const sorted = sortedByLayout(canvas.widgets);
+    const post = sorted.slice(1, 6);
+    const hasPersonaMap = post.some(
+      (w) =>
+        w.kind === "section_ref" &&
+        (w.data as { form?: string }).form === "persona-map",
+    );
+    assert.ok(hasPersonaMap, "stakeholder: persona-map missing from top cluster");
+  }
+  // risk-balanced → tension-matrix on insight-opportunity-risk
+  {
+    const brief = Brief.parse({
+      ...sampleBriefJson,
+      recent_signals: [],
+      competitive_signals: [],
+      personas: [],
+      buying_path: "Not found",
+      programs_procurement: {
+        ...sampleBriefJson.programs_procurement,
+        active_rfps_contracts: [],
+        modernization_grants: [],
+      },
+      risks: ["Risk A", "Risk B", "Risk C", "Risk D"],
+      top_initiatives: [
+        { title: "Init 1", detail: "d", confidence: "High", source: "s" },
+        { title: "Init 2", detail: "d", confidence: "Medium", source: "s" },
+        { title: "Init 3", detail: "d", confidence: "Medium", source: "s" },
+        { title: "Init 4", detail: "d", confidence: "Low", source: "s" },
+      ],
+    });
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: "rb", brief });
+    const sorted = sortedByLayout(canvas.widgets);
+    const post = sorted.slice(1, 6);
+    const hasTensionMatrix = post.some(
+      (w) =>
+        w.kind === "opportunity_risk_split" &&
+        (w.data as { form?: string }).form === "tension-matrix",
+    );
+    assert.ok(
+      hasTensionMatrix,
+      "risk-balanced: tension-matrix missing from top cluster",
+    );
+  }
+});
+
+test("rollback parity: plannerEnabled=false matches pre-planner emission order/layout", () => {
+  // With the planner off, no widget carries a `form`, no reorder/repack
+  // runs, so the layout matches the original GridPacker output.
+  const brief = Brief.parse(sampleBriefJson);
+  const off = buildReadOnlyCanvasFromBrief({
+    briefId: "s",
+    brief,
+    plannerEnabled: false,
+  });
+  // No widget should carry a non-default form.
+  for (const w of off.widgets) {
+    if (w.kind === "section_ref" || w.kind === "opportunity_risk_split") {
+      const form = (w.data as { form?: string }).form;
+      assert.ok(
+        form === undefined || form === "default",
+        `${w.id}: form should be default when planner off, got ${form}`,
+      );
+    }
+  }
+  // action-next still at (0,0,12,*). Layout is monotonic in emission
+  // order under the original GridPacker.
+  const action = off.widgets.find((w) => w.id === "action-next");
+  assert.ok(action);
+  assert.equal(action?.layout.x, 0);
+  assert.equal(action?.layout.y, 0);
+  assert.equal(action?.layout.w, 12);
+  // Stable across calls.
+  const off2 = buildReadOnlyCanvasFromBrief({
+    briefId: "s",
+    brief,
+    plannerEnabled: false,
+  });
+  assert.deepEqual(
+    off.widgets.map((w) => [w.id, w.layout.x, w.layout.y, w.layout.w, w.layout.h]),
+    off2.widgets.map((w) => [w.id, w.layout.x, w.layout.y, w.layout.w, w.layout.h]),
+  );
+});
+
+test("emitted hierarchy: layout is in-bounds and non-overlapping across fixtures", () => {
+  const fixtures = [
+    sampleBriefJson,
+    loadFixture("momentum_brief.json"),
+    loadFixture("stakeholder_brief.json"),
+    loadFixture("procurement_brief.json"),
+  ];
+  for (const raw of fixtures) {
+    const brief = Brief.parse(raw);
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: "f", brief });
+    const occupied = new Map<string, string>();
+    for (const w of canvas.widgets) {
+      assert.ok(w.layout.x >= 0);
+      assert.ok(w.layout.y >= 0);
+      assert.ok(
+        w.layout.x + w.layout.w <= 12,
+        `${w.id} overflows: x=${w.layout.x} w=${w.layout.w}`,
+      );
+      for (let dy = 0; dy < w.layout.h; dy++) {
+        for (let dx = 0; dx < w.layout.w; dx++) {
+          const k = `${w.layout.x + dx},${w.layout.y + dy}`;
+          assert.equal(
+            occupied.get(k),
+            undefined,
+            `cell ${k} already claimed`,
+          );
+          occupied.set(k, w.id);
+        }
+      }
+    }
   }
 });

@@ -8,14 +8,18 @@ import {
 } from "./strategicInsights";
 import { buildRecommendedActions } from "./recommendedActions";
 import { buildCanvasLayoutPlan } from "./layoutPlanner";
-import type { VisualForm } from "./visualGrammar";
+import { isBarStyleEmittedWidget, type VisualForm } from "./visualGrammar";
+import { VISUAL_GRAMMAR_RULES } from "./visualGrammar";
 
 // One-line rollback flag. When false, the planner-derived `form` is not
 // applied to widget data and the pre-PR adapter behavior is restored
 // without changing widget IDs / counts / layout. New visual-form
 // components remain net-additive — flipping this flag removes their
 // emission path without affecting any existing kind.
-const LAYOUT_PLANNER_ENABLED = true;
+//
+// Exported so tests can drive the on/off branch deterministically. The
+// production code path always reads the module-level constant.
+export const LAYOUT_PLANNER_ENABLED = true;
 
 // Build a read-only, deterministic Canvas from an existing Brief.
 //
@@ -102,20 +106,25 @@ class GridPacker {
 export function buildReadOnlyCanvasFromBrief({
   briefId,
   brief,
+  plannerEnabled,
 }: {
   briefId: string;
   brief: Brief;
+  // Test-only override. Defaults to the module constant so production
+  // callers see exactly the constant's value.
+  plannerEnabled?: boolean;
 }): Canvas {
   const generatedAt = brief.generated_at || new Date(0).toISOString();
   const widgets: CanvasWidget[] = [];
   const packer = new GridPacker();
+  const plannerOn = plannerEnabled ?? LAYOUT_PLANNER_ENABLED;
 
   // Planner output: drives the `form` discriminator on
   // section_refs (personas / recent_signals) and on the
   // opportunity_risk_split widget. Coordinates remain assigned by the
   // existing GridPacker so widget IDs / ordering stay stable when the
   // planner's chosen form is "default".
-  const layoutPlan = LAYOUT_PLANNER_ENABLED
+  const layoutPlan = plannerOn
     ? buildCanvasLayoutPlan(brief)
     : null;
   function plannedForm(id: string): VisualForm | undefined {
@@ -578,7 +587,16 @@ export function buildReadOnlyCanvasFromBrief({
     listFullText(brief.sources.map((s) => s.title)),
   );
 
-  const evidenceCount = widgets.reduce(
+  // When the planner is on, reorder + re-pack so the emitted-widget
+  // hierarchy honors the top-cluster bar-style cap and the planner's
+  // promotion of non-bar forms. When the planner is off, the widget
+  // list keeps the layout the original GridPacker assigned during
+  // emission (rollback parity).
+  const finalWidgets = plannerOn
+    ? applyPlannerLayout(widgets, layoutPlan)
+    : widgets;
+
+  const evidenceCount = finalWidgets.reduce(
     (n, w) => n + w.evidence.length + (w.kind === "evidence_board" ? w.data.items.length : 0),
     0,
   );
@@ -588,14 +606,14 @@ export function buildReadOnlyCanvasFromBrief({
     account_name: brief.account_name,
     version: 1,
     generated_at: generatedAt,
-    widgets,
+    widgets: finalWidgets,
     meta: {
       layout_mode: "grid",
-      pinned_order: widgets.map((w) => w.id),
+      pinned_order: finalWidgets.map((w) => w.id),
       agent_readiness: {
         mode: "read_only_preview",
         generated_from: "saved_brief",
-        controls_enabled: widgets.some(
+        controls_enabled: finalWidgets.some(
           (w) =>
             w.controls.can_edit ||
             w.controls.can_export ||
@@ -607,6 +625,86 @@ export function buildReadOnlyCanvasFromBrief({
       },
     },
   };
+}
+
+// Reorder + re-pack the emitted widget list so:
+//   1. `action-next` keeps the top row (y=0, x=0, w=12).
+//   2. The next 5 post-action slots contain at most
+//      `VISUAL_GRAMMAR_RULES.maxBarStyleInTopCluster` bar-style widgets
+//      (predicate: `isBarStyleEmittedWidget`).
+//   3. Planner-promoted non-bar widgets (timeline, persona-map,
+//      tension-matrix) are surfaced into the top cluster ahead of bars
+//      following the planner's `topClusterOrder`.
+//   4. Excess bar-style widgets are demoted BELOW the top cluster but
+//      otherwise keep their relative emission order.
+// The grid packer is then re-run from scratch over the reordered list
+// so coordinates stay deterministic, non-overlapping, and 12-col bound.
+// Widget IDs are not changed.
+function applyPlannerLayout(
+  widgets: CanvasWidget[],
+  plan: ReturnType<typeof buildCanvasLayoutPlan> | null,
+): CanvasWidget[] {
+  if (widgets.length === 0) return widgets;
+  const action = widgets.find((w) => w.id === "action-next");
+  const rest = widgets.filter((w) => w.id !== "action-next");
+  if (!action) return widgets;
+
+  // Promote planner-controlled non-bar widgets into the front of `rest`
+  // while preserving the relative order of everything else. The planner
+  // only tracks promoted-form widgets (form !== "default"), so this is
+  // the set we surface into the top cluster first.
+  const plannerPromotedIds = plan
+    ? plan.topClusterOrder.filter((id) =>
+        rest.some((w) => w.id === id && !isBarStyleEmittedWidget(w)),
+      )
+    : [];
+  const promoted: CanvasWidget[] = [];
+  const remainder: CanvasWidget[] = [];
+  for (const w of rest) {
+    if (plannerPromotedIds.includes(w.id)) promoted.push(w);
+    else remainder.push(w);
+  }
+  // Maintain planner-declared ordering among promoted widgets.
+  promoted.sort(
+    (a, b) => plannerPromotedIds.indexOf(a.id) - plannerPromotedIds.indexOf(b.id),
+  );
+  const ordered = [...promoted, ...remainder];
+
+  // Enforce the top-cluster bar cap: walk the (post-action) order,
+  // admitting bar-style widgets up to the cap; spill the rest into
+  // `demoted` to be appended after the rest of the canvas.
+  const topClusterSize = VISUAL_GRAMMAR_RULES.topClusterSize;
+  const barCap = VISUAL_GRAMMAR_RULES.maxBarStyleInTopCluster;
+  const topCluster: CanvasWidget[] = [];
+  const tail: CanvasWidget[] = [];
+  const demoted: CanvasWidget[] = [];
+  let barsInTop = 0;
+  for (const w of ordered) {
+    if (topCluster.length < topClusterSize) {
+      const isBar = isBarStyleEmittedWidget(w);
+      if (isBar && barsInTop >= barCap) {
+        demoted.push(w);
+      } else {
+        topCluster.push(w);
+        if (isBar) barsInTop += 1;
+      }
+    } else {
+      tail.push(w);
+    }
+  }
+  const finalOrdered = [action, ...topCluster, ...tail, ...demoted];
+
+  // Re-pack the entire list deterministically. action-next occupies
+  // (0,0,12,5) by design, so the rest flows beneath it.
+  const packer = new GridPacker();
+  return finalOrdered.map((w) => ({
+    ...w,
+    layout: {
+      ...packer.next(w.layout.w, w.layout.h),
+      pinned: w.layout.pinned,
+      collapsed: w.layout.collapsed,
+    },
+  }));
 }
 
 function buildExtensionWidget(

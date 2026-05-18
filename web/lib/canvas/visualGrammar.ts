@@ -66,6 +66,32 @@ const LANDSCAPE_SECTION_KEYS = new Set([
   "competitive_signals",
 ]);
 
+// Predicate for an *emitted* canvas widget — the public adapter shape.
+// Mirrors `isBarStyleModule` but reads `kind`, `data.section_key`, and
+// `data.form` straight off a widget. The cap rule on the top cluster is
+// enforced via this predicate against the final widget list, not the
+// planner's internal module list.
+export function isBarStyleEmittedWidget(widget: {
+  kind: string;
+  data?: unknown;
+}): boolean {
+  if (BAR_STYLE_KINDS.has(widget.kind)) return true;
+  const data = (widget.data ?? {}) as {
+    section_key?: string;
+    form?: VisualForm;
+  };
+  if (widget.kind === "section_ref") {
+    if (!data.form || data.form === "default") {
+      return !!data.section_key && LANDSCAPE_SECTION_KEYS.has(data.section_key);
+    }
+    return false;
+  }
+  if (widget.kind === "opportunity_risk_split") {
+    return !data.form || data.form === "default";
+  }
+  return false;
+}
+
 // Decide whether a planned module emits a bar-style visual. Combines
 // kind + form + section_key so the planner can count "bar-ness" across
 // section_refs and dedicated widget kinds uniformly.
