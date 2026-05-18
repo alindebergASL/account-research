@@ -1,0 +1,43 @@
+{
+  "account_name": "Momentum Co",
+  "segment": "Momentum",
+  "generated_at": "2026-05-01T00:00:00.000Z",
+  "audience": "internal",
+  "snapshot": "Momentum is high; multiple recent signals.",
+  "priority_summary": "Procurement window open.",
+  "recent_signals": [
+    { "text": "Q1 board sets AI mandate", "source": "Investor letter, Feb 2026", "confidence": "High" },
+    { "text": "VP Data Platforms hired", "source": "LinkedIn, Mar 2026", "confidence": "High" },
+    { "text": "Cloud migration RFP issued", "source": "Procurement portal", "confidence": "High" },
+    { "text": "Vendor consolidation memo leaked", "source": "Trade press, Apr 2026", "confidence": "Medium" }
+  ],
+  "ai_tech_maturity": { "rating": 3, "rationale": "Mixed." },
+  "top_initiatives": [
+    { "title": "Cloud migration", "detail": "to AWS", "confidence": "High", "source": "press" }
+  ],
+  "technical_footprint": {
+    "ai_in_production": [],
+    "active_pilots": ["chatbot"],
+    "cloud_platforms": ["AWS"],
+    "data_infrastructure": "Snowflake",
+    "clinical_platforms": "Not found",
+    "analytics_bi_stack": "Tableau",
+    "build_vs_buy_posture": "Buy-first",
+    "competitive_incumbents": []
+  },
+  "programs_procurement": {
+    "modernization_grants": [],
+    "consortium_purchasing": [],
+    "active_rfps_contracts": ["Cloud migration RFP — Q3 2026"],
+    "ai_governance_policy": "Draft",
+    "public_ai_use_cases": []
+  },
+  "personas": [],
+  "buying_path": "Not found",
+  "first_angle": "Lead with momentum.",
+  "risks": [],
+  "competitive_signals": [],
+  "next_action": "Schedule executive briefing.",
+  "extensions": [],
+  "sources": []
+}

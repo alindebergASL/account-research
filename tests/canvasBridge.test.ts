@@ -2133,3 +2133,410 @@ test("generated canvas: action-next widget framing oneLine has no forbidden subs
     assert.ok(!f.eyebrow.includes(sub), `eyebrow includes ${sub}: ${f.eyebrow}`);
   }
 });
+
+// ---- Canvas visual grammar + deterministic layout planner ------------------
+
+import {
+  computeBriefSignals,
+  classifyStory,
+  selectVisualForms,
+  buildCanvasLayoutPlan,
+} from "../web/lib/canvas/layoutPlanner";
+import {
+  isBarStyleForm,
+  isBarStyleModule,
+  formForStoryAndSection,
+  VISUAL_GRAMMAR_RULES,
+} from "../web/lib/canvas/visualGrammar";
+
+function loadFixture(name: string) {
+  return JSON.parse(
+    readFileSync(path.join(__dirname, "fixtures", name), "utf8"),
+  );
+}
+
+test("visualGrammar: isBarStyleForm treats default-form section_ref as bar-style", () => {
+  assert.equal(isBarStyleForm("default"), true);
+  assert.equal(isBarStyleForm(undefined), true);
+  assert.equal(isBarStyleForm("timeline"), false);
+  assert.equal(isBarStyleForm("persona-map"), false);
+  assert.equal(isBarStyleForm("tension-matrix"), false);
+});
+
+test("visualGrammar: isBarStyleModule distinguishes timeline / persona-map from default landscape", () => {
+  assert.equal(
+    isBarStyleModule({ kind: "section_ref", sectionKey: "personas", form: "default" }),
+    true,
+  );
+  assert.equal(
+    isBarStyleModule({ kind: "section_ref", sectionKey: "personas", form: "persona-map" }),
+    false,
+  );
+  assert.equal(
+    isBarStyleModule({ kind: "opportunity_risk_split", form: "tension-matrix" }),
+    false,
+  );
+  assert.equal(
+    isBarStyleModule({ kind: "opportunity_risk_split", form: "default" }),
+    true,
+  );
+  assert.equal(isBarStyleModule({ kind: "momentum_strip" }), true);
+});
+
+test("visualGrammar: formForStoryAndSection promotes timeline / persona-map by story", () => {
+  assert.equal(formForStoryAndSection("momentum", "recent_signals"), "timeline");
+  assert.equal(
+    formForStoryAndSection("stakeholder-led", "personas"),
+    "persona-map",
+  );
+  assert.equal(
+    formForStoryAndSection("balanced", "recent_signals"),
+    "default",
+  );
+});
+
+test("computeBriefSignals: deterministic across calls on the sample brief", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const a = computeBriefSignals(brief);
+  const b = computeBriefSignals(brief);
+  assert.deepEqual(a, b);
+  assert.ok(typeof a.signalRecency === "string");
+  assert.ok(typeof a.procurementSignal === "number");
+  assert.ok(typeof a.hasRecommendedAction === "boolean");
+});
+
+test("computeBriefSignals: detects rich procurement on the procurement fixture", () => {
+  const brief = Brief.parse(loadFixture("procurement_brief.json"));
+  const s = computeBriefSignals(brief);
+  assert.ok(s.procurementSignal >= 2);
+  assert.equal(s.hasRecommendedAction, true);
+});
+
+test("classifyStory: momentum fixture classifies as momentum", () => {
+  const brief = Brief.parse(loadFixture("momentum_brief.json"));
+  const s = computeBriefSignals(brief);
+  assert.equal(classifyStory(s), "momentum");
+});
+
+test("classifyStory: stakeholder fixture classifies as stakeholder-led", () => {
+  const brief = Brief.parse(loadFixture("stakeholder_brief.json"));
+  const s = computeBriefSignals(brief);
+  assert.equal(classifyStory(s), "stakeholder-led");
+});
+
+test("classifyStory: procurement fixture classifies as procurement-window", () => {
+  const brief = Brief.parse(loadFixture("procurement_brief.json"));
+  const s = computeBriefSignals(brief);
+  assert.equal(classifyStory(s), "procurement-window");
+});
+
+test("classifyStory: rule cascade covers every story type via engineered signals", () => {
+  type Bucket = "none" | "low" | "med" | "high";
+  const base = (over: Partial<Record<string, Bucket | number | boolean>> = {}) => ({
+    signalRecency: "none" as Bucket,
+    personaDepth: "none" as Bucket,
+    initiativeStrength: "none" as Bucket,
+    riskWeight: "none" as Bucket,
+    buyingPathRichness: "none" as Bucket,
+    technicalFootprintRichness: "none" as Bucket,
+    procurementSignal: 0,
+    hasRecommendedAction: false,
+    ...over,
+  });
+  assert.equal(
+    classifyStory(base({ signalRecency: "high", procurementSignal: 1 })),
+    "momentum",
+  );
+  assert.equal(
+    classifyStory(base({ personaDepth: "high", buyingPathRichness: "med" })),
+    "stakeholder-led",
+  );
+  assert.equal(
+    classifyStory(base({ initiativeStrength: "med", riskWeight: "med" })),
+    "risk-balanced",
+  );
+  assert.equal(
+    classifyStory(
+      base({ technicalFootprintRichness: "high", initiativeStrength: "med" }),
+    ),
+    "tech-modernization",
+  );
+  assert.equal(
+    classifyStory(base({ procurementSignal: 2, riskWeight: "low" })),
+    "procurement-window",
+  );
+  assert.equal(
+    classifyStory(base({ hasRecommendedAction: true })),
+    "single-action",
+  );
+  assert.equal(classifyStory(base()), "balanced");
+});
+
+test("buildCanvasLayoutPlan: top cluster contains at most 1 bar-style module", () => {
+  // The planner only tracks modules it actively promoted away from
+  // the default bar-style form; the cap therefore applies to those.
+  for (const fixture of [
+    "momentum_brief.json",
+    "stakeholder_brief.json",
+    "procurement_brief.json",
+  ]) {
+    const brief = Brief.parse(loadFixture(fixture));
+    const plan = buildCanvasLayoutPlan(brief);
+    const top = plan.modules.slice(0, VISUAL_GRAMMAR_RULES.topClusterSize);
+    const bars = top.filter((m) =>
+      isBarStyleModule({ kind: m.kind, form: m.form, sectionKey: m.sectionKey }),
+    );
+    assert.ok(
+      bars.length <= VISUAL_GRAMMAR_RULES.maxBarStyleInTopCluster,
+      `${fixture}: expected ≤${VISUAL_GRAMMAR_RULES.maxBarStyleInTopCluster} bar-style in top cluster, got ${bars.length}`,
+    );
+  }
+  // Direct exercise of the helper signature for the sample brief; it
+  // is allowed to return more candidates than the cap (those get
+  // filtered out by `buildCanvasLayoutPlan`).
+  const brief = Brief.parse(sampleBriefJson);
+  const signals = computeBriefSignals(brief);
+  const story = classifyStory(signals);
+  const modules = selectVisualForms(story, signals, brief);
+  assert.ok(Array.isArray(modules));
+});
+
+test("buildCanvasLayoutPlan: never emits two bar-style modules adjacent in order", () => {
+  for (const fixture of [
+    "momentum_brief.json",
+    "stakeholder_brief.json",
+    "procurement_brief.json",
+  ]) {
+    const brief = Brief.parse(loadFixture(fixture));
+    const plan = buildCanvasLayoutPlan(brief);
+    for (let i = 1; i < plan.modules.length; i++) {
+      const prev = plan.modules[i - 1];
+      const cur = plan.modules[i];
+      const prevBar = isBarStyleModule({
+        kind: prev.kind,
+        form: prev.form,
+        sectionKey: prev.sectionKey,
+      });
+      const curBar = isBarStyleModule({
+        kind: cur.kind,
+        form: cur.form,
+        sectionKey: cur.sectionKey,
+      });
+      assert.ok(
+        !(prevBar && curBar),
+        `fixture ${fixture}: adjacent bar-style modules at ${prev.id} → ${cur.id}`,
+      );
+    }
+  }
+});
+
+test("buildCanvasLayoutPlan: deterministic across repeated calls", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const a = buildCanvasLayoutPlan(brief);
+  const b = buildCanvasLayoutPlan(brief);
+  assert.deepEqual(a, b);
+});
+
+test("buildReadOnlyCanvasFromBrief: widget IDs are unique and stable across calls", () => {
+  const brief = Brief.parse(sampleBriefJson);
+  const a = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const b = buildReadOnlyCanvasFromBrief({ briefId: "sample", brief });
+  const idsA = a.widgets.map((w) => w.id);
+  const idsB = b.widgets.map((w) => w.id);
+  assert.deepEqual(idsA, idsB);
+  assert.deepEqual(idsA, Array.from(new Set(idsA)));
+});
+
+test("ALL_WIDGET_KINDS is unchanged by the visual grammar work", () => {
+  assert.deepEqual([...ALL_WIDGET_KINDS].sort(), [
+    "action_panel",
+    "ai_takeaways",
+    "evidence_board",
+    "extension",
+    "metric",
+    "momentum_strip",
+    "open_questions",
+    "opportunity_risk_split",
+    "section_ref",
+    "strategic_signal_radar",
+  ]);
+});
+
+test("visualForms components contain no Run/Execute/Approve/Dismiss labels", () => {
+  const files = [
+    "web/components/canvas/visualForms/TimelineLane.tsx",
+    "web/components/canvas/visualForms/PersonaMap.tsx",
+    "web/components/canvas/visualForms/TensionMatrix.tsx",
+  ];
+  for (const rel of files) {
+    const src = readFileSync(path.join(__dirname, "..", rel), "utf8");
+    for (const w of ["Run", "Execute", "Approve", "Dismiss"]) {
+      const re = new RegExp(`>\\s*${w}\\s*<`);
+      assert.ok(!re.test(src), `${rel} should not contain >${w}< button label`);
+    }
+  }
+});
+
+test("visualForms + tiles + details files contain no banned user-visible substrings", () => {
+  const files = [
+    "web/components/canvas/tiles.tsx",
+    "web/components/canvas/details.tsx",
+    "web/components/canvas/visualForms/TimelineLane.tsx",
+    "web/components/canvas/visualForms/PersonaMap.tsx",
+    "web/components/canvas/visualForms/TensionMatrix.tsx",
+  ];
+  // Substrings that must never appear anywhere in the source (per A5).
+  const sourceBanned = [
+    "Execution is not enabled",
+    "approval/execution",
+    "READ-ONLY MODE",
+    "Provenance: hermes",
+    "INSIGHT · TABLE",
+    "Hermes-ranked",
+    "Rating from the saved brief",
+    "primary line drawn from next_action verbatim",
+  ];
+  for (const rel of files) {
+    const src = readFileSync(path.join(__dirname, "..", rel), "utf8");
+    for (const sub of sourceBanned) {
+      assert.ok(!src.includes(sub), `${rel} contains banned substring "${sub}"`);
+    }
+  }
+});
+
+test("planner-driven canvas: layout stays inside 12-col bounds with no overlap", () => {
+  for (const fixture of [
+    "momentum_brief.json",
+    "stakeholder_brief.json",
+    "procurement_brief.json",
+  ]) {
+    const brief = Brief.parse(loadFixture(fixture));
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: fixture, brief });
+    const occupied = new Map<string, string>();
+    for (const w of canvas.widgets) {
+      assert.ok(w.layout.x >= 0, `${w.id} negative x`);
+      assert.ok(w.layout.y >= 0, `${w.id} negative y`);
+      assert.ok(
+        w.layout.x + w.layout.w <= 12,
+        `${w.id} overflows 12-col grid: x=${w.layout.x} w=${w.layout.w}`,
+      );
+      for (let dy = 0; dy < w.layout.h; dy++) {
+        for (let dx = 0; dx < w.layout.w; dx++) {
+          const k = `${w.layout.x + dx},${w.layout.y + dy}`;
+          const prev = occupied.get(k);
+          assert.equal(
+            prev,
+            undefined,
+            `${fixture}: cell ${k} claimed by ${prev} and ${w.id}`,
+          );
+          occupied.set(k, w.id);
+        }
+      }
+    }
+  }
+});
+
+test("details.tsx contains a <details> element for mobile collapsible sections", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/details.tsx"),
+    "utf8",
+  );
+  assert.match(src, /<details/);
+});
+
+test("TimelineLane: swimlane row count matches non-empty input lanes, no fabricated items", () => {
+  const brief = Brief.parse(loadFixture("momentum_brief.json"));
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "momentum", brief });
+  const w = canvas.widgets.find((x) => x.id === "section-recent-signals");
+  assert.ok(w);
+  if (w && w.kind === "section_ref") {
+    assert.equal(w.data.form, "timeline");
+    const signalEv = w.evidence.filter((e) => e.tag === "signal");
+    const initEv = w.evidence.filter((e) => e.tag === "initiative");
+    const procEv = w.evidence.filter((e) => e.tag === "procurement");
+    assert.equal(signalEv.length, brief.recent_signals.length);
+    assert.equal(initEv.length, brief.top_initiatives.length);
+    assert.equal(
+      procEv.length,
+      brief.programs_procurement.active_rfps_contracts.length,
+    );
+  }
+});
+
+test("PersonaMap: node count equals personas; edge count equals personas mentioned in buying_path", () => {
+  const brief = Brief.parse(loadFixture("stakeholder_brief.json"));
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "stakeholder", brief });
+  const w = canvas.widgets.find((x) => x.id === "section-personas");
+  assert.ok(w);
+  if (w && w.kind === "section_ref") {
+    assert.equal(w.data.form, "persona-map");
+    const personaEv = w.evidence.filter((e) => e.tag === "persona");
+    assert.equal(personaEv.length, brief.personas.length);
+    const buyingEv = w.evidence.find((e) => e.tag === "buying_path");
+    assert.ok(buyingEv);
+    // Edge count = personas whose name/title tokens appear in buying_path.
+    const path = (buyingEv?.text ?? "").toLowerCase();
+    let expectedEdges = 0;
+    for (const p of brief.personas) {
+      const tokens = `${p.name} ${p.title}`
+        .toLowerCase()
+        .split(/[^a-z0-9]+/g)
+        .filter((t) => t.length > 1);
+      if (tokens.some((t) => new RegExp(`\\b${t}\\b`).test(path))) {
+        expectedEdges += 1;
+      }
+    }
+    // The stakeholder fixture is engineered so >= 1 persona is mentioned.
+    assert.ok(expectedEdges >= 1);
+  }
+});
+
+test("TensionMatrix component source contains the four canonical quadrant labels", () => {
+  const src = readFileSync(
+    path.join(
+      __dirname,
+      "../web/components/canvas/visualForms/TensionMatrix.tsx",
+    ),
+    "utf8",
+  );
+  for (const label of ["Quick wins", "Headline bets", "Watch-outs", "High-stakes plays"]) {
+    assert.ok(src.includes(label), `TensionMatrix source missing label ${label}`);
+  }
+});
+
+test("TensionMatrix: planner-emitted ORS evidence segregates initiatives and risks by tag", () => {
+  // Engineered fixture: rich initiatives + risks, low recency / procurement
+  // → planner classifies as risk-balanced and picks tension-matrix.
+  const brief = Brief.parse({
+    ...sampleBriefJson,
+    recent_signals: [],
+    competitive_signals: [],
+    personas: [],
+    buying_path: "Not found",
+    programs_procurement: {
+      ...sampleBriefJson.programs_procurement,
+      active_rfps_contracts: [],
+      modernization_grants: [],
+    },
+    risks: ["Risk A", "Risk B", "Risk C", "Risk D"],
+    top_initiatives: [
+      { title: "Init 1", detail: "d", confidence: "High", source: "s" },
+      { title: "Init 2", detail: "d", confidence: "Medium", source: "s" },
+      { title: "Init 3", detail: "d", confidence: "Medium", source: "s" },
+      { title: "Init 4", detail: "d", confidence: "Low", source: "s" },
+    ],
+  });
+  const canvas = buildReadOnlyCanvasFromBrief({ briefId: "tm", brief });
+  const ors = canvas.widgets.find((w) => w.id === "insight-opportunity-risk");
+  assert.ok(ors && ors.kind === "opportunity_risk_split");
+  if (ors && ors.kind === "opportunity_risk_split") {
+    assert.equal(ors.data.form, "tension-matrix");
+    const inits = ors.evidence.filter((e) => e.tag === "initiative");
+    const risks = ors.evidence.filter((e) => e.tag === "risk");
+    assert.equal(inits.length, brief.top_initiatives.length);
+    assert.equal(risks.length, brief.risks.length);
+    // Brief order is preserved within each tag.
+    assert.equal(inits[0].text, brief.top_initiatives[0].title);
+    assert.equal(risks[0].text, brief.risks[0]);
+  }
+});

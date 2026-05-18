@@ -60,9 +60,9 @@ function provenanceLabel(source: CanvasWidget["source"]): string {
     case "hermes":
       return "Synthesized from brief evidence";
     case "system":
-      return "Derived from the saved brief";
+      return "Derived from the account brief";
     case "model":
-      return "Modeled from the saved brief";
+      return "Modeled from the account brief";
     case "research":
       return "Research-backed";
     case "chat":
@@ -72,10 +72,14 @@ function provenanceLabel(source: CanvasWidget["source"]): string {
     case "refresh":
       return "Refreshed insight";
     default:
-      return "Derived from the saved brief";
+      return "Derived from the account brief";
   }
 }
 
+// Consolidated footer: one provenance line plus counts and last-updated.
+// The duplicate "Review-only recommendation" label lives on the primary
+// Recommended Move dossier; surfacing it again here on every modal was
+// noise.
 function ModalFooter({ widget }: { widget: CanvasWidget }) {
   const sourceCount = widget.sources.length;
   const evidenceCount = widgetEvidenceCount(widget);
@@ -88,7 +92,6 @@ function ModalFooter({ widget }: { widget: CanvasWidget }) {
       {evidenceCount > 0 && (
         <span>{evidenceCount} evidence item{evidenceCount === 1 ? "" : "s"}</span>
       )}
-      <span>Review-only recommendation</span>
       <span>Updated {formatGeneratedAt(widget.updated_at)}</span>
     </div>
   );

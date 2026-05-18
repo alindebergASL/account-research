@@ -7,6 +7,15 @@ import {
   buildStrategicSignalRadar,
 } from "./strategicInsights";
 import { buildRecommendedActions } from "./recommendedActions";
+import { buildCanvasLayoutPlan } from "./layoutPlanner";
+import type { VisualForm } from "./visualGrammar";
+
+// One-line rollback flag. When false, the planner-derived `form` is not
+// applied to widget data and the pre-PR adapter behavior is restored
+// without changing widget IDs / counts / layout. New visual-form
+// components remain net-additive — flipping this flag removes their
+// emission path without affecting any existing kind.
+const LAYOUT_PLANNER_ENABLED = true;
 
 // Build a read-only, deterministic Canvas from an existing Brief.
 //
@@ -101,6 +110,20 @@ export function buildReadOnlyCanvasFromBrief({
   const widgets: CanvasWidget[] = [];
   const packer = new GridPacker();
 
+  // Planner output: drives the `form` discriminator on
+  // section_refs (personas / recent_signals) and on the
+  // opportunity_risk_split widget. Coordinates remain assigned by the
+  // existing GridPacker so widget IDs / ordering stay stable when the
+  // planner's chosen form is "default".
+  const layoutPlan = LAYOUT_PLANNER_ENABLED
+    ? buildCanvasLayoutPlan(brief)
+    : null;
+  function plannedForm(id: string): VisualForm | undefined {
+    if (!layoutPlan) return undefined;
+    const f = layoutPlan.forms[id];
+    return f && f !== "default" ? f : undefined;
+  }
+
   function baseWidget(
     id: string,
     title: string,
@@ -155,24 +178,65 @@ export function buildReadOnlyCanvasFromBrief({
     const base = baseWidget(id, title, w, h, {
       why_included: "Derived from standard brief section.",
     });
+    const form = plannedForm(id);
+    // When the planner picks a non-default form, the widget's evidence
+    // array is augmented with the tagged items that form's renderer
+    // expects. Tags act as a discriminator the new visual-form
+    // components read from (no schema change needed).
+    type EvItem = {
+      text: string;
+      source?: string;
+      confidence?: Confidence;
+      tag?: string;
+    };
+    let evidence: EvItem[] = structured && structured.length > 0
+      ? structured.map((s) => ({
+          text: s.text,
+          source: s.source,
+          confidence: s.confidence,
+          tag: s.tag,
+        }))
+      : base.evidence;
+    if (form === "timeline") {
+      evidence = [
+        ...brief.recent_signals.map<EvItem>((s) => ({
+          text: s.text,
+          source: s.source,
+          confidence: s.confidence,
+          tag: "signal",
+        })),
+        ...brief.top_initiatives.map<EvItem>((i) => ({
+          text: i.title,
+          source: i.source,
+          confidence: i.confidence,
+          tag: "initiative",
+        })),
+        ...brief.programs_procurement.active_rfps_contracts.map<EvItem>((p) => ({
+          text: p,
+          tag: "procurement",
+        })),
+      ];
+    } else if (form === "persona-map") {
+      const personaEvidence = brief.personas.map<EvItem>((p) => ({
+        text: `${p.name} — ${p.title}`,
+        source: p.source,
+        confidence: p.confidence,
+        tag: "persona",
+      }));
+      const buyingPathEvidence: EvItem[] = brief.buying_path
+        ? [{ text: brief.buying_path, tag: "buying_path" }]
+        : [];
+      evidence = [...personaEvidence, ...buyingPathEvidence];
+    }
     widgets.push({
       ...base,
-      // Populate evidence with structured items when the section has them;
-      // renderers detect this and switch to a richer visual (e.g. the
-      // initiative landscape) instead of the plain preview string.
-      evidence: structured && structured.length > 0
-        ? structured.map((s) => ({
-            text: s.text,
-            source: s.source,
-            confidence: s.confidence,
-            tag: s.tag,
-          }))
-        : base.evidence,
+      evidence,
       kind: "section_ref",
       data: {
         section_key: sectionKey,
         preview: executivePreview(preview),
         full_text: trimmedFullText,
+        ...(form ? { form } : {}),
       },
     });
   }
@@ -275,15 +339,41 @@ export function buildReadOnlyCanvasFromBrief({
     kind: "strategic_signal_radar",
     data: buildStrategicSignalRadar(brief),
   });
-  widgets.push({
-    ...baseWidget("insight-opportunity-risk", "Opportunity / risk split", 4, 4, {
+  {
+    const orsForm = plannedForm("insight-opportunity-risk");
+    const orsBase = baseWidget("insight-opportunity-risk", "Opportunity / risk split", 4, 4, {
       source: "hermes",
       why_included:
         "Pairs brief.top_initiatives against brief.risks side-by-side and labels the balance.",
-    }),
-    kind: "opportunity_risk_split",
-    data: buildOpportunityRiskSplit(brief),
-  });
+    });
+    type EvItem = {
+      text: string;
+      source?: string;
+      confidence?: Confidence;
+      tag?: string;
+    };
+    const orsEvidence: EvItem[] =
+      orsForm === "tension-matrix"
+        ? [
+            ...brief.top_initiatives.map<EvItem>((i) => ({
+              text: i.title,
+              source: i.source,
+              confidence: i.confidence,
+              tag: "initiative",
+            })),
+            ...brief.risks.map<EvItem>((r) => ({ text: r, tag: "risk" })),
+          ]
+        : orsBase.evidence;
+    widgets.push({
+      ...orsBase,
+      evidence: orsEvidence,
+      kind: "opportunity_risk_split",
+      data: {
+        ...buildOpportunityRiskSplit(brief),
+        ...(orsForm ? { form: orsForm } : {}),
+      },
+    });
+  }
   widgets.push({
     ...baseWidget("insight-momentum-strip", "Momentum", 4, 4, {
       source: "hermes",

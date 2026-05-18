@@ -26,6 +26,9 @@ import {
   widgetFraming,
   sectionWhyItMattersText,
 } from "../../lib/canvas/framing";
+import { TimelineLaneDetail } from "./visualForms/TimelineLane";
+import { PersonaMapDetail } from "./visualForms/PersonaMap";
+import { TensionMatrixDetail } from "./visualForms/TensionMatrix";
 
 export function isSafeExternalUrl(url: string): boolean {
   try {
@@ -164,6 +167,10 @@ export function SectionRefDetail({
 }: {
   widget: import("zod").infer<typeof SectionRefWidget>;
 }) {
+  // Form-first dispatch.
+  const form = widget.data.form;
+  if (form === "timeline") return <TimelineLaneDetail widget={widget} />;
+  if (form === "persona-map") return <PersonaMapDetail widget={widget} />;
   const tone = sectionKeyTone(widget.data.section_key);
   const structured = widget.evidence;
   const hasStructured = structured.length > 0;
@@ -429,9 +436,11 @@ export function ActionPanelDetail({
                 </section>
               )}
 
-              {/* 4. Evidence backing */}
-              <section>
-                <SectionHeading>Evidence backing</SectionHeading>
+              {/* 4. Evidence backing — collapsible at < sm via native <details>. */}
+              <details className="group">
+                <summary className="cursor-pointer list-none">
+                  <SectionHeading>Evidence backing</SectionHeading>
+                </summary>
                 {evidenceItems.length === 0 ? (
                   <p className="mt-1 text-xs text-muted">
                     Evidence backing is thin.
@@ -474,19 +483,23 @@ export function ActionPanelDetail({
                     ))}
                   </ul>
                 )}
-              </section>
+              </details>
 
-              {/* 5. Caveat / risk */}
-              <section>
-                <SectionHeading>Caveat / risk</SectionHeading>
+              {/* 5. Caveat / risk — collapsible at < sm. */}
+              <details className="group">
+                <summary className="cursor-pointer list-none">
+                  <SectionHeading>Caveat / risk</SectionHeading>
+                </summary>
                 <p className="mt-1 leading-snug text-ink whitespace-pre-line">
-                  {a.risk || "No specific caveats surfaced in the saved brief."}
+                  {a.risk || "No specific caveats surfaced in the account brief."}
                 </p>
-              </section>
+              </details>
 
-              {/* 6. Priority / status */}
-              <section>
-                <SectionHeading>Priority / status</SectionHeading>
+              {/* 6. Priority / status — collapsible at < sm. */}
+              <details className="group">
+                <summary className="cursor-pointer list-none">
+                  <SectionHeading>Priority / status</SectionHeading>
+                </summary>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                   {priority && (
                     <span className="chip chip-na">{priority}</span>
@@ -500,7 +513,7 @@ export function ActionPanelDetail({
                 {a.owner && (
                   <p className="mt-2 text-xs text-muted">Owner: {a.owner}</p>
                 )}
-              </section>
+              </details>
             </li>
           );
         })}
@@ -808,6 +821,9 @@ export function OpportunityRiskSplitDetail({
 }: {
   widget: import("zod").infer<typeof OpportunityRiskSplitWidget>;
 }) {
+  if (widget.data.form === "tension-matrix") {
+    return <TensionMatrixDetail widget={widget} />;
+  }
   const d = widget.data;
   return (
     <div>

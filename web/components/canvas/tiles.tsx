@@ -21,6 +21,9 @@ import {
   sectionKeyTone,
 } from "./visuals";
 import { extractTiming, extractTarget } from "../../lib/canvas/actionExtract";
+import { TimelineLaneTile } from "./visualForms/TimelineLane";
+import { PersonaMapTile } from "./visualForms/PersonaMap";
+import { TensionMatrixTile } from "./visualForms/TensionMatrix";
 
 function TileHeader(_props: { title: string; kindLabel: string }) {
   // Header chrome lives in WidgetTile so all widget kinds share the same
@@ -35,6 +38,12 @@ export function SectionRefTile({
 }: {
   widget: import("zod").infer<typeof SectionRefWidget>;
 }) {
+  // Form-first dispatch. When the planner promoted the widget to a
+  // richer visual, render the dedicated component instead of the
+  // landscape / preview default.
+  const form = widget.data.form;
+  if (form === "timeline") return <TimelineLaneTile widget={widget} />;
+  if (form === "persona-map") return <PersonaMapTile widget={widget} />;
   const tone = sectionKeyTone(widget.data.section_key);
   const evidence = widget.evidence;
   const hasStructured = evidence.length > 0;
@@ -528,6 +537,9 @@ export function OpportunityRiskSplitTile({
 }: {
   widget: import("zod").infer<typeof OpportunityRiskSplitWidget>;
 }) {
+  if (widget.data.form === "tension-matrix") {
+    return <TensionMatrixTile widget={widget} />;
+  }
   const d = widget.data;
   return (
     <div className="grid grid-cols-2 gap-2 min-w-0">
@@ -550,7 +562,7 @@ export function OpportunityRiskSplitTile({
           </span>
         </div>
         <p className="mt-1 text-[12px] text-ink line-clamp-3 min-h-[3.2em] leading-snug">
-          {d.opportunities.top?.text ?? "No priority opportunity found in the saved brief."}
+          {d.opportunities.top?.text ?? "No priority opportunity found in the account brief."}
         </p>
       </div>
       <div
@@ -569,7 +581,7 @@ export function OpportunityRiskSplitTile({
           </span>
         </div>
         <p className="mt-1 text-[12px] text-ink line-clamp-3 min-h-[3.2em] leading-snug">
-          {d.risks.top?.text ?? "No priority risk found in the saved brief."}
+          {d.risks.top?.text ?? "No priority risk found in the account brief."}
         </p>
       </div>
     </div>
