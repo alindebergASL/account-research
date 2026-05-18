@@ -736,3 +736,113 @@ Acceptance:
 - File exists at `docs/plans/canvas-visual-grammar.md`.
 - Branch is off `origin/main` at or after `ee9cfb0`.
 - No edits to `.ts`, `.tsx`, `package.json`, schema, DB, worker, auth, or public share route files.
+
+---
+
+## Precision Addenda
+
+These pin down a handful of points the body of the plan describes at a higher level. They are binding for the implementation PR; where they conflict with prose above, the addenda wins.
+
+### A1. Schema delta — exact shape
+
+`web/lib/canvas/schema.ts` today has **no shared `BaseWidget.data` payload**. Each widget kind has its own Zod data schema: `SectionRefData`, `EvidenceBoardData`, `ActionPanelData`, `OpenQuestionsData`, `MetricData`, `ExtensionData`, `StrategicSignalRadarData`, `OpportunityRiskSplitData`, `MomentumStripData`, `AITakeawaysData`. Each widget kind is then a Zod intersection of the `BaseWidget` envelope with its kind's `data` field. There is no discriminator on `data`.
+
+The first implementation PR therefore adds `form` in exactly two places (not on a shared base):
+
+```ts
+export const VisualForm = z.enum([
+  "default",
+  "timeline",
+  "persona-map",
+  "tension-matrix",
+]);
+export type VisualForm = z.infer<typeof VisualForm>;
+
+// Only these two data schemas gain `form`:
+SectionRefData            // → form lets planner promote personas / recent_signals
+OpportunityRiskSplitData  // → form lets planner render tension-matrix
+```
+
+All other data schemas remain untouched. `ALL_WIDGET_KINDS` is unchanged. No new widget kind is introduced. `web/lib/canvas/schema.ts` must remain React-free; the `isBarStyleForm` / `formForStoryAndSection` helpers + `VISUAL_GRAMMAR_RULES` live in `web/lib/canvas/visualGrammar.ts` next to the planner, not in `schema.ts`.
+
+### A2. TensionMatrix scoring — exact quantization
+
+No fabricated continuous coordinates. The matrix is a 2×2 with deterministic quadrant assignment.
+
+- **X axis (initiative density), bucketed:** `low (0–1)`, `med (2–3)`, `high (4+)` from `top_initiatives.length` capped at 5.
+- **Y axis (risk density), bucketed:** `low (0–1)`, `med (2–3)`, `high (4+)` from `risks.length` capped at 5.
+- **Quadrants:**
+  - `Quick wins` — low risk, low–med initiative (bottom-left)
+  - `Headline bets` — low risk, high initiative (bottom-right)
+  - `Watch-outs` — high risk, low–med initiative (top-left)
+  - `High-stakes plays` — high risk, high initiative (top-right)
+- **Items plotted:**
+  - Each `top_initiatives[i]` → one dot in the quadrant matching the overall account riskWeight (row band) and its own confidence (high confidence pushes right).
+  - Each `risks[i]` → one small marker in the top half on the risk axis.
+- Plot order is brief order. Position within a quadrant is sequence-based, never invented from continuous math.
+
+### A3. PersonaMap edges — derivation rules
+
+Edges are **derived only from explicit `buying_path` token matches against persona `name` and `title` fields**. Procedure:
+
+1. Tokenize `buying_path` by case-insensitive word-boundary regex.
+2. For each persona, build the token set from its `name` plus its `title` (split on whitespace, drop stopwords).
+3. If any persona token appears in the `buying_path` token set, draw an edge between that persona and the central `Decision` node.
+4. If no token matches, the persona renders as an **isolated node**. No edge. No inference.
+
+The visual reflects what the brief actually says about the buying path; thin briefs honestly show isolated nodes.
+
+### A4. TimelineLane — sequence-based, not date-based
+
+Position along the lane is **sequence-based**: items are placed left-to-right in the order they appear in their source brief field. No invented dates. No absolute time axis.
+
+Optional caption: when a `Signal.source` happens to contain a parseable month-year token (e.g. `"Feb 2026"`) by strict regex, that token MAY be rendered as a small caption next to the dot. Never used as a position. Never used as an axis label. If parsing fails, no caption.
+
+### A5. Forbidden user-visible copy — explicit gate list
+
+Extend the existing source-grep test gate to the new tile and detail files. The implementation PR's tests must fail if any of the following substrings appear in user-visible JSX text in `tiles.tsx`, `details.tsx`, or the new `visualForms/*` components:
+
+```
+next_action
+brief.next_action
+preview                       (as a user-visible word)
+Execution is not enabled
+approval/execution
+severity:
+READ-ONLY MODE
+Provenance: hermes
+INSIGHT · TABLE
+Hermes-ranked
+Rating from the saved brief
+primary line drawn from next_action verbatim
+>Run<
+>Execute<
+>Approve<
+>Dismiss<
+```
+
+Also avoid surfacing `saved brief` in user-facing labels; prefer `account brief` or omit.
+
+### A6. Rollback flag — explicit one-line revert
+
+`web/lib/canvas/fromBrief.ts` gates planner output behind a module-scope const:
+
+```ts
+const LAYOUT_PLANNER_ENABLED = true;
+```
+
+When `false`, `buildReadOnlyCanvasFromBrief` falls back to today's deterministic emission unchanged. Flipping the flag is a one-line revert if the new forms misrender at production scale. New visual forms are net-additive — removing the `TimelineLane` / `PersonaMap` / `TensionMatrix` imports and dispatcher entries also removes them without affecting existing kinds. No DB migration → no DB rollback.
+
+### A7. Untouched-paths inventory (binding)
+
+The implementation PR must not modify any of:
+
+- `web/lib/canvas/capability.ts`
+- `web/lib/canvas/registry.tsx` (no new widget kinds)
+- `web/app/api/briefs/[id]/route.ts`
+- `web/app/brief/[id]/page.tsx` (toggle wiring stays)
+- `web/app/s/[token]/**` and `web/app/api/share/[token]/**` (public share)
+- `web/components/BriefCanvas.tsx`
+- worker / DB / auth
+
+A PR-template reviewer checklist enforces this; a programmatic `git diff --name-only` assertion may be added if practical.
