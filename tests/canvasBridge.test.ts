@@ -2857,7 +2857,12 @@ test("Missing intelligence collapse: a single empty widget in a tier is left in 
 
 test("emptyStateMessage returns executive-guidance strings for known section keys", () => {
   assert.match(emptyStateMessage("personas"), /Buying committee/i);
-  assert.match(emptyStateMessage("buying_path"), /Buying committee/i);
+  // buying_path is now a distinct empty-state — collapse handles the
+  // committee framing via the personas tier; the buying_path key returns
+  // a buying-path-specific executive line.
+  assert.match(emptyStateMessage("buying_path"), /Buying path not yet mapped/i);
+  assert.match(emptyStateMessage("clinical_footprint"), /Clinical footprint not yet validated/i);
+  assert.match(emptyStateMessage("governance"), /Governance posture not yet validated/i);
   assert.match(emptyStateMessage("competitive_signals"), /competitive vendor signal/i);
   assert.match(emptyStateMessage("risks"), /No material risk/i);
   assert.match(emptyStateMessage("evidence_board"), /Source coverage missing/i);
@@ -2894,6 +2899,101 @@ test("empty-state copy: tile + detail renderers no longer carry forbidden legacy
       );
     }
   }
+});
+
+test("residual scaffold copy: emitted widget data carries no 'Not found' / 'no items' on any fixture", () => {
+  // Walk the emitted widget tree for every fixture and assert that
+  // no card body / summary / preview / takeaway / evidence text leaks
+  // raw scaffold copy. Catches dynamic compositions like
+  // `Clinical: Not found`, `Governance: Not found`, `BUYING PATH Not found`.
+  const fixtures = [
+    { name: "momentum_brief.json", raw: loadFixture("momentum_brief.json") },
+    { name: "stakeholder_brief.json", raw: loadFixture("stakeholder_brief.json") },
+    { name: "sample_brief.json", raw: sampleBriefJson },
+  ];
+  const forbiddenSubstrings = [
+    "Clinical: Not found",
+    "Governance: Not found",
+    "BUYING PATH Not found",
+    "Buying Path: Not found",
+    "Buying path: Not found",
+    ": Not found",
+  ];
+  for (const fx of fixtures) {
+    const brief = Brief.parse(fx.raw);
+    const canvas = buildReadOnlyCanvasFromBrief({ briefId: fx.name, brief });
+    for (const widget of canvas.widgets) {
+      // Collect every string surface a renderer would read from this widget.
+      const surfaces: string[] = [];
+      surfaces.push(widget.title ?? "");
+      surfaces.push(widget.description ?? "");
+      for (const ev of widget.evidence ?? []) {
+        if (ev.text) surfaces.push(ev.text);
+      }
+      const data = widget.data as Record<string, unknown> | undefined;
+      if (data) {
+        if (typeof data.preview === "string") surfaces.push(data.preview);
+        if (typeof data.full_text === "string") surfaces.push(data.full_text);
+        if (typeof data.body === "string") surfaces.push(data.body);
+        if (typeof data.value === "string") surfaces.push(data.value);
+        if (typeof data.helper === "string") surfaces.push(data.helper);
+        if (Array.isArray(data.takeaways)) {
+          for (const t of data.takeaways as { headline?: string; detail?: string }[]) {
+            if (t.headline) surfaces.push(t.headline);
+            if (t.detail) surfaces.push(t.detail);
+          }
+        }
+        if (Array.isArray(data.items)) {
+          for (const it of data.items as { text?: string }[]) {
+            if (it?.text) surfaces.push(it.text);
+          }
+        }
+        if (Array.isArray(data.actions)) {
+          for (const a of data.actions as { label?: string; detail?: string }[]) {
+            if (a.label) surfaces.push(a.label);
+            if (a.detail) surfaces.push(a.detail);
+          }
+        }
+        if (Array.isArray(data.questions)) {
+          for (const q of data.questions as { text?: string; hypothesis?: string }[]) {
+            if (q.text) surfaces.push(q.text);
+            if (q.hypothesis) surfaces.push(q.hypothesis);
+          }
+        }
+      }
+      for (const text of surfaces) {
+        for (const banned of forbiddenSubstrings) {
+          assert.ok(
+            !text.includes(banned),
+            `${fx.name}: widget ${widget.id} surfaced banned scaffold copy "${banned}" in "${text}"`,
+          );
+        }
+        // BUYING PATH appearing in any case alongside "Not found" is also banned.
+        assert.ok(
+          !/buying path\s*[:]?\s*not found/i.test(text),
+          `${fx.name}: widget ${widget.id} surfaced 'Buying path … Not found' in "${text}"`,
+        );
+      }
+    }
+  }
+});
+
+test("residual scaffold copy: TensionMatrix component no longer renders raw 'no items' text", () => {
+  const src = readFileSync(
+    path.join(__dirname, "../web/components/canvas/visualForms/TensionMatrix.tsx"),
+    "utf8",
+  );
+  // Strip block comments before scanning so the explanatory comment doesn't
+  // false-positive — we only want to ban the literal as rendered content.
+  const stripped = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  assert.ok(
+    !/>no items</i.test(stripped),
+    "TensionMatrix must not emit a visible 'no items' string in empty quadrants",
+  );
+  assert.ok(
+    !/"no items"/.test(stripped),
+    "TensionMatrix must not carry a 'no items' literal in visible copy",
+  );
 });
 
 test("TensionMatrix component source surfaces axis label strings", () => {

@@ -66,7 +66,6 @@ function Quadrant({
   risks: { text: string }[];
   testid: string;
 }) {
-  const empty = items.length === 0 && risks.length === 0;
   return (
     <div
       data-testid={testid}
@@ -106,9 +105,11 @@ function Quadrant({
             aria-label={r.text}
           />
         ))}
-        {empty && (
-          <span className="text-[10px] text-muted/70">no items</span>
-        )}
+        {/*
+          When the quadrant has no items, render nothing — the watermark
+          quadrant label already conveys the framework. Avoids surfacing
+          raw scaffold copy ("no items") on rendered surfaces.
+        */}
       </div>
       {/* Desktop: full chip rendering. */}
       <div className="hidden sm:flex flex-wrap gap-1.5 min-w-0">
@@ -132,9 +133,11 @@ function Quadrant({
             <span className="truncate">{r.text}</span>
           </span>
         ))}
-        {empty && (
-          <span className="text-[10px] text-muted/70">no items</span>
-        )}
+        {/*
+          When the quadrant has no items, render nothing — the watermark
+          quadrant label already conveys the framework. Avoids surfacing
+          raw scaffold copy ("no items") on rendered surfaces.
+        */}
       </div>
     </div>
   );

@@ -8,8 +8,17 @@
 export function emptyStateMessage(sectionKey: string): string {
   switch (sectionKey) {
     case "personas":
-    case "buying_path":
       return "Buying committee not yet identified — validate CMIO/CIO/procurement path.";
+    case "buying_path":
+      return "Buying path not yet mapped.";
+    case "clinical_footprint":
+      return "Clinical footprint not yet validated.";
+    case "governance":
+      return "Governance posture not yet validated.";
+    case "technical_footprint":
+      return "Technical footprint not yet validated.";
+    case "programs_procurement":
+      return "Programs and procurement not yet captured.";
     case "competitive_signals":
       return "No competitive vendor signal in saved evidence.";
     case "risks":

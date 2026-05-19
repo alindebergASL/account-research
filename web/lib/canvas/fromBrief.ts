@@ -1,5 +1,6 @@
 import type { Brief, BriefExtension } from "@/lib/schema";
 import type { CanvasWidget, Canvas, Confidence, Source } from "./schema";
+import { emptyStateMessage } from "./emptyStates";
 import {
   buildAITakeaways,
   buildMomentumStrip,
@@ -48,6 +49,17 @@ const NO_CONTROLS = {
   can_edit: false,
   can_export: false,
 } as const;
+
+// Treat string brief values that are empty, "Not found", "—", "n/a", or
+// "unknown" as missing. Keeps scaffold placeholders from leaking into
+// rendered Canvas copy. Mirrors the predicate used in `layoutPlanner.ts`
+// and `visualGrammar.ts`.
+function hasMeaningfulValue(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  return !/^(not found|—|n\/a|unknown)\.?$/i.test(trimmed);
+}
 
 function executivePreview(s: string, max = 220): string {
   if (!s) return "";
@@ -240,7 +252,7 @@ export function buildReadOnlyCanvasFromBrief({
         confidence: p.confidence,
         tag: "persona",
       }));
-      const buyingPathEvidence: EvItem[] = brief.buying_path
+      const buyingPathEvidence: EvItem[] = hasMeaningfulValue(brief.buying_path)
         ? [{ text: brief.buying_path, tag: "buying_path" }]
         : [];
       evidence = [...personaEvidence, ...buyingPathEvidence];
@@ -421,7 +433,7 @@ export function buildReadOnlyCanvasFromBrief({
     "section-buying-path",
     "Buying / decision path",
     "buying_path",
-    brief.buying_path,
+    hasMeaningfulValue(brief.buying_path) ? brief.buying_path : "",
     6,
     3,
   );
@@ -445,44 +457,50 @@ export function buildReadOnlyCanvasFromBrief({
 
   // ---- Row 6: Footprint, Programs/Procurement, Open Questions -----------
   const tf = brief.technical_footprint;
+  const tfLines = [
+    tf.ai_in_production.length > 0
+      ? `AI in production: ${tf.ai_in_production.join("; ")}`
+      : "",
+    tf.active_pilots.length > 0
+      ? `Active pilots: ${tf.active_pilots.join("; ")}`
+      : "",
+    tf.cloud_platforms.length > 0
+      ? `Cloud: ${tf.cloud_platforms.join(", ")}`
+      : "",
+    hasMeaningfulValue(tf.clinical_platforms)
+      ? `Clinical: ${tf.clinical_platforms}`
+      : "",
+  ].filter(Boolean);
   addSectionRef(
     "section-technical-footprint",
     "Technical footprint",
     "technical_footprint",
-    [
-      tf.ai_in_production.length > 0
-        ? `AI in production: ${tf.ai_in_production.join("; ")}`
-        : "",
-      tf.active_pilots.length > 0
-        ? `Active pilots: ${tf.active_pilots.join("; ")}`
-        : "",
-      tf.cloud_platforms.length > 0
-        ? `Cloud: ${tf.cloud_platforms.join(", ")}`
-        : "",
-      tf.clinical_platforms ? `Clinical: ${tf.clinical_platforms}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    tfLines.length > 0
+      ? tfLines.join("\n")
+      : emptyStateMessage("technical_footprint"),
     6,
     3,
   );
 
   const pp = brief.programs_procurement;
+  const ppLines = [
+    pp.active_rfps_contracts.length > 0
+      ? `Active RFPs / contracts: ${pp.active_rfps_contracts.join("; ")}`
+      : "",
+    pp.modernization_grants.length > 0
+      ? `Grants: ${pp.modernization_grants.join("; ")}`
+      : "",
+    hasMeaningfulValue(pp.ai_governance_policy)
+      ? `Governance: ${pp.ai_governance_policy}`
+      : "",
+  ].filter(Boolean);
   addSectionRef(
     "section-programs-procurement",
     "Programs & procurement",
     "programs_procurement",
-    [
-      pp.active_rfps_contracts.length > 0
-        ? `Active RFPs / contracts: ${pp.active_rfps_contracts.join("; ")}`
-        : "",
-      pp.modernization_grants.length > 0
-        ? `Grants: ${pp.modernization_grants.join("; ")}`
-        : "",
-      pp.ai_governance_policy ? `Governance: ${pp.ai_governance_policy}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    ppLines.length > 0
+      ? ppLines.join("\n")
+      : emptyStateMessage("programs_procurement"),
     6,
     3,
   );
