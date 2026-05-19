@@ -15,6 +15,7 @@ import {
   requireUser,
 } from "@/lib/auth";
 import { listHermesEventsForBrief, MAX_EVENT_LIMIT } from "@/lib/hermes/events";
+import { redactSensitiveString } from "@/lib/hermes/sanitize";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,10 @@ const FORBIDDEN_KEY_RE =
 
 function stripSensitive(value: unknown): unknown {
   if (value === null || value === undefined) return null;
+  // Primitive strings: redact any token / cookie / header substrings
+  // before returning. Write-side does the same via the shared helper,
+  // but a pre-tightening row could still contain unscrubbed bytes.
+  if (typeof value === "string") return redactSensitiveString(value);
   if (typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(stripSensitive);
   const out: Record<string, unknown> = {};
@@ -79,12 +84,31 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const afterRaw = req.nextUrl.searchParams.get("after");
-  const afterSeq = afterRaw && /^\d+$/.test(afterRaw) ? Number(afterRaw) : undefined;
+  // Brief-level cursor must be (afterCreatedAt, afterEventId) together.
+  // The legacy `?after` / `?afterSeq` query params used per-job seq,
+  // which is not safe across jobs — accept them silently as no-ops for
+  // back-compat rather than translating them into a broken cursor.
+  const afterCreatedAtRaw = req.nextUrl.searchParams.get("afterCreatedAt");
+  const afterEventIdRaw = req.nextUrl.searchParams.get("afterEventId");
+  const hasCreatedAt = afterCreatedAtRaw !== null && /^\d+$/.test(afterCreatedAtRaw);
+  const hasEventId = afterEventIdRaw !== null && afterEventIdRaw.length > 0;
+  if (hasCreatedAt !== hasEventId) {
+    return NextResponse.json(
+      { error: "afterCreatedAt and afterEventId must be supplied together" },
+      { status: 400 },
+    );
+  }
+  const afterCreatedAt = hasCreatedAt ? Number(afterCreatedAtRaw) : undefined;
+  const afterEventId = hasEventId ? (afterEventIdRaw as string) : undefined;
+
   const limitRaw = req.nextUrl.searchParams.get("limit");
   const limit = limitRaw && /^\d+$/.test(limitRaw) ? Math.min(Number(limitRaw), MAX_EVENT_LIMIT) : MAX_EVENT_LIMIT;
 
-  const events = listHermesEventsForBrief(params.id, { limit, afterSeq });
+  const events = listHermesEventsForBrief(params.id, {
+    limit,
+    afterCreatedAt,
+    afterEventId,
+  });
 
   const safe = events.map((e) => ({
     id: e.id,

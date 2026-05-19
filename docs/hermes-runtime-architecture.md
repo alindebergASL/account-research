@@ -34,7 +34,7 @@ All flags default OFF. Setting a flag back to `0` (or unsetting it) and restarti
 | ------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------- |
 | `HERMES_RUNTIME_ENABLED`        | `0`                   | Master switch. When `1`, the runtime client makes HTTP calls to `HERMES_RUNTIME_URL`.                |
 | `HERMES_RUNTIME_FAKE`           | `0`                   | Lab/CI-only. When `1`, the runtime client returns deterministic stub responses. No network calls.   |
-| `HERMES_RUNTIME_URL`            | `http://127.0.0.1:8787` | Base URL of the runtime service. Should remain on the loopback interface in all environments.       |
+| `HERMES_RUNTIME_URL`            | `http://127.0.0.1:8787` | Base URL of the runtime service. **Enforced loopback at runtime**: the client rejects any URL whose host is not `127.0.0.1`, `::1`, or `localhost` and refuses to send the request. Operator override requires a code change to `web/lib/hermes/config.ts`. |
 | `HERMES_SERVICE_TOKEN`          | unset                 | Optional shared bearer token. Sent as `Authorization: Bearer <token>` only when set.                 |
 | `HERMES_RESEARCH_ENABLED`       | `0`                   | Per-feature flag. When `1`, future PR 2 routes `runResearchPipeline()` through runtime Hermes.       |
 | `HERMES_CHAT_ENABLED`           | `0`                   | Per-feature flag. When `1`, future PR 3 routes brief chat through runtime Hermes.                    |

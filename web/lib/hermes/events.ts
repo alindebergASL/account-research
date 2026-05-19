@@ -13,6 +13,7 @@
 // at-rest DB never contains secrets even if the read path is bypassed.
 import { db, type HermesJobEventRow } from "../db";
 import { newId } from "../password";
+import { redactSensitiveString } from "./sanitize";
 import type {
   HermesEventKind,
   HermesJobEvent,
@@ -27,25 +28,6 @@ export const MAX_EVENT_LIMIT = 200;
 const MAX_ERROR_BYTES = 4096;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
 
-// Strip ANSI escape sequences ("\x1b[...m" etc.) — they're noise in a DB
-// and can carry weird control bytes into log viewers.
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
-
-// Token-shaped substring patterns. We replace with a constant marker so
-// the surrounding context remains debuggable but the secret material is
-// gone. Patterns are intentionally broad; false positives are acceptable
-// since this is operator-debug telemetry, not user-facing copy.
-const SECRET_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
-  { re: /Bearer\s+[A-Za-z0-9._\-]+/gi, replacement: "Bearer [redacted]" },
-  { re: /sk-[A-Za-z0-9\-_]{20,}/g, replacement: "[redacted-api-key]" },
-  // Header lines for Cookie / Set-Cookie / Authorization. Match up to end
-  // of line so we drop the whole header value, not just the name.
-  { re: /Cookie:[^\n\r]*/gi, replacement: "Cookie: [redacted]" },
-  { re: /set-cookie:[^\n\r]*/gi, replacement: "set-cookie: [redacted]" },
-  { re: /authorization:[^\n\r]*/gi, replacement: "authorization: [redacted]" },
-];
-
 // Object keys that must NEVER survive sanitization regardless of value.
 // Keep these in lockstep with the read-API `stripSensitive` allow-list.
 const FORBIDDEN_KEY_RE =
@@ -53,13 +35,9 @@ const FORBIDDEN_KEY_RE =
 
 const MAX_DEPTH = 5;
 
-function sanitizeString(s: string): string {
-  let out = s.replace(ANSI_RE, "");
-  for (const { re, replacement } of SECRET_PATTERNS) {
-    out = out.replace(re, replacement);
-  }
-  return out;
-}
+// String redaction (Bearer / sk-* / Cookie / Authorization / ANSI) is
+// shared with the read path via `./sanitize`.
+const sanitizeString = redactSensitiveString;
 
 function sanitizeValue(value: unknown, depth: number): unknown {
   if (value === null || value === undefined) return value;
@@ -280,35 +258,58 @@ function rowToEvent(r: HermesJobEventRow): HermesJobEvent {
 
 export type ListEventsOptions = {
   limit?: number;
-  afterSeq?: number;
+  // Brief-level resume cursor. `hermes_job_events.seq` is PER-JOB
+  // (UNIQUE(job_id, seq)), so it is NOT safe as a brief-level cursor:
+  // any new job whose seq restarts at 1 would be dropped by a `seq >
+  // afterSeq` filter. Resume by `(created_at, id)` instead. Both
+  // `afterCreatedAt` and `afterEventId` must be supplied together; if
+  // only one is set the cursor is ignored.
+  afterCreatedAt?: number;
+  afterEventId?: string;
 };
 
-// Returns events ordered by (created_at, seq) ascending so an SSE/poller
-// can resume past the highest-seen seq. Limit is clamped to
-// MAX_EVENT_LIMIT regardless of caller input.
+// Returns events for `briefId` ordered by (created_at ASC, id ASC).
+// Limit is clamped to MAX_EVENT_LIMIT regardless of caller input.
+//
+// NOTE: do NOT use `hermes_job_events.seq` as a brief-level cursor —
+// `seq` is per-job, so a fresh job whose seq starts at 1 would be
+// hidden by a `seq > N` filter across the brief. The (created_at, id)
+// pair is monotonic enough for SSE / poller resume and is stable
+// across jobs.
 export function listHermesEventsForBrief(
   briefId: string,
   opts: ListEventsOptions = {},
 ): HermesJobEvent[] {
   const requested = typeof opts.limit === "number" ? opts.limit : MAX_EVENT_LIMIT;
   const limit = Math.max(1, Math.min(MAX_EVENT_LIMIT, Math.floor(requested)));
+  const hasCreatedAt =
+    typeof opts.afterCreatedAt === "number" && Number.isFinite(opts.afterCreatedAt);
+  const hasEventId = typeof opts.afterEventId === "string" && opts.afterEventId.length > 0;
+  const useCursor = hasCreatedAt && hasEventId;
   try {
     let rows: HermesJobEventRow[];
-    if (typeof opts.afterSeq === "number" && Number.isFinite(opts.afterSeq)) {
+    if (useCursor) {
       rows = db()
         .prepare(
           `SELECT * FROM hermes_job_events
-           WHERE brief_id = ? AND seq > ?
-           ORDER BY created_at ASC, seq ASC
+           WHERE brief_id = ?
+             AND (created_at > ? OR (created_at = ? AND id > ?))
+           ORDER BY created_at ASC, id ASC
            LIMIT ?`,
         )
-        .all(briefId, Math.floor(opts.afterSeq), limit) as HermesJobEventRow[];
+        .all(
+          briefId,
+          Math.floor(opts.afterCreatedAt as number),
+          Math.floor(opts.afterCreatedAt as number),
+          opts.afterEventId as string,
+          limit,
+        ) as HermesJobEventRow[];
     } else {
       rows = db()
         .prepare(
           `SELECT * FROM hermes_job_events
            WHERE brief_id = ?
-           ORDER BY created_at ASC, seq ASC
+           ORDER BY created_at ASC, id ASC
            LIMIT ?`,
         )
         .all(briefId, limit) as HermesJobEventRow[];

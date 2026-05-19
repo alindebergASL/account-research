@@ -16,10 +16,11 @@
 // only ever talks to `HERMES_RUNTIME_URL` (default 127.0.0.1:8787),
 // which is a future internal service — not a public API.
 import {
+  getHermesRuntimeUrlChecked,
   hermesRuntimeMode,
-  hermesRuntimeUrl,
   hermesServiceToken,
 } from "./config";
+import { redactSensitiveString } from "./sanitize";
 import type {
   HermesCanvasSynthesisRequest,
   HermesCanvasSynthesisResponse,
@@ -53,18 +54,16 @@ export class HermesRuntimeError extends Error {
 }
 
 // Strip anything that could carry a token / cookie / header out of an
-// error string before it bubbles up to logs or event payloads.
-function sanitizeErr(s: string): string {
-  return s
-    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-    .replace(/sk-[A-Za-z0-9\-_]{20,}/g, "[redacted-api-key]")
-    .replace(/Cookie:[^\n\r]*/gi, "Cookie: [redacted]")
-    .replace(/set-cookie:[^\n\r]*/gi, "set-cookie: [redacted]")
-    .replace(/authorization:[^\n\r]*/gi, "authorization: [redacted]");
-}
+// error string before it bubbles up to logs or event payloads. Shared
+// with the write/read sanitizers via `./sanitize`.
+const sanitizeErr = redactSensitiveString;
 
 async function postJson<T>(path: string, body: unknown, timeoutMs: number): Promise<T> {
-  const url = `${hermesRuntimeUrl()}${path}`;
+  // Loopback-only enforcement: refuse to issue a runtime fetch if the
+  // configured URL is not on 127.0.0.1 / ::1 / localhost. Throws a
+  // typed, fixed-string error — the env value is NOT interpolated.
+  const base = getHermesRuntimeUrlChecked();
+  const url = `${base}${path}`;
   const token = hermesServiceToken();
   const headers: Record<string, string> = {
     "content-type": "application/json",
