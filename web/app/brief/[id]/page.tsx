@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
 import ReadOnlyCanvasView from "@/components/canvas/ReadOnlyCanvasView";
 import { buildReadOnlyCanvasFromBrief } from "@/lib/canvas/fromBrief";
+import type { Canvas } from "@/lib/canvas/schema";
 
 type Access = {
   is_owner: boolean;
@@ -23,6 +24,8 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const [versionsCount, setVersionsCount] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"brief" | "canvas">("brief");
+  const [persistedCanvas, setPersistedCanvas] = useState<Canvas | null>(null);
+  const [canvasStateVersion, setCanvasStateVersion] = useState<number>(0);
   // Server-derived capability: true only when CANVAS_PREVIEW_ENABLED=1
   // AND the authenticated user is admin. The client treats this as
   // opaque — it cannot read the env var directly and shouldn't infer
@@ -30,16 +33,19 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const [canvasPreview, setCanvasPreview] = useState<boolean>(false);
   const canvas = useMemo(
     () =>
-      canvasPreview && brief
+      persistedCanvas ??
+      (canvasPreview && brief
         ? buildReadOnlyCanvasFromBrief({ briefId: params.id, brief })
-        : null,
-    [brief, canvasPreview, params.id],
+        : null),
+    [brief, canvasPreview, params.id, persistedCanvas],
   );
 
   useEffect(() => {
     let cancelled = false;
     setBrief(null);
     setAccess(null);
+    setPersistedCanvas(null);
+    setCanvasStateVersion(0);
     setError(null);
     fetch(`/api/briefs/${params.id}`, { cache: "no-store" })
       .then(async (r) => {
@@ -78,6 +84,27 @@ export default function BriefPage({ params }: { params: { id: string } }) {
       cancelled = true;
     };
   }, [params.id]);
+
+  const refreshCanvasState = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/briefs/${params.id}/canvas-state`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.canvas && typeof data.version === "number") {
+        setPersistedCanvas(data.canvas as Canvas);
+        setCanvasStateVersion(data.version);
+      }
+    } catch {
+      // Canvas refresh is opportunistic; the deterministic Canvas remains.
+    }
+  }, [params.id]);
+
+  useEffect(() => {
+    if (!canvasPreview) return;
+    refreshCanvasState();
+  }, [canvasPreview, params.id, refreshCanvasState]);
 
   if (error) {
     return (
@@ -163,12 +190,13 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         </div>
       )}
       {canvasPreview && viewMode === "canvas" && canvas ? (
-        <ReadOnlyCanvasView canvas={canvas} />
+        <ReadOnlyCanvasView key={canvasStateVersion} canvas={canvas} />
       ) : (
         <BriefCanvas
           brief={brief}
           currentBriefId={params.id}
           onBriefUpdate={setBrief}
+          onHermesCanvasEvent={refreshCanvasState}
           canWrite={access.can_write}
           isOwner={access.is_owner}
           canManage={access.can_manage}
