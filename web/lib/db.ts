@@ -293,7 +293,130 @@ const MIGRATIONS: Migration[] = [
           ON brief_events(event_type, created_at DESC);
       `),
   },
+  {
+    id: "013_hermes_runtime_events_and_canvas_state",
+    // Hermes runtime substrate. Three additive tables:
+    //   - hermes_jobs:        durable job rows for research / chat / canvas
+    //                         synthesis dispatched to the (future) Hermes
+    //                         runtime. `fake` distinguishes lab/no-spend rows.
+    //   - hermes_job_events:  ordered, sanitized event log per job. Seq is
+    //                         computed transactionally per job; payload_json
+    //                         must never contain raw tokens, cookies, or
+    //                         provider response bodies.
+    //   - canvas_states:      durable Canvas blob per brief, separate from
+    //                         brief_json so Hermes-driven Canvas updates
+    //                         have their own version history.
+    //
+    // No data backfill — all rows are created on demand once the matching
+    // Hermes runtime feature flag is enabled. Migration is purely additive
+    // so rollback = leave tables in place, set flags back to 0.
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS hermes_jobs (
+          id              TEXT PRIMARY KEY,
+          kind            TEXT NOT NULL,
+          status          TEXT NOT NULL,
+          user_id         TEXT,
+          brief_id        TEXT,
+          research_job_id TEXT,
+          provider        TEXT,
+          model           TEXT,
+          fake            INTEGER NOT NULL DEFAULT 0,
+          input_json      TEXT,
+          result_json     TEXT,
+          error           TEXT,
+          created_at      INTEGER NOT NULL,
+          started_at      INTEGER,
+          finished_at     INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (research_job_id) REFERENCES research_jobs(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_hermes_jobs_brief_created
+          ON hermes_jobs(brief_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_hermes_jobs_user_created
+          ON hermes_jobs(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_hermes_jobs_status_created
+          ON hermes_jobs(status, created_at);
+
+        CREATE TABLE IF NOT EXISTS hermes_job_events (
+          id              TEXT PRIMARY KEY,
+          job_id          TEXT NOT NULL,
+          brief_id        TEXT,
+          actor_user_id   TEXT,
+          seq             INTEGER NOT NULL,
+          event_type      TEXT NOT NULL,
+          title           TEXT NOT NULL,
+          summary         TEXT,
+          payload_json    TEXT,
+          created_at      INTEGER NOT NULL,
+          FOREIGN KEY (job_id) REFERENCES hermes_jobs(id) ON DELETE CASCADE,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+          UNIQUE(job_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_hermes_events_brief_created
+          ON hermes_job_events(brief_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_hermes_events_job_seq
+          ON hermes_job_events(job_id, seq);
+
+        CREATE TABLE IF NOT EXISTS canvas_states (
+          brief_id          TEXT PRIMARY KEY,
+          canvas_json       TEXT NOT NULL,
+          source            TEXT NOT NULL,
+          version           INTEGER NOT NULL DEFAULT 1,
+          updated_at        INTEGER NOT NULL,
+          updated_by_job_id TEXT,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (updated_by_job_id) REFERENCES hermes_jobs(id) ON DELETE SET NULL
+        );
+      `);
+    },
+  },
 ];
+
+// Row types for the Hermes substrate. Kept here next to the rest of the
+// row type definitions so callers can import them from "@/lib/db" like
+// every other row type.
+export type HermesJobRow = {
+  id: string;
+  kind: "research" | "chat" | "canvas_synthesis";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  user_id: string | null;
+  brief_id: string | null;
+  research_job_id: string | null;
+  provider: string | null;
+  model: string | null;
+  fake: 0 | 1;
+  input_json: string | null;
+  result_json: string | null;
+  error: string | null;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+};
+
+export type HermesJobEventRow = {
+  id: string;
+  job_id: string;
+  brief_id: string | null;
+  actor_user_id: string | null;
+  seq: number;
+  event_type: string;
+  title: string;
+  summary: string | null;
+  payload_json: string | null;
+  created_at: number;
+};
+
+export type CanvasStateRow = {
+  brief_id: string;
+  canvas_json: string;
+  source: "deterministic" | "hermes" | "fake";
+  version: number;
+  updated_at: number;
+  updated_by_job_id: string | null;
+};
 
 function runMigrations(conn: Database.Database): {
   applied: number;
