@@ -20,7 +20,11 @@ import {
   parseFractionValue,
   sectionKeyTone,
 } from "./visuals";
+import { emptyStateMessage } from "../../lib/canvas/emptyStates";
 import { extractTiming, extractTarget } from "../../lib/canvas/actionExtract";
+import { TimelineLaneTile } from "./visualForms/TimelineLane";
+import { PersonaMapTile } from "./visualForms/PersonaMap";
+import { TensionMatrixTile } from "./visualForms/TensionMatrix";
 
 function TileHeader(_props: { title: string; kindLabel: string }) {
   // Header chrome lives in WidgetTile so all widget kinds share the same
@@ -35,6 +39,12 @@ export function SectionRefTile({
 }: {
   widget: import("zod").infer<typeof SectionRefWidget>;
 }) {
+  // Form-first dispatch. When the planner promoted the widget to a
+  // richer visual, render the dedicated component instead of the
+  // landscape / preview default.
+  const form = widget.data.form;
+  if (form === "timeline") return <TimelineLaneTile widget={widget} />;
+  if (form === "persona-map") return <PersonaMapTile widget={widget} />;
   const tone = sectionKeyTone(widget.data.section_key);
   const evidence = widget.evidence;
   const hasStructured = evidence.length > 0;
@@ -63,7 +73,11 @@ export function SectionRefTile({
     <div>
       <TileHeader title={widget.title} kindLabel="Section" />
       <p className="text-sm text-ink whitespace-pre-line line-clamp-6 leading-snug">
-        {widget.data.preview || "—"}
+        {widget.data.preview || (
+          <span className="text-muted">
+            {emptyStateMessage(widget.data.section_key)}
+          </span>
+        )}
       </p>
     </div>
   );
@@ -94,7 +108,7 @@ export function EvidenceBoardTile({
           </li>
         ))}
         {widget.data.items.length === 0 && (
-          <li className="text-muted">No evidence available.</li>
+          <li className="text-muted">{emptyStateMessage("evidence_board")}</li>
         )}
       </ul>
       {widget.data.items.length > items.length && (
@@ -261,7 +275,7 @@ export function ActionPanelTile({
           )}
         </div>
       ) : (
-        <p className="text-sm text-muted">No actions.</p>
+        <p className="text-sm text-muted">{emptyStateMessage("default")}</p>
       )}
     </div>
   );
@@ -282,7 +296,7 @@ export function OpenQuestionsTile({
     <div>
       <TileHeader title={widget.title} kindLabel="Open questions" />
       {widget.data.questions.length === 0 ? (
-        <p className="text-sm text-muted">No open questions.</p>
+        <p className="text-sm text-muted">{emptyStateMessage("open_questions")}</p>
       ) : (
         <ul className="space-y-1 text-sm list-disc pl-5">
           {widget.data.questions.slice(0, 3).map((q, i) => (
@@ -357,11 +371,11 @@ export function ExtensionTile({
   return (
     <div>
       {d.ext_kind === "card" && (
-        <p className="text-sm leading-snug line-clamp-5">{d.body || "—"}</p>
+        <p className="text-sm leading-snug line-clamp-5">{d.body || emptyStateMessage("extension")}</p>
       )}
       {d.ext_kind === "narrative" && (
         <p className="text-sm leading-snug line-clamp-6 whitespace-pre-line">
-          {d.body || "—"}
+          {d.body || emptyStateMessage("extension")}
         </p>
       )}
       {d.ext_kind === "list" && (
@@ -372,7 +386,7 @@ export function ExtensionTile({
             </li>
           ))}
           {(d.items ?? []).length === 0 && (
-            <li className="text-muted">No items.</li>
+            <li className="text-muted">{emptyStateMessage("extension")}</li>
           )}
         </ul>
       )}
@@ -513,7 +527,7 @@ export function StrategicSignalRadarTile({
               className="mt-1 text-[11px] text-muted line-clamp-2 min-h-[2em]"
               title={q.sample ?? ""}
             >
-              {q.sample ?? "No public signal found — verify in discovery."}
+              {q.sample ?? emptyStateMessage("signal_radar")}
             </p>
           </div>
         );
@@ -528,6 +542,9 @@ export function OpportunityRiskSplitTile({
 }: {
   widget: import("zod").infer<typeof OpportunityRiskSplitWidget>;
 }) {
+  if (widget.data.form === "tension-matrix") {
+    return <TensionMatrixTile widget={widget} />;
+  }
   const d = widget.data;
   return (
     <div className="grid grid-cols-2 gap-2 min-w-0">
@@ -550,7 +567,7 @@ export function OpportunityRiskSplitTile({
           </span>
         </div>
         <p className="mt-1 text-[12px] text-ink line-clamp-3 min-h-[3.2em] leading-snug">
-          {d.opportunities.top?.text ?? "No priority opportunity found in the saved brief."}
+          {d.opportunities.top?.text ?? emptyStateMessage("opportunities")}
         </p>
       </div>
       <div
@@ -569,7 +586,7 @@ export function OpportunityRiskSplitTile({
           </span>
         </div>
         <p className="mt-1 text-[12px] text-ink line-clamp-3 min-h-[3.2em] leading-snug">
-          {d.risks.top?.text ?? "No priority risk found in the saved brief."}
+          {d.risks.top?.text ?? emptyStateMessage("risks")}
         </p>
       </div>
     </div>
@@ -636,7 +653,7 @@ export function AITakeawaysTile({
 }) {
   const items = widget.data.takeaways.slice(0, 4);
   if (items.length === 0) {
-    return <p className="text-sm text-muted">No takeaways available.</p>;
+    return <p className="text-sm text-muted">{emptyStateMessage("default")}</p>;
   }
   return (
     <ul className="space-y-2 min-w-0">

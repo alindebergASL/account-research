@@ -134,12 +134,15 @@ export default function WidgetTile({
 
   // Inverted treatment for the Recommended next action so it visually
   // stands out the way the Brief view's next-action callout does.
+  // The Recommended Move (action_panel) gets the heaviest treatment so it
+  // visually anchors the canvas: inverted ink surface plus a stronger
+  // shadow and inner border-width, and a slightly larger padding step.
   const cardClass = [
-    "card group p-5 flex flex-col h-full cursor-pointer transition-all",
+    "card group flex flex-col h-full cursor-pointer transition-all",
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
     isAction
-      ? "bg-ink text-white border-ink hover:border-ink/80"
-      : "hover:border-accent/40",
+      ? "p-6 bg-ink text-white border-ink hover:border-ink/80 shadow-lg ring-1 ring-ink/10"
+      : "p-5 hover:border-accent/40",
     semanticAccentClass(tone),
   ]
     .filter(Boolean)

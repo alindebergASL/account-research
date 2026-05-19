@@ -1,5 +1,6 @@
 import type { Brief, BriefExtension } from "@/lib/schema";
 import type { CanvasWidget, Canvas, Confidence, Source } from "./schema";
+import { emptyStateMessage } from "./emptyStates";
 import {
   buildAITakeaways,
   buildMomentumStrip,
@@ -7,6 +8,27 @@ import {
   buildStrategicSignalRadar,
 } from "./strategicInsights";
 import { buildRecommendedActions } from "./recommendedActions";
+import { buildCanvasLayoutPlan } from "./layoutPlanner";
+import {
+  isBarStyleEmittedWidget,
+  isEmptyWidgetPayload,
+  tierFor,
+  TIER_LABELS,
+  TIER_ORDER,
+  type TierName,
+  type VisualForm,
+} from "./visualGrammar";
+import { VISUAL_GRAMMAR_RULES } from "./visualGrammar";
+
+// One-line rollback flag. When false, the planner-derived `form` is not
+// applied to widget data and the pre-PR adapter behavior is restored
+// without changing widget IDs / counts / layout. New visual-form
+// components remain net-additive — flipping this flag removes their
+// emission path without affecting any existing kind.
+//
+// Exported so tests can drive the on/off branch deterministically. The
+// production code path always reads the module-level constant.
+export const LAYOUT_PLANNER_ENABLED = true;
 
 // Build a read-only, deterministic Canvas from an existing Brief.
 //
@@ -27,6 +49,17 @@ const NO_CONTROLS = {
   can_edit: false,
   can_export: false,
 } as const;
+
+// Treat string brief values that are empty, "Not found", "—", "n/a", or
+// "unknown" as missing. Keeps scaffold placeholders from leaking into
+// rendered Canvas copy. Mirrors the predicate used in `layoutPlanner.ts`
+// and `visualGrammar.ts`.
+function hasMeaningfulValue(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  return !/^(not found|—|n\/a|unknown)\.?$/i.test(trimmed);
+}
 
 function executivePreview(s: string, max = 220): string {
   if (!s) return "";
@@ -93,13 +126,32 @@ class GridPacker {
 export function buildReadOnlyCanvasFromBrief({
   briefId,
   brief,
+  plannerEnabled,
 }: {
   briefId: string;
   brief: Brief;
+  // Test-only override. Defaults to the module constant so production
+  // callers see exactly the constant's value.
+  plannerEnabled?: boolean;
 }): Canvas {
   const generatedAt = brief.generated_at || new Date(0).toISOString();
   const widgets: CanvasWidget[] = [];
   const packer = new GridPacker();
+  const plannerOn = plannerEnabled ?? LAYOUT_PLANNER_ENABLED;
+
+  // Planner output: drives the `form` discriminator on
+  // section_refs (personas / recent_signals) and on the
+  // opportunity_risk_split widget. Coordinates remain assigned by the
+  // existing GridPacker so widget IDs / ordering stay stable when the
+  // planner's chosen form is "default".
+  const layoutPlan = plannerOn
+    ? buildCanvasLayoutPlan(brief)
+    : null;
+  function plannedForm(id: string): VisualForm | undefined {
+    if (!layoutPlan) return undefined;
+    const f = layoutPlan.forms[id];
+    return f && f !== "default" ? f : undefined;
+  }
 
   function baseWidget(
     id: string,
@@ -155,24 +207,65 @@ export function buildReadOnlyCanvasFromBrief({
     const base = baseWidget(id, title, w, h, {
       why_included: "Derived from standard brief section.",
     });
+    const form = plannedForm(id);
+    // When the planner picks a non-default form, the widget's evidence
+    // array is augmented with the tagged items that form's renderer
+    // expects. Tags act as a discriminator the new visual-form
+    // components read from (no schema change needed).
+    type EvItem = {
+      text: string;
+      source?: string;
+      confidence?: Confidence;
+      tag?: string;
+    };
+    let evidence: EvItem[] = structured && structured.length > 0
+      ? structured.map((s) => ({
+          text: s.text,
+          source: s.source,
+          confidence: s.confidence,
+          tag: s.tag,
+        }))
+      : base.evidence;
+    if (form === "timeline") {
+      evidence = [
+        ...brief.recent_signals.map<EvItem>((s) => ({
+          text: s.text,
+          source: s.source,
+          confidence: s.confidence,
+          tag: "signal",
+        })),
+        ...brief.top_initiatives.map<EvItem>((i) => ({
+          text: i.title,
+          source: i.source,
+          confidence: i.confidence,
+          tag: "initiative",
+        })),
+        ...brief.programs_procurement.active_rfps_contracts.map<EvItem>((p) => ({
+          text: p,
+          tag: "procurement",
+        })),
+      ];
+    } else if (form === "persona-map") {
+      const personaEvidence = brief.personas.map<EvItem>((p) => ({
+        text: `${p.name} — ${p.title}`,
+        source: p.source,
+        confidence: p.confidence,
+        tag: "persona",
+      }));
+      const buyingPathEvidence: EvItem[] = hasMeaningfulValue(brief.buying_path)
+        ? [{ text: brief.buying_path, tag: "buying_path" }]
+        : [];
+      evidence = [...personaEvidence, ...buyingPathEvidence];
+    }
     widgets.push({
       ...base,
-      // Populate evidence with structured items when the section has them;
-      // renderers detect this and switch to a richer visual (e.g. the
-      // initiative landscape) instead of the plain preview string.
-      evidence: structured && structured.length > 0
-        ? structured.map((s) => ({
-            text: s.text,
-            source: s.source,
-            confidence: s.confidence,
-            tag: s.tag,
-          }))
-        : base.evidence,
+      evidence,
       kind: "section_ref",
       data: {
         section_key: sectionKey,
         preview: executivePreview(preview),
         full_text: trimmedFullText,
+        ...(form ? { form } : {}),
       },
     });
   }
@@ -275,15 +368,41 @@ export function buildReadOnlyCanvasFromBrief({
     kind: "strategic_signal_radar",
     data: buildStrategicSignalRadar(brief),
   });
-  widgets.push({
-    ...baseWidget("insight-opportunity-risk", "Opportunity / risk split", 4, 4, {
+  {
+    const orsForm = plannedForm("insight-opportunity-risk");
+    const orsBase = baseWidget("insight-opportunity-risk", "Opportunity / risk split", 4, 4, {
       source: "hermes",
       why_included:
         "Pairs brief.top_initiatives against brief.risks side-by-side and labels the balance.",
-    }),
-    kind: "opportunity_risk_split",
-    data: buildOpportunityRiskSplit(brief),
-  });
+    });
+    type EvItem = {
+      text: string;
+      source?: string;
+      confidence?: Confidence;
+      tag?: string;
+    };
+    const orsEvidence: EvItem[] =
+      orsForm === "tension-matrix"
+        ? [
+            ...brief.top_initiatives.map<EvItem>((i) => ({
+              text: i.title,
+              source: i.source,
+              confidence: i.confidence,
+              tag: "initiative",
+            })),
+            ...brief.risks.map<EvItem>((r) => ({ text: r, tag: "risk" })),
+          ]
+        : orsBase.evidence;
+    widgets.push({
+      ...orsBase,
+      evidence: orsEvidence,
+      kind: "opportunity_risk_split",
+      data: {
+        ...buildOpportunityRiskSplit(brief),
+        ...(orsForm ? { form: orsForm } : {}),
+      },
+    });
+  }
   widgets.push({
     ...baseWidget("insight-momentum-strip", "Momentum", 4, 4, {
       source: "hermes",
@@ -314,7 +433,7 @@ export function buildReadOnlyCanvasFromBrief({
     "section-buying-path",
     "Buying / decision path",
     "buying_path",
-    brief.buying_path,
+    hasMeaningfulValue(brief.buying_path) ? brief.buying_path : "",
     6,
     3,
   );
@@ -338,44 +457,50 @@ export function buildReadOnlyCanvasFromBrief({
 
   // ---- Row 6: Footprint, Programs/Procurement, Open Questions -----------
   const tf = brief.technical_footprint;
+  const tfLines = [
+    tf.ai_in_production.length > 0
+      ? `AI in production: ${tf.ai_in_production.join("; ")}`
+      : "",
+    tf.active_pilots.length > 0
+      ? `Active pilots: ${tf.active_pilots.join("; ")}`
+      : "",
+    tf.cloud_platforms.length > 0
+      ? `Cloud: ${tf.cloud_platforms.join(", ")}`
+      : "",
+    hasMeaningfulValue(tf.clinical_platforms)
+      ? `Clinical: ${tf.clinical_platforms}`
+      : "",
+  ].filter(Boolean);
   addSectionRef(
     "section-technical-footprint",
     "Technical footprint",
     "technical_footprint",
-    [
-      tf.ai_in_production.length > 0
-        ? `AI in production: ${tf.ai_in_production.join("; ")}`
-        : "",
-      tf.active_pilots.length > 0
-        ? `Active pilots: ${tf.active_pilots.join("; ")}`
-        : "",
-      tf.cloud_platforms.length > 0
-        ? `Cloud: ${tf.cloud_platforms.join(", ")}`
-        : "",
-      tf.clinical_platforms ? `Clinical: ${tf.clinical_platforms}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    tfLines.length > 0
+      ? tfLines.join("\n")
+      : emptyStateMessage("technical_footprint"),
     6,
     3,
   );
 
   const pp = brief.programs_procurement;
+  const ppLines = [
+    pp.active_rfps_contracts.length > 0
+      ? `Active RFPs / contracts: ${pp.active_rfps_contracts.join("; ")}`
+      : "",
+    pp.modernization_grants.length > 0
+      ? `Grants: ${pp.modernization_grants.join("; ")}`
+      : "",
+    hasMeaningfulValue(pp.ai_governance_policy)
+      ? `Governance: ${pp.ai_governance_policy}`
+      : "",
+  ].filter(Boolean);
   addSectionRef(
     "section-programs-procurement",
     "Programs & procurement",
     "programs_procurement",
-    [
-      pp.active_rfps_contracts.length > 0
-        ? `Active RFPs / contracts: ${pp.active_rfps_contracts.join("; ")}`
-        : "",
-      pp.modernization_grants.length > 0
-        ? `Grants: ${pp.modernization_grants.join("; ")}`
-        : "",
-      pp.ai_governance_policy ? `Governance: ${pp.ai_governance_policy}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    ppLines.length > 0
+      ? ppLines.join("\n")
+      : emptyStateMessage("programs_procurement"),
     6,
     3,
   );
@@ -488,7 +613,19 @@ export function buildReadOnlyCanvasFromBrief({
     listFullText(brief.sources.map((s) => s.title)),
   );
 
-  const evidenceCount = widgets.reduce(
+  // When the planner is on, reorder + re-pack so the emitted-widget
+  // hierarchy honors the top-cluster bar-style cap and the planner's
+  // promotion of non-bar forms. When the planner is off, the widget
+  // list keeps the layout the original GridPacker assigned during
+  // emission (rollback parity).
+  const planned = plannerOn
+    ? applyPlannerLayout(widgets, layoutPlan)
+    : widgets;
+  const finalWidgets = plannerOn
+    ? applyTierCollapse(planned, generatedAt)
+    : planned;
+
+  const evidenceCount = finalWidgets.reduce(
     (n, w) => n + w.evidence.length + (w.kind === "evidence_board" ? w.data.items.length : 0),
     0,
   );
@@ -498,14 +635,14 @@ export function buildReadOnlyCanvasFromBrief({
     account_name: brief.account_name,
     version: 1,
     generated_at: generatedAt,
-    widgets,
+    widgets: finalWidgets,
     meta: {
       layout_mode: "grid",
-      pinned_order: widgets.map((w) => w.id),
+      pinned_order: finalWidgets.map((w) => w.id),
       agent_readiness: {
         mode: "read_only_preview",
         generated_from: "saved_brief",
-        controls_enabled: widgets.some(
+        controls_enabled: finalWidgets.some(
           (w) =>
             w.controls.can_edit ||
             w.controls.can_export ||
@@ -517,6 +654,86 @@ export function buildReadOnlyCanvasFromBrief({
       },
     },
   };
+}
+
+// Reorder + re-pack the emitted widget list so:
+//   1. `action-next` keeps the top row (y=0, x=0, w=12).
+//   2. The next 5 post-action slots contain at most
+//      `VISUAL_GRAMMAR_RULES.maxBarStyleInTopCluster` bar-style widgets
+//      (predicate: `isBarStyleEmittedWidget`).
+//   3. Planner-promoted non-bar widgets (timeline, persona-map,
+//      tension-matrix) are surfaced into the top cluster ahead of bars
+//      following the planner's `topClusterOrder`.
+//   4. Excess bar-style widgets are demoted BELOW the top cluster but
+//      otherwise keep their relative emission order.
+// The grid packer is then re-run from scratch over the reordered list
+// so coordinates stay deterministic, non-overlapping, and 12-col bound.
+// Widget IDs are not changed.
+function applyPlannerLayout(
+  widgets: CanvasWidget[],
+  plan: ReturnType<typeof buildCanvasLayoutPlan> | null,
+): CanvasWidget[] {
+  if (widgets.length === 0) return widgets;
+  const action = widgets.find((w) => w.id === "action-next");
+  const rest = widgets.filter((w) => w.id !== "action-next");
+  if (!action) return widgets;
+
+  // Promote planner-controlled non-bar widgets into the front of `rest`
+  // while preserving the relative order of everything else. The planner
+  // only tracks promoted-form widgets (form !== "default"), so this is
+  // the set we surface into the top cluster first.
+  const plannerPromotedIds = plan
+    ? plan.topClusterOrder.filter((id) =>
+        rest.some((w) => w.id === id && !isBarStyleEmittedWidget(w)),
+      )
+    : [];
+  const promoted: CanvasWidget[] = [];
+  const remainder: CanvasWidget[] = [];
+  for (const w of rest) {
+    if (plannerPromotedIds.includes(w.id)) promoted.push(w);
+    else remainder.push(w);
+  }
+  // Maintain planner-declared ordering among promoted widgets.
+  promoted.sort(
+    (a, b) => plannerPromotedIds.indexOf(a.id) - plannerPromotedIds.indexOf(b.id),
+  );
+  const ordered = [...promoted, ...remainder];
+
+  // Enforce the top-cluster bar cap: walk the (post-action) order,
+  // admitting bar-style widgets up to the cap; spill the rest into
+  // `demoted` to be appended after the rest of the canvas.
+  const topClusterSize = VISUAL_GRAMMAR_RULES.topClusterSize;
+  const barCap = VISUAL_GRAMMAR_RULES.maxBarStyleInTopCluster;
+  const topCluster: CanvasWidget[] = [];
+  const tail: CanvasWidget[] = [];
+  const demoted: CanvasWidget[] = [];
+  let barsInTop = 0;
+  for (const w of ordered) {
+    if (topCluster.length < topClusterSize) {
+      const isBar = isBarStyleEmittedWidget(w);
+      if (isBar && barsInTop >= barCap) {
+        demoted.push(w);
+      } else {
+        topCluster.push(w);
+        if (isBar) barsInTop += 1;
+      }
+    } else {
+      tail.push(w);
+    }
+  }
+  const finalOrdered = [action, ...topCluster, ...tail, ...demoted];
+
+  // Re-pack the entire list deterministically. action-next occupies
+  // (0,0,12,5) by design, so the rest flows beneath it.
+  const packer = new GridPacker();
+  return finalOrdered.map((w) => ({
+    ...w,
+    layout: {
+      ...packer.next(w.layout.w, w.layout.h),
+      pinned: w.layout.pinned,
+      collapsed: w.layout.collapsed,
+    },
+  }));
 }
 
 function buildExtensionWidget(
@@ -576,3 +793,142 @@ function buildExtensionWidget(
       };
   }
 }
+
+// Title cased for the gap widget per tier.
+function gapTitleForTier(tier: TierName): string {
+  return `Missing intelligence — ${TIER_LABELS[tier].toLowerCase()}`;
+}
+
+// Build a short "validate next" hypothesis for an empty widget so the
+// collapsed gap card lists concrete validation suggestions, not just a
+// dead "this is empty" line.
+function validateNextFor(widget: CanvasWidget): string {
+  switch (widget.id) {
+    case "section-personas":
+      return "Confirm the buying committee (CMIO / CIO / procurement).";
+    case "section-buying-path":
+      return "Map the decision path with the account team before outreach.";
+    case "section-risks":
+      return "Surface a material risk before the next executive touch.";
+    case "section-competitive-signals":
+      return "Check incumbents in the saved evidence.";
+    case "section-recent-signals":
+      return "Pull a recent public signal to anchor outreach.";
+    case "section-top-initiatives":
+      return "Validate the account's stated priority initiatives.";
+    case "section-programs-procurement":
+      return "Confirm active RFPs / contracts or grants.";
+    case "section-technical-footprint":
+      return "Validate cloud / clinical / AI footprint with the account team.";
+    case "evidence-board":
+      return "Add cited evidence before recommending a move.";
+    case "insight-signal-radar":
+      return "No public signal yet — verify in discovery.";
+    case "insight-opportunity-risk":
+      return "No opportunity / risk surfaced — confirm before action.";
+    case "insight-momentum-strip":
+      return "No momentum captured — refresh the brief.";
+    case "insight-ai-takeaways":
+      return "No takeaways yet — capture the next executive read.";
+    case "metric-ai-maturity":
+      return "Confirm the account's AI maturity rating.";
+    default:
+      if (widget.id.startsWith("extension-"))
+        return "Add a citation or note to this extension.";
+      return "Validate before action.";
+  }
+}
+
+// Collapse ≥ 2 empty widgets in a tier into one synthetic gap widget.
+// Reuses the existing `open_questions` kind so no new widget kind is
+// introduced. The synthetic widget's id is `gaps-<tier-slug>`. Single
+// empty widgets are left in place — the threshold is ≥ 2 so the collapse
+// only kicks in for real visual clutter.
+function applyTierCollapse(
+  widgets: CanvasWidget[],
+  generatedAt: string,
+): CanvasWidget[] {
+  if (widgets.length === 0) return widgets;
+  // Bucket empties per tier without re-ordering the emitted list. The
+  // planner already chose a top-cluster ordering that satisfies the
+  // bar-style cap; we must preserve it.
+  const emptyIdsByTier: Map<TierName, Set<string>> = new Map();
+  const emptyWidgetsByTier: Map<TierName, CanvasWidget[]> = new Map();
+  for (const w of widgets) {
+    if (!isEmptyWidgetPayload(w)) continue;
+    const t = tierFor(w);
+    if (!emptyIdsByTier.has(t)) emptyIdsByTier.set(t, new Set());
+    if (!emptyWidgetsByTier.has(t)) emptyWidgetsByTier.set(t, []);
+    emptyIdsByTier.get(t)!.add(w.id);
+    emptyWidgetsByTier.get(t)!.push(w);
+  }
+
+  const collapsingTiers = new Set<TierName>();
+  for (const [tier, ids] of emptyIdsByTier) {
+    if (ids.size >= 2) collapsingTiers.add(tier);
+  }
+
+  // Build the rebuilt list: drop empty widgets in collapsing tiers, and
+  // insert one synthetic gap widget at the position of the FIRST empty
+  // for each collapsing tier. Preserves the original ordering.
+  const rebuilt: CanvasWidget[] = [];
+  const seenCollapse = new Set<TierName>();
+  for (const w of widgets) {
+    const t = tierFor(w);
+    const isEmpty = isEmptyWidgetPayload(w);
+    if (collapsingTiers.has(t) && isEmpty) {
+      if (!seenCollapse.has(t)) {
+        seenCollapse.add(t);
+        const empties = emptyWidgetsByTier.get(t) ?? [];
+        const questions = empties.map((e) => ({
+          text: `${e.title}: not yet captured.`,
+          blocking: false,
+          hypothesis: validateNextFor(e),
+        }));
+        const gap: CanvasWidget = {
+          id: `gaps-${t}`,
+          title: gapTitleForTier(t),
+          description: "",
+          source: "system" as const,
+          created_at: generatedAt,
+          updated_at: generatedAt,
+          why_included:
+            "Consolidates widgets with thin or missing data so the canvas stays scannable.",
+          sources: [],
+          layout: {
+            x: 0,
+            y: 0,
+            w: 6,
+            h: Math.min(Math.max(3, questions.length), 6),
+            pinned: false,
+            collapsed: false,
+          },
+          controls: { ...NO_CONTROLS },
+          status: "fresh" as const,
+          evidence: [],
+          kind: "open_questions",
+          data: { questions },
+        };
+        rebuilt.push(gap);
+      }
+      // else: skip this empty widget (already collapsed).
+    } else {
+      rebuilt.push(w);
+    }
+  }
+
+  // Re-pack the grid deterministically so coordinates stay non-overlapping.
+  const packer = new GridPacker();
+  return rebuilt.map((w) => ({
+    ...w,
+    layout: {
+      ...packer.next(w.layout.w, w.layout.h),
+      pinned: w.layout.pinned,
+      collapsed: w.layout.collapsed,
+    },
+  }));
+}
+
+// Re-export for callers (ReadOnlyCanvasView) that group widgets by tier.
+export { tierFor, TIER_LABELS, TIER_ORDER };
+export type { TierName };

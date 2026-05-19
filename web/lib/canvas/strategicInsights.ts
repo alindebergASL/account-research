@@ -225,7 +225,12 @@ const MATURITY_INTERPRETATION: Record<number, string> = {
 };
 
 function notEmpty(s: unknown): s is string {
-  return typeof s === "string" && s.trim().length > 0;
+  if (typeof s !== "string") return false;
+  const trimmed = s.trim();
+  if (trimmed.length === 0) return false;
+  // Treat scaffold placeholders ("Not found", "—", "n/a", "unknown") as
+  // missing so executive copy never surfaces raw placeholder text.
+  return !/^(not found|—|n\/a|unknown)\.?$/i.test(trimmed);
 }
 
 export function buildAITakeaways(brief: Brief): AITakeawaysData {

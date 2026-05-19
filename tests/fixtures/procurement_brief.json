@@ -1,0 +1,38 @@
+{
+  "account_name": "Procurement Co",
+  "segment": "Procurement",
+  "generated_at": "2026-05-01T00:00:00.000Z",
+  "audience": "internal",
+  "snapshot": "Two active RFPs, light risk profile.",
+  "priority_summary": "Procurement-window account.",
+  "recent_signals": [],
+  "ai_tech_maturity": { "rating": 2, "rationale": "Early." },
+  "top_initiatives": [
+    { "title": "Identity refresh", "detail": "SSO", "confidence": "Medium", "source": "press" }
+  ],
+  "technical_footprint": {
+    "ai_in_production": [],
+    "active_pilots": [],
+    "cloud_platforms": [],
+    "data_infrastructure": "Not found",
+    "clinical_platforms": "Not found",
+    "analytics_bi_stack": "Not found",
+    "build_vs_buy_posture": "Not found",
+    "competitive_incumbents": []
+  },
+  "programs_procurement": {
+    "modernization_grants": ["ARPA grant — pending"],
+    "consortium_purchasing": [],
+    "active_rfps_contracts": ["Cybersecurity MDR RFP", "Analytics platform RFP"],
+    "ai_governance_policy": "Not found",
+    "public_ai_use_cases": []
+  },
+  "personas": [],
+  "buying_path": "Not found",
+  "first_angle": "Lead on procurement.",
+  "risks": [],
+  "competitive_signals": [],
+  "next_action": "Bid on the MDR RFP.",
+  "extensions": [],
+  "sources": []
+}

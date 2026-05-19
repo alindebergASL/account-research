@@ -85,12 +85,28 @@ export type Evidence = z.infer<typeof Evidence>;
 
 // ---- widget data shapes ----------------------------------------------------
 
+// Visual-form discriminator on the planner-aware data payloads. The Zod
+// enum is the source of truth; the planner / helpers re-export the same
+// string union from `visualGrammar.ts`. Only `SectionRefData` and
+// `OpportunityRiskSplitData` carry this field — adding it on a shared
+// base would broaden the schema surface unnecessarily.
+export const VisualForm = z.enum([
+  "default",
+  "timeline",
+  "persona-map",
+  "tension-matrix",
+]);
+export type VisualForm = z.infer<typeof VisualForm>;
+
 export const SectionRefData = z.object({
   section_key: z.string(),
   preview: z.string(),
   // Concise cards use `preview`; drill-in detail uses `full_text` when
   // available so opening a widget does not show the same truncated copy.
   full_text: z.string().optional(),
+  // Optional planner-selected visual form. Defaults to "default", which
+  // preserves the existing renderer path.
+  form: VisualForm.optional(),
 });
 
 // Same shape used inline for evidence-board items; richer than the
@@ -211,6 +227,9 @@ export const OpportunityRiskSplitData = z.object({
     top: z.object({ text: z.string() }).nullable(),
   }),
   balance: z.enum(["opportunity-heavy", "risk-heavy", "balanced"]),
+  // Optional planner-selected visual form. When "tension-matrix" the
+  // renderer dispatches to the matrix component instead of the bar split.
+  form: VisualForm.optional(),
 });
 
 export const MomentumStripData = z.object({
