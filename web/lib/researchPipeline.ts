@@ -462,12 +462,73 @@ function fakeBrief(intake: Intake, mode: ResearchMode): Brief {
   };
 }
 
+// Optional dispatcher context. The public signature remains
+// `runResearchPipeline(intake)` for legacy callers; the worker can
+// additionally pass `{user_id, brief_id}` so the Hermes adapter can
+// attribute the `hermes_jobs` row when `HERMES_RESEARCH_ENABLED=1`.
+export type ResearchPipelineContext = {
+  user_id?: string | null;
+  brief_id?: string | null;
+};
+
 export async function runResearchPipeline(
   intake: Intake,
+  ctx?: ResearchPipelineContext,
 ): Promise<PipelineResult> {
   if (!intake.account || !intake.account.trim()) {
     throw new PipelineError("Missing 'account' name");
   }
+
+  // Dispatcher: route through Hermes runtime when the per-feature flag
+  // is on. Fake-provider verification stays on the direct path so the
+  // existing RESEARCH_WORKER_FAKE_PROVIDER contract is unchanged.
+  //
+  // Failure policy (matches plan PR-2): in fake mode, surface the error
+  // (it's a bug, not a fallback opportunity). In real Hermes mode, log
+  // a sanitized fallback marker and run the direct Anthropic path, so
+  // a runtime hiccup never blocks a research job.
+  if (
+    !process.env.RESEARCH_WORKER_FAKE_PROVIDER &&
+    process.env.HERMES_RESEARCH_ENABLED === "1"
+  ) {
+    // Lazy import to avoid pulling the hermes adapter (and its DB
+    // dependencies) into bundles that never read the flag.
+    const { runResearchViaHermes, HermesResearchAdapterError } = await import(
+      "./hermes/researchAdapter"
+    );
+    const { hermesRuntimeFake } = await import("./hermes/config");
+    const { redactSensitiveString } = await import("./hermes/sanitize");
+    try {
+      return await runResearchViaHermes(intake, {
+        user_id: ctx?.user_id ?? "anonymous",
+        brief_id: ctx?.brief_id ?? null,
+      });
+    } catch (err) {
+      if (hermesRuntimeFake()) {
+        // In fake mode, a thrown error is a real bug — do not paper
+        // over it with a fallback.
+        throw err;
+      }
+      const message =
+        err instanceof HermesResearchAdapterError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[hermes.research.fallback] ${redactSensitiveString(message)}`,
+      );
+      // Fall through to the direct Anthropic path below.
+    }
+  }
+
+  return runDirectAnthropicResearch(intake);
+}
+
+async function runDirectAnthropicResearch(
+  intake: Intake,
+): Promise<PipelineResult> {
   const mode: ResearchMode =
     intake.mode === "quick" || intake.mode === "deep"
       ? intake.mode

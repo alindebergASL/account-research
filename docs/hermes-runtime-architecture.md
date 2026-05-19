@@ -90,6 +90,61 @@ Operators should walk the runtime up in this exact order. Skipping a step risks 
 4. **Step 3 — production.**
    Only after lab passes all of the above does any production enablement happen, and only behind explicit operator action — never as part of a code PR.
 
+## Research adapter (PR 2)
+
+`HERMES_RESEARCH_ENABLED=1` toggles dispatcher routing inside
+`web/lib/researchPipeline.ts`. When the flag is **off** (the default),
+`runResearchPipeline()` is byte-for-byte the existing direct Anthropic
+path — no Hermes code is loaded, no `hermes_jobs` row is created.
+
+When the flag is **on**, the dispatcher delegates to
+`runResearchViaHermes()` in `web/lib/hermes/researchAdapter.ts`. That
+adapter:
+
+- Creates a `hermes_jobs` row (`kind="research"`, `fake=1` when
+  `HERMES_RUNTIME_FAKE=1`).
+- Emits an ordered `job.started` event whose payload contains only a
+  sanitized `input_summary` (account name, mode, region, audience plus
+  `has_goal` / `has_notes` booleans). Raw `notes` and any prompt text
+  are never persisted.
+- Calls `runHermesResearch()` from the runtime client (fake stub or
+  loopback-only HTTP POST).
+- On success, forwards any runtime-provided events, emits a
+  `job.completed` event with a sanitized `result_summary`, marks the
+  job `done`, and returns a value mapped into the existing
+  `PipelineResult` shape. The public function signature of
+  `runResearchPipeline()` is unchanged.
+- On failure, emits a sanitized `job.failed` event, marks the job
+  `failed` with a sanitized error string, and throws
+  `HermesResearchAdapterError({jobId, kind, message})` — never a raw
+  provider error.
+
+### Fake-mode determinism
+
+`HERMES_RUNTIME_FAKE=1` combined with `HERMES_RESEARCH_ENABLED=1`
+produces deterministic adapter output suitable for verification. Run
+`npm run verify:hermes-research-adapter` in `web/` to exercise the
+fake path, dispatcher routing, and the failure path without any model
+spend.
+
+### Failure-mode policy
+
+The dispatcher implements **fall back to direct Anthropic on real
+Hermes runtime failure**:
+
+- In `HERMES_RUNTIME_FAKE=1` mode, a thrown error is treated as a bug
+  in the lab plumbing and is re-thrown — no fallback. This keeps fake
+  verification honest.
+- In real `HERMES_RUNTIME_ENABLED=1` mode, the dispatcher logs a
+  sanitized `[hermes.research.fallback]` line and runs the existing
+  direct Anthropic pipeline so a runtime hiccup never blocks a
+  research job. The Hermes side already recorded a `job.failed` event
+  and a sanitized error column for operator review.
+
+This adapter introduces **no new public route**. Public share routes
+(`web/app/s/**`, `web/app/api/share/**`) remain free of any Hermes
+import — verified by repository grep.
+
 ## Guardrails restated
 
 - No new public surface. The `hermes-events` route is authenticated.

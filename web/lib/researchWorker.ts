@@ -250,7 +250,10 @@ async function executeResearchJob(job: ResearchJobRow) {
       });
     }
 
-    const { brief, stages } = await runResearchPipeline(intake);
+    const { brief, stages } = await runResearchPipeline(intake, {
+      user_id: job.user_id,
+      brief_id: job.target_brief_id ?? null,
+    });
 
     if (currentStatus(job.id) === "cancelled") {
       // eslint-disable-next-line no-console
