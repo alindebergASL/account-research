@@ -352,7 +352,7 @@ export default function BriefChat({
                   </button>
                 </div>
                 <p className="mt-1.5 text-[11px] text-muted">
-                  Sonnet 4.6 / Hermes runtime when enabled · cmd+enter sends
+                  Sonnet 4.6 / Hermes runtime when enabled · Enter sends, Shift+Enter adds a line
                 </p>
               </form>
             </motion.aside>
