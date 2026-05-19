@@ -123,6 +123,15 @@ async function main() {
   assert(result.reply.includes("[fake] Hermes chat received"), "fake chat reply returned");
   assert(result.patches_applied.length === 0, "fake chat returns no patches");
   assert(result.patch_errors.length === 0, "fake chat returns no patch errors");
+  assert(result.canvas_version === 1, `fake writable chat saves canvas version 1, got ${result.canvas_version}`);
+  const savedCanvas = conn
+    .prepare(`SELECT version, source, canvas_json FROM canvas_states WHERE brief_id = ?`)
+    .get(briefId) as { version: number; source: string; canvas_json: string } | undefined;
+  assert(savedCanvas?.version === 1, "fake writable chat persisted canvas state version 1");
+  assert(savedCanvas.source === "fake", "fake writable chat persisted fake canvas source");
+  const parsedCanvas = JSON.parse(savedCanvas.canvas_json);
+  assert(parsedCanvas.account_name === sampleBrief.account_name, "fake canvas targets the active brief");
+  assert(Array.isArray(parsedCanvas.widgets) && parsedCanvas.widgets.length > 0, "fake canvas has renderable widgets");
 
   const afterJobs = (conn.prepare(`SELECT COUNT(*) AS c FROM hermes_jobs WHERE kind = 'chat'`).get() as { c: number }).c;
   assert(afterJobs === beforeJobs + 1, "one fake chat job created");

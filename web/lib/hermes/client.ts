@@ -15,6 +15,7 @@
 // This module makes NO live model calls in any mode. The "hermes" mode
 // only ever talks to `HERMES_RUNTIME_URL` (default 127.0.0.1:8787),
 // which is a future internal service — not a public API.
+import { buildReadOnlyCanvasFromBrief } from "../canvas/fromBrief";
 import {
   getHermesRuntimeUrlChecked,
   hermesRuntimeMode,
@@ -166,11 +167,26 @@ function fakeResearch(req: HermesResearchRequest): HermesResearchResponse {
 }
 
 function fakeChat(req: HermesChatRequest): HermesChatResponse {
+  const canvas = req.can_write
+    ? buildReadOnlyCanvasFromBrief({ briefId: req.brief_id, brief: req.brief })
+    : undefined;
   return {
     reply: `[fake] Hermes chat received: "${req.message.slice(0, 64)}"`,
     patches_applied: [],
     patch_errors: [],
-    events: [{ type: "chat.message", title: "fake chat reply" }],
+    canvas,
+    events: [
+      { type: "chat.message", title: "fake chat reply" },
+      ...(canvas
+        ? [
+            {
+              type: "canvas.synthesis.started" as const,
+              title: "fake canvas synthesis",
+              payload: { trigger: "chat", fake: true },
+            },
+          ]
+        : []),
+    ],
   };
 }
 
