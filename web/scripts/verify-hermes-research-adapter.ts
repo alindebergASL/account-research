@@ -48,6 +48,8 @@ const {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { listHermesEventsForJob } =
   require("../lib/hermes/events") as typeof import("../lib/hermes/events");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Brief: BriefSchema } = require("../lib/schema") as typeof import("../lib/schema");
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) {
@@ -122,6 +124,13 @@ async function main() {
 
   assert(result && typeof result === "object", "fake_path: returns an object");
   assert(result.brief && typeof result.brief === "object", "fake_path: brief present");
+  const parsedFakeBrief = BriefSchema.safeParse(result.brief);
+  assert(
+    parsedFakeBrief.success,
+    `fake_path: brief passes worker BriefSchema.parse boundary${
+      parsedFakeBrief.success ? "" : `: ${parsedFakeBrief.error.message}`
+    }`,
+  );
   assert(Array.isArray(result.stages), "fake_path: stages is array");
   assert(
     result.quality && typeof result.quality === "object",
