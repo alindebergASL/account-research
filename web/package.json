@@ -8,6 +8,7 @@
     "start": "next start",
     "worker": "tsx scripts/research-worker.ts",
     "verify:hermes-foundation": "tsx scripts/verify-hermes-foundation.ts",
+    "verify:hermes-research-adapter": "tsx scripts/verify-hermes-research-adapter.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },
