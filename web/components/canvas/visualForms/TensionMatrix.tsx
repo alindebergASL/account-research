@@ -66,15 +66,52 @@ function Quadrant({
   risks: { text: string }[];
   testid: string;
 }) {
+  const empty = items.length === 0 && risks.length === 0;
   return (
     <div
       data-testid={testid}
-      className="rounded-lg border border-[var(--line)] bg-white p-2 min-w-0 flex flex-col gap-1"
+      className="relative rounded-lg border border-[var(--line)] bg-white p-2 min-w-0 flex flex-col gap-1 min-h-[4.5rem]"
     >
-      <div className="text-[10px] uppercase tracking-wider text-muted truncate">
+      {/*
+        Quadrant label as a soft watermark in the corner. Present even in
+        empty quadrants so the reader sees the framework, not just the
+        items. The visible item chips render above the watermark.
+      */}
+      <span
+        data-testid={`tension-matrix-watermark-${testid.replace("tension-matrix-", "")}`}
+        aria-hidden="true"
+        className="pointer-events-none absolute right-1.5 bottom-1 text-[9px] font-semibold uppercase tracking-widest text-muted/50 truncate max-w-[80%] text-right"
+      >
         {label}
+      </span>
+      {/* Mobile: dots-only treatment. Each item becomes a colored dot;
+          tap-target the whole quadrant to open the modal. */}
+      <div
+        data-testid={`${testid}-dots`}
+        className="sm:hidden flex flex-wrap gap-1 min-w-0"
+      >
+        {items.map((it, i) => (
+          <span
+            key={`m-init-${i}`}
+            title={it.text}
+            className="size-2 rounded-full bg-[var(--accent)]"
+            aria-label={it.text}
+          />
+        ))}
+        {risks.map((r, i) => (
+          <span
+            key={`m-risk-${i}`}
+            title={r.text}
+            className="size-2 rounded-sm bg-[var(--tone-risk)]"
+            aria-label={r.text}
+          />
+        ))}
+        {empty && (
+          <span className="text-[10px] text-muted/70">no items</span>
+        )}
       </div>
-      <div className="flex flex-wrap gap-1.5 min-w-0">
+      {/* Desktop: full chip rendering. */}
+      <div className="hidden sm:flex flex-wrap gap-1.5 min-w-0">
         {items.map((it, i) => (
           <span
             key={`init-${i}`}
@@ -95,8 +132,8 @@ function Quadrant({
             <span className="truncate">{r.text}</span>
           </span>
         ))}
-        {items.length === 0 && risks.length === 0 && (
-          <span className="text-[10px] text-muted">—</span>
+        {empty && (
+          <span className="text-[10px] text-muted/70">no items</span>
         )}
       </div>
     </div>
@@ -129,40 +166,94 @@ function distribute(
   return out;
 }
 
+// Axis labels are surfaced as visible legend strings (rotated for the Y
+// axis) so the framework is readable without relying on the modal copy.
+const AXIS_X_LABEL = "Initiative momentum (low → high)";
+const AXIS_Y_LABEL = "Risk exposure (low → high)";
+
+function populatedQuadrants(
+  cells: ReturnType<typeof distribute>,
+): QuadrantKey[] {
+  const out: QuadrantKey[] = [];
+  for (const k of Object.keys(cells) as QuadrantKey[]) {
+    if (cells[k].items.length + cells[k].risks.length > 0) out.push(k);
+  }
+  return out;
+}
+
 export function TensionMatrixTile({
   widget,
 }: {
   widget: import("zod").infer<typeof OpportunityRiskSplitWidget>;
 }) {
   const cells = distribute(widget);
+  const populated = populatedQuadrants(cells);
+  const concentrated = populated.length === 1 ? populated[0] : null;
   return (
     <div data-testid="tension-matrix" className="space-y-1 min-w-0">
-      <div className="grid grid-cols-2 grid-rows-2 gap-2 min-w-0">
-        <Quadrant
-          label={QUADRANT_LABELS["watch-outs"]}
-          items={cells["watch-outs"].items}
-          risks={cells["watch-outs"].risks}
-          testid="tension-matrix-watch-outs"
-        />
-        <Quadrant
-          label={QUADRANT_LABELS["high-stakes-plays"]}
-          items={cells["high-stakes-plays"].items}
-          risks={cells["high-stakes-plays"].risks}
-          testid="tension-matrix-high-stakes-plays"
-        />
-        <Quadrant
-          label={QUADRANT_LABELS["quick-wins"]}
-          items={cells["quick-wins"].items}
-          risks={cells["quick-wins"].risks}
-          testid="tension-matrix-quick-wins"
-        />
-        <Quadrant
-          label={QUADRANT_LABELS["headline-bets"]}
-          items={cells["headline-bets"].items}
-          risks={cells["headline-bets"].risks}
-          testid="tension-matrix-headline-bets"
-        />
+      {/* Axes are laid out as a small grid: vertical Y label on the left
+          (rotated 90°), the 2×2 matrix occupies the main cell, and the X
+          label sits along the bottom. Watermark quadrant labels render
+          inside each cell so the framework reads even when empty. */}
+      <div className="flex items-stretch gap-2 min-w-0">
+        <div
+          data-testid="tension-matrix-axis-y"
+          aria-label={AXIS_Y_LABEL}
+          className="shrink-0 flex items-center"
+        >
+          <span
+            className="text-[9px] uppercase tracking-widest text-muted whitespace-nowrap"
+            style={{
+              writingMode: "vertical-rl",
+              transform: "rotate(180deg)",
+            }}
+          >
+            {AXIS_Y_LABEL}
+          </span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="grid grid-cols-2 grid-rows-2 gap-2 min-w-0">
+            <Quadrant
+              label={QUADRANT_LABELS["watch-outs"]}
+              items={cells["watch-outs"].items}
+              risks={cells["watch-outs"].risks}
+              testid="tension-matrix-watch-outs"
+            />
+            <Quadrant
+              label={QUADRANT_LABELS["high-stakes-plays"]}
+              items={cells["high-stakes-plays"].items}
+              risks={cells["high-stakes-plays"].risks}
+              testid="tension-matrix-high-stakes-plays"
+            />
+            <Quadrant
+              label={QUADRANT_LABELS["quick-wins"]}
+              items={cells["quick-wins"].items}
+              risks={cells["quick-wins"].risks}
+              testid="tension-matrix-quick-wins"
+            />
+            <Quadrant
+              label={QUADRANT_LABELS["headline-bets"]}
+              items={cells["headline-bets"].items}
+              risks={cells["headline-bets"].risks}
+              testid="tension-matrix-headline-bets"
+            />
+          </div>
+          <div
+            data-testid="tension-matrix-axis-x"
+            className="mt-1 text-[9px] uppercase tracking-widest text-muted text-center"
+          >
+            {AXIS_X_LABEL}
+          </div>
+        </div>
       </div>
+      {concentrated && (
+        <p
+          data-testid="tension-matrix-concentration"
+          className="text-[10px] text-muted"
+        >
+          Concentrated in {QUADRANT_LABELS[concentrated]}.
+        </p>
+      )}
       <p className="text-[10px] text-muted">
         Balance: {widget.data.balance.replace("-", " ")} · initiatives vs.
         risks, bucketed.

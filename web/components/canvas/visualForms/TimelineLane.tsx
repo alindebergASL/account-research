@@ -60,22 +60,22 @@ function Swim({ lane }: { lane: Swimlane }) {
   return (
     <div
       data-testid={`timeline-lane-row-${lane.key}`}
-      className="flex items-center gap-2 min-w-0 py-1"
+      className="min-w-0 py-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2"
     >
-      <div className="w-20 shrink-0 text-[10px] uppercase tracking-wider text-muted">
+      <div className="w-full sm:w-20 sm:shrink-0 text-[10px] uppercase tracking-wider text-muted">
         {lane.label}
       </div>
-      <div className="flex flex-1 items-center gap-3 overflow-x-auto">
+      <div className="flex flex-col gap-1 sm:flex-row sm:flex-1 sm:items-center sm:gap-3 sm:overflow-x-auto">
         {lane.items.map((item, i) => (
           <div
             key={`${lane.key}-${i}`}
-            className="flex items-center gap-1.5 shrink-0"
+            className="flex items-center gap-1.5 sm:shrink-0"
           >
             <span
               className="size-2 rounded-full bg-[var(--accent)]"
               aria-hidden="true"
             />
-            <span className="text-xs leading-snug max-w-[12rem] truncate">
+            <span className="text-xs leading-snug sm:max-w-[12rem] sm:truncate break-words">
               {item.text}
             </span>
             {item.caption && (
@@ -98,7 +98,7 @@ export function TimelineLaneTile({
     <div data-testid="timeline-lane" className="space-y-1 min-w-0">
       {swimlanes.length === 0 ? (
         <p className="text-xs text-muted">
-          No sequence-anchored items available.
+          Source coverage missing — add cited evidence before action.
         </p>
       ) : (
         swimlanes.slice(0, 3).map((lane) => <Swim key={lane.key} lane={lane} />)
@@ -123,7 +123,9 @@ export function TimelineLaneDetail({
         absolute time axis is implied.
       </p>
       {swimlanes.length === 0 ? (
-        <p className="text-sm text-muted">No items in any swimlane.</p>
+        <p className="text-sm text-muted">
+          Source coverage missing — add cited evidence before action.
+        </p>
       ) : (
         swimlanes.map((lane) => (
           <section

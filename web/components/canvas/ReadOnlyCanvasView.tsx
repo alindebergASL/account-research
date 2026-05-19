@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Lock } from "lucide-react";
 import type { Canvas, CanvasWidget } from "../../lib/canvas/schema";
 import { getDescriptor } from "../../lib/canvas/registry";
+import { tierFor, TIER_LABELS, type TierName } from "../../lib/canvas/visualGrammar";
 import WidgetTile from "./WidgetTile";
 import DrillModal from "../DrillModal";
 import ExecutiveCockpit from "./ExecutiveCockpit";
@@ -97,6 +98,17 @@ function ModalFooter({ widget }: { widget: CanvasWidget }) {
   );
 }
 
+function TierHeader({ tier }: { tier: TierName }) {
+  return (
+    <div className="flex items-center gap-3 pb-2">
+      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">
+        {TIER_LABELS[tier]}
+      </span>
+      <span className="flex-1 h-px bg-[var(--line)]" aria-hidden="true" />
+    </div>
+  );
+}
+
 function editorialModuleCount(canvas: Canvas): number {
   return canvas.widgets.filter((w) => w.kind !== "metric").length;
 }
@@ -172,15 +184,40 @@ export default function ReadOnlyCanvasView({ canvas }: { canvas: Canvas }) {
         data-legacy-testid="canvas-widget-grid"
         className="grid grid-cols-1 md:grid-cols-12 gap-4 auto-rows-min"
       >
-        {canvas.widgets.map((w) => (
-          <div
-            key={w.id}
-            id={w.id}
-            className={`col-span-1 min-w-0 ${gridSpanClass(w.layout.w)} scroll-mt-24`}
-          >
-            <WidgetTile widget={w} onOpen={() => setOpenId(w.id)} />
-          </div>
-        ))}
+        {(() => {
+          // Walk widgets in emission order; insert a full-width tier
+          // header before the first widget of each tier. Tiers with zero
+          // widgets do not render a header — empty tiers are honest.
+          // Subsequent widgets in the same tier (after another tier
+          // intervened) follow without a duplicate header.
+          const seenTiers = new Set<TierName>();
+          const out: React.ReactNode[] = [];
+          for (const w of canvas.widgets) {
+            const tier = tierFor(w);
+            if (!seenTiers.has(tier)) {
+              seenTiers.add(tier);
+              out.push(
+                <div
+                  key={`tier-${tier}`}
+                  data-testid={`tier-header-${tier}`}
+                  className="col-span-1 md:col-span-12 mt-4 first:mt-0"
+                >
+                  <TierHeader tier={tier} />
+                </div>,
+              );
+            }
+            out.push(
+              <div
+                key={w.id}
+                id={w.id}
+                className={`col-span-1 min-w-0 ${gridSpanClass(w.layout.w)} scroll-mt-24`}
+              >
+                <WidgetTile widget={w} onOpen={() => setOpenId(w.id)} />
+              </div>,
+            );
+          }
+          return out;
+        })()}
       </div>
 
       <DrillModal

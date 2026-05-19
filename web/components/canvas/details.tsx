@@ -22,6 +22,7 @@ import {
   aggregateConfidence,
   sectionKeyTone,
 } from "./visuals";
+import { emptyStateMessage } from "../../lib/canvas/emptyStates";
 import {
   widgetFraming,
   sectionWhyItMattersText,
@@ -264,7 +265,7 @@ export function EvidenceBoardDetail({
         </section>
       )}
       {widget.data.items.length === 0 ? (
-        <p className="text-sm text-muted">No evidence available.</p>
+        <p className="text-sm text-muted">{emptyStateMessage("evidence_board")}</p>
       ) : (
         <ul className="space-y-3">
           {widget.data.items.map((it, i) => (
@@ -372,6 +373,32 @@ function priorityLabel(s?: "low" | "medium" | "high"): string | null {
   return "Priority: Low";
 }
 
+// Derive 2-3 concrete validation questions for the Recommended Move from
+// the expected_outcome + evidence tags. Deterministic; never fabricates
+// account-specific facts. Returns at most 3 entries.
+function validationQuestionsFor(a: RichAction): string[] {
+  const out: string[] = [];
+  const tags = new Set((a.evidence ?? []).map((e) => (e.tag || "").toLowerCase()));
+  if (a.expectedOutcome && a.expectedOutcome.trim().length > 0) {
+    out.push(
+      `Is the expected outcome ("${a.expectedOutcome.replace(/\s+/g, " ").trim().slice(0, 90)}") realistic for this account within one quarter?`,
+    );
+  }
+  if (!tags.has("persona")) {
+    out.push("Who on the buying committee can sponsor this move?");
+  }
+  if (!tags.has("initiative")) {
+    out.push("Which named initiative does this move attach to?");
+  }
+  if (!tags.has("signal") && !tags.has("primary")) {
+    out.push("What recent public signal makes this the right move now?");
+  }
+  if (a.risk && a.risk.trim().length > 0) {
+    out.push(`What evidence would invalidate the caveat: "${a.risk.replace(/\s+/g, " ").trim().slice(0, 90)}"?`);
+  }
+  return out.slice(0, 3);
+}
+
 export function ActionPanelDetail({
   widget,
 }: {
@@ -437,7 +464,7 @@ export function ActionPanelDetail({
               )}
 
               {/* 4. Evidence backing — collapsible at < sm via native <details>. */}
-              <details className="group">
+              <details className="group" open>
                 <summary className="cursor-pointer list-none">
                   <SectionHeading>Evidence backing</SectionHeading>
                 </summary>
@@ -484,6 +511,26 @@ export function ActionPanelDetail({
                   </ul>
                 )}
               </details>
+
+              {/* 4b. What to validate — explicit subsection per the
+                  Recommended Move anchor. Derived from expected outcome
+                  and the gaps in evidence tags. */}
+              {(() => {
+                const items = validationQuestionsFor(a);
+                if (items.length === 0) return null;
+                return (
+                  <section data-testid="recommended-move-validate">
+                    <SectionHeading>What to validate</SectionHeading>
+                    <ul className="mt-1 list-disc pl-5 text-sm space-y-1">
+                      {items.map((q, j) => (
+                        <li key={j} className="leading-snug">
+                          {q}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })()}
 
               {/* 5. Caveat / risk — collapsible at < sm. */}
               <details className="group">
@@ -577,7 +624,7 @@ export function OpenQuestionsDetail({
     <div>
       <Meta why_included={widget.why_included} source={widget.source} />
       {widget.data.questions.length === 0 ? (
-        <p className="text-sm text-muted">No open questions.</p>
+        <p className="text-sm text-muted">{emptyStateMessage("open_questions")}</p>
       ) : (
         <ul className="space-y-3 text-sm">
           {widget.data.questions.map((q, i) => (
@@ -661,12 +708,12 @@ export function ExtensionDetail({
       })()}
       {d.ext_kind === "card" && (
         <p className="text-sm leading-relaxed whitespace-pre-line">
-          {d.body || "—"}
+          {d.body || emptyStateMessage("extension")}
         </p>
       )}
       {d.ext_kind === "narrative" && (
         <p className="text-sm leading-relaxed whitespace-pre-line">
-          {d.body || "—"}
+          {d.body || emptyStateMessage("extension")}
         </p>
       )}
       {d.ext_kind === "list" && (
@@ -675,7 +722,7 @@ export function ExtensionDetail({
             <li key={i}>{extensionListItemText(it)}</li>
           ))}
           {(d.items ?? []).length === 0 && (
-            <li className="text-muted">No items.</li>
+            <li className="text-muted">{emptyStateMessage("extension")}</li>
           )}
         </ul>
       )}
@@ -799,7 +846,7 @@ export function StrategicSignalRadarDetail({
                 <p className="mt-2 text-sm leading-snug text-ink">{q.sample}</p>
               ) : (
                 <p className="mt-2 text-sm text-muted">
-                  No signals match this quadrant yet.
+                  {emptyStateMessage("signal_radar")}
                 </p>
               )}
               {q.confidence && (
@@ -864,7 +911,7 @@ export function OpportunityRiskSplitDetail({
               )}
             </>
           ) : (
-            <p className="mt-2 text-sm text-muted">No opportunities recorded.</p>
+            <p className="mt-2 text-sm text-muted">{emptyStateMessage("opportunities")}</p>
           )}
         </div>
         <div
@@ -890,7 +937,7 @@ export function OpportunityRiskSplitDetail({
               {d.risks.top.text}
             </p>
           ) : (
-            <p className="mt-2 text-sm text-muted">No risks recorded.</p>
+            <p className="mt-2 text-sm text-muted">{emptyStateMessage("risks")}</p>
           )}
         </div>
       </div>
@@ -976,7 +1023,7 @@ export function AITakeawaysDetail({
     <div>
       <Meta why_included={widget.why_included} source={widget.source} />
       {items.length === 0 ? (
-        <p className="text-sm text-muted">No takeaways available.</p>
+        <p className="text-sm text-muted">{emptyStateMessage("default")}</p>
       ) : (
         <ul className="space-y-3">
           {items.map((t, i) => (

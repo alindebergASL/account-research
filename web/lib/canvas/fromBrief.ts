@@ -8,7 +8,15 @@ import {
 } from "./strategicInsights";
 import { buildRecommendedActions } from "./recommendedActions";
 import { buildCanvasLayoutPlan } from "./layoutPlanner";
-import { isBarStyleEmittedWidget, type VisualForm } from "./visualGrammar";
+import {
+  isBarStyleEmittedWidget,
+  isEmptyWidgetPayload,
+  tierFor,
+  TIER_LABELS,
+  TIER_ORDER,
+  type TierName,
+  type VisualForm,
+} from "./visualGrammar";
 import { VISUAL_GRAMMAR_RULES } from "./visualGrammar";
 
 // One-line rollback flag. When false, the planner-derived `form` is not
@@ -592,9 +600,12 @@ export function buildReadOnlyCanvasFromBrief({
   // promotion of non-bar forms. When the planner is off, the widget
   // list keeps the layout the original GridPacker assigned during
   // emission (rollback parity).
-  const finalWidgets = plannerOn
+  const planned = plannerOn
     ? applyPlannerLayout(widgets, layoutPlan)
     : widgets;
+  const finalWidgets = plannerOn
+    ? applyTierCollapse(planned, generatedAt)
+    : planned;
 
   const evidenceCount = finalWidgets.reduce(
     (n, w) => n + w.evidence.length + (w.kind === "evidence_board" ? w.data.items.length : 0),
@@ -764,3 +775,142 @@ function buildExtensionWidget(
       };
   }
 }
+
+// Title cased for the gap widget per tier.
+function gapTitleForTier(tier: TierName): string {
+  return `Missing intelligence — ${TIER_LABELS[tier].toLowerCase()}`;
+}
+
+// Build a short "validate next" hypothesis for an empty widget so the
+// collapsed gap card lists concrete validation suggestions, not just a
+// dead "this is empty" line.
+function validateNextFor(widget: CanvasWidget): string {
+  switch (widget.id) {
+    case "section-personas":
+      return "Confirm the buying committee (CMIO / CIO / procurement).";
+    case "section-buying-path":
+      return "Map the decision path with the account team before outreach.";
+    case "section-risks":
+      return "Surface a material risk before the next executive touch.";
+    case "section-competitive-signals":
+      return "Check incumbents in the saved evidence.";
+    case "section-recent-signals":
+      return "Pull a recent public signal to anchor outreach.";
+    case "section-top-initiatives":
+      return "Validate the account's stated priority initiatives.";
+    case "section-programs-procurement":
+      return "Confirm active RFPs / contracts or grants.";
+    case "section-technical-footprint":
+      return "Validate cloud / clinical / AI footprint with the account team.";
+    case "evidence-board":
+      return "Add cited evidence before recommending a move.";
+    case "insight-signal-radar":
+      return "No public signal yet — verify in discovery.";
+    case "insight-opportunity-risk":
+      return "No opportunity / risk surfaced — confirm before action.";
+    case "insight-momentum-strip":
+      return "No momentum captured — refresh the brief.";
+    case "insight-ai-takeaways":
+      return "No takeaways yet — capture the next executive read.";
+    case "metric-ai-maturity":
+      return "Confirm the account's AI maturity rating.";
+    default:
+      if (widget.id.startsWith("extension-"))
+        return "Add a citation or note to this extension.";
+      return "Validate before action.";
+  }
+}
+
+// Collapse ≥ 2 empty widgets in a tier into one synthetic gap widget.
+// Reuses the existing `open_questions` kind so no new widget kind is
+// introduced. The synthetic widget's id is `gaps-<tier-slug>`. Single
+// empty widgets are left in place — the threshold is ≥ 2 so the collapse
+// only kicks in for real visual clutter.
+function applyTierCollapse(
+  widgets: CanvasWidget[],
+  generatedAt: string,
+): CanvasWidget[] {
+  if (widgets.length === 0) return widgets;
+  // Bucket empties per tier without re-ordering the emitted list. The
+  // planner already chose a top-cluster ordering that satisfies the
+  // bar-style cap; we must preserve it.
+  const emptyIdsByTier: Map<TierName, Set<string>> = new Map();
+  const emptyWidgetsByTier: Map<TierName, CanvasWidget[]> = new Map();
+  for (const w of widgets) {
+    if (!isEmptyWidgetPayload(w)) continue;
+    const t = tierFor(w);
+    if (!emptyIdsByTier.has(t)) emptyIdsByTier.set(t, new Set());
+    if (!emptyWidgetsByTier.has(t)) emptyWidgetsByTier.set(t, []);
+    emptyIdsByTier.get(t)!.add(w.id);
+    emptyWidgetsByTier.get(t)!.push(w);
+  }
+
+  const collapsingTiers = new Set<TierName>();
+  for (const [tier, ids] of emptyIdsByTier) {
+    if (ids.size >= 2) collapsingTiers.add(tier);
+  }
+
+  // Build the rebuilt list: drop empty widgets in collapsing tiers, and
+  // insert one synthetic gap widget at the position of the FIRST empty
+  // for each collapsing tier. Preserves the original ordering.
+  const rebuilt: CanvasWidget[] = [];
+  const seenCollapse = new Set<TierName>();
+  for (const w of widgets) {
+    const t = tierFor(w);
+    const isEmpty = isEmptyWidgetPayload(w);
+    if (collapsingTiers.has(t) && isEmpty) {
+      if (!seenCollapse.has(t)) {
+        seenCollapse.add(t);
+        const empties = emptyWidgetsByTier.get(t) ?? [];
+        const questions = empties.map((e) => ({
+          text: `${e.title}: not yet captured.`,
+          blocking: false,
+          hypothesis: validateNextFor(e),
+        }));
+        const gap: CanvasWidget = {
+          id: `gaps-${t}`,
+          title: gapTitleForTier(t),
+          description: "",
+          source: "system" as const,
+          created_at: generatedAt,
+          updated_at: generatedAt,
+          why_included:
+            "Consolidates widgets with thin or missing data so the canvas stays scannable.",
+          sources: [],
+          layout: {
+            x: 0,
+            y: 0,
+            w: 6,
+            h: Math.min(Math.max(3, questions.length), 6),
+            pinned: false,
+            collapsed: false,
+          },
+          controls: { ...NO_CONTROLS },
+          status: "fresh" as const,
+          evidence: [],
+          kind: "open_questions",
+          data: { questions },
+        };
+        rebuilt.push(gap);
+      }
+      // else: skip this empty widget (already collapsed).
+    } else {
+      rebuilt.push(w);
+    }
+  }
+
+  // Re-pack the grid deterministically so coordinates stay non-overlapping.
+  const packer = new GridPacker();
+  return rebuilt.map((w) => ({
+    ...w,
+    layout: {
+      ...packer.next(w.layout.w, w.layout.h),
+      pinned: w.layout.pinned,
+      collapsed: w.layout.collapsed,
+    },
+  }));
+}
+
+// Re-export for callers (ReadOnlyCanvasView) that group widgets by tier.
+export { tierFor, TIER_LABELS, TIER_ORDER };
+export type { TierName };

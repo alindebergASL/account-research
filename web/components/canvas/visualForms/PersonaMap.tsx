@@ -89,11 +89,64 @@ export function PersonaMapTile({
 
   return (
     <div data-testid="persona-map" className="space-y-2 min-w-0">
+      {/*
+        Mobile (< sm): list-first layout with a "Decision" chip at the top
+        and a left-margin connector indicating which personas have
+        buying_path evidence. Edges-as-SVG are hidden below sm.
+      */}
+      <div className="sm:hidden">
+        <div className="flex items-center gap-2 pb-2">
+          <span
+            className="inline-flex items-center rounded-full bg-[var(--accent)] text-white text-[10px] font-semibold px-2 py-0.5"
+            aria-label="Decision"
+          >
+            Decision
+          </span>
+          <span className="text-[10px] text-muted">
+            Buying committee
+          </span>
+        </div>
+        {personas.length === 0 ? (
+          <p className="text-xs text-muted">
+            Buying committee not yet identified — validate before action.
+          </p>
+        ) : (
+          <ul
+            data-testid="persona-list"
+            className="border-l-2 border-[var(--line)] pl-3 space-y-1.5"
+          >
+            {personas.map((p, i) => {
+              const linked = personaHasEdge(p, buyingPath);
+              return (
+                <li
+                  key={`mlist-${i}`}
+                  data-testid={linked ? "persona-list-linked" : "persona-list-isolated"}
+                  className="relative text-xs leading-snug"
+                  style={
+                    linked
+                      ? {
+                          borderLeft: "2px solid var(--accent)",
+                          marginLeft: "-14px",
+                          paddingLeft: "12px",
+                        }
+                      : undefined
+                  }
+                >
+                  <span className="font-medium">{p.name}</span>{" "}
+                  <span className="text-muted">— {p.title}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      {/* Spatial map (sm and above). */}
       <div
-        className="relative w-full"
+        className="hidden sm:block relative w-full"
         style={{ aspectRatio: "16 / 9", minHeight: 120 }}
       >
         <svg
+          data-testid="persona-map-svg"
           className="absolute inset-0 w-full h-full"
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
@@ -139,7 +192,7 @@ export function PersonaMapTile({
         })}
         {personas.length === 0 && (
           <p className="absolute inset-0 flex items-center justify-center text-xs text-muted">
-            No personas recorded.
+            Buying committee not yet identified — validate before action.
           </p>
         )}
       </div>
