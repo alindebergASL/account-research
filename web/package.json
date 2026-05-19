@@ -11,7 +11,9 @@
     "verify:hermes-research-adapter": "tsx scripts/verify-hermes-research-adapter.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint",
-    "verify:hermes-chat-adapter": "tsx scripts/verify-hermes-chat-adapter.ts"
+    "verify:hermes-chat-adapter": "tsx scripts/verify-hermes-chat-adapter.ts",
+    "verify:hermes-runtime-service": "tsx scripts/verify-hermes-runtime-service.ts",
+    "hermes-runtime": "tsx scripts/hermes-runtime-service.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",

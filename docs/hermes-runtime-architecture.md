@@ -82,7 +82,15 @@ Operators should walk the runtime up in this exact order. Skipping a step risks 
    `HERMES_RUNTIME_FAKE=1 npm run verify:hermes-foundation` in `web/`. Verifies migration 013 applies, fake jobs/events round-trip, sanitization works, Canvas state persists.
 
 2. **Step 1 — localhost runtime + fake providers (no spend).**
-   Once PR 4 lands, stand up the runtime service on `127.0.0.1:8787`. Set `HERMES_RUNTIME_ENABLED=1` only; keep all per-feature flags at `0`. Smoke-test `/v1/health` and re-run the fake research path inside the runtime.
+   Stand up the lab-only runtime service on `127.0.0.1:8787` with `HERMES_RUNTIME_FAKE=1`. Set `HERMES_RUNTIME_ENABLED=1` only for the web/worker clients; keep all per-feature flags at `0` until the service health and contract verification pass. Smoke-test `/health`, bearer-token enforcement, `/v1/research`, `/v1/chat`, and `/v1/canvas-synthesis` with `npm run verify:hermes-runtime-service`.
+
+   The service entrypoint is `web/scripts/hermes-runtime-service.ts`; PM2 lab-only wiring lives in `ecosystem.hermes-lab.config.js` so normal production web/worker reloads do not accidentally start a runtime process. Supported aliases are:
+   - `GET /health`
+   - `POST /v1/research` and `POST /v1/research/run`
+   - `POST /v1/chat` and `POST /v1/chat/turn`
+   - `POST /v1/canvas-synthesis` and `POST /v1/canvas/synthesize`
+
+   The PR-4 implementation refuses non-loopback bind hosts and returns `503 runtime_live_mode_not_implemented` unless fake/no-spend mode is enabled.
 
 3. **Step 2 — per-feature enablement, one at a time.**
    Flip `HERMES_RESEARCH_ENABLED=1` alone first and run a single low-stakes brief end-to-end. Verify direct Anthropic fallback still works when the flag is `0`. Repeat for `HERMES_CHAT_ENABLED` and `HERMES_CANVAS_EVENTS_ENABLED`.
