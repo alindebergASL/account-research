@@ -10,7 +10,8 @@
     "verify:hermes-foundation": "tsx scripts/verify-hermes-foundation.ts",
     "verify:hermes-research-adapter": "tsx scripts/verify-hermes-research-adapter.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint"
+    "lint": "next lint",
+    "verify:hermes-chat-adapter": "tsx scripts/verify-hermes-chat-adapter.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",

@@ -79,6 +79,7 @@ export default function BriefCanvas({
   brief,
   currentBriefId,
   onBriefUpdate,
+  onHermesCanvasEvent,
   canWrite = true,
   isOwner = true,
   canManage = true,
@@ -90,6 +91,7 @@ export default function BriefCanvas({
   brief: Brief;
   currentBriefId?: string;
   onBriefUpdate?: (next: Brief) => void;
+  onHermesCanvasEvent?: () => void;
   canWrite?: boolean;
   isOwner?: boolean;
   canManage?: boolean;
@@ -137,6 +139,7 @@ export default function BriefCanvas({
           briefId={currentBriefId}
           brief={brief}
           onBriefUpdate={onBriefUpdate}
+          onHermesCanvasEvent={onHermesCanvasEvent}
           readOnly={!canWrite}
         />
       )}

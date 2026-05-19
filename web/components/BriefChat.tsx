@@ -12,6 +12,15 @@ import {
 } from "lucide-react";
 import type { Brief } from "@/lib/schema";
 
+type HermesEvent = {
+  id: string;
+  event_type: string;
+  title: string;
+  summary?: string | null;
+  payload?: Record<string, unknown> | null;
+  created_at: number;
+};
+
 type ChatPatch = { op: "set" | "append"; field: string; value: any };
 
 type ChatMessage = {
@@ -35,11 +44,13 @@ export default function BriefChat({
   briefId,
   brief,
   onBriefUpdate,
+  onHermesCanvasEvent,
   readOnly = false,
 }: {
   briefId: string;
   brief: Brief;
   onBriefUpdate?: (next: Brief) => void;
+  onHermesCanvasEvent?: () => void;
   readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -48,6 +59,8 @@ export default function BriefChat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hermesEvents, setHermesEvents] = useState<HermesEvent[]>([]);
+  const [streamConnected, setStreamConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -67,6 +80,32 @@ export default function BriefChat({
       cancelled = true;
     };
   }, [open, historyLoaded, briefId]);
+
+  // Subscribe to Hermes/Canvas events only while the drawer is open.
+  useEffect(() => {
+    if (!open) return;
+    const es = new EventSource(`/api/briefs/${briefId}/hermes-events/stream`);
+    es.addEventListener("ready", () => setStreamConnected(true));
+    es.addEventListener("error", () => setStreamConnected(false));
+    es.addEventListener("hermes-event", (evt) => {
+      try {
+        const data = JSON.parse((evt as MessageEvent).data) as HermesEvent;
+        setHermesEvents((prev) => {
+          if (prev.some((e) => e.id === data.id)) return prev;
+          return [...prev.slice(-7), data];
+        });
+        if (data.event_type === "canvas.state.updated") {
+          onHermesCanvasEvent?.();
+        }
+      } catch {
+        // ignore malformed event frames
+      }
+    });
+    return () => {
+      setStreamConnected(false);
+      es.close();
+    };
+  }, [open, briefId, onHermesCanvasEvent]);
 
   // Auto-scroll to bottom on new messages.
   useEffect(() => {
@@ -252,6 +291,20 @@ export default function BriefChat({
                   <MessageBubble key={m.id} message={m} />
                 ))}
 
+                {hermesEvents.length > 0 && (
+                  <div className="space-y-1 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-xs text-muted">
+                    <div className="flex items-center gap-1.5 font-medium text-ink">
+                      <Sparkles className="size-3" />
+                      Hermes events {streamConnected ? "live" : "reconnecting"}
+                    </div>
+                    {hermesEvents.slice(-3).map((e) => (
+                      <div key={e.id} className="truncate">
+                        {e.title || e.event_type}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {sending && (
                   <div className="flex items-center gap-2 text-sm text-muted">
                     <Loader2 className="size-4 animate-spin" />
@@ -299,7 +352,7 @@ export default function BriefChat({
                   </button>
                 </div>
                 <p className="mt-1.5 text-[11px] text-muted">
-                  Sonnet 4.6 · web_search + brief patching · cmd+enter sends
+                  Sonnet 4.6 / Hermes runtime when enabled · cmd+enter sends
                 </p>
               </form>
             </motion.aside>

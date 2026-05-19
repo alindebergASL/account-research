@@ -12,6 +12,7 @@ import { Brief, type Brief as BriefT } from "@/lib/schema";
 import { BRIEF_CHAT_SYSTEM_PROMPT } from "@/lib/prompt";
 import { applyPatches, type BriefPatch } from "@/lib/briefPatches";
 import { logChatPatchedBrief } from "@/lib/briefEvents";
+import { runChatViaHermes, selectChatPath } from "@/lib/hermes/chatAdapter";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -258,7 +259,8 @@ export async function POST(
   if (!userMessage) {
     return NextResponse.json({ error: "Empty message" }, { status: 400 });
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const chatPath = selectChatPath();
+  if (chatPath === "direct" && !process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: "Server is missing ANTHROPIC_API_KEY" },
       { status: 500 },
@@ -273,6 +275,55 @@ export async function POST(
   const brief = loadBrief(params.id);
   if (!brief) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (chatPath === "hermes") {
+    const history = loadHistory(params.id);
+    try {
+      const result = await runChatViaHermes({
+        brief_id: params.id,
+        user_id: user.id,
+        brief,
+        history: history.map((h) => ({ role: h.role, content: h.content })),
+        message: userMessage,
+        can_write: writer,
+      });
+
+      if (writer && result.brief) {
+        saveBrief(params.id, result.brief);
+      }
+      if (writer && result.patches_applied.length > 0) {
+        const touchedFields = Array.from(
+          new Set(result.patches_applied.map((p) => p.field)),
+        );
+        logChatPatchedBrief({
+          briefId: params.id,
+          actorUserId: user.id,
+          patchesApplied: result.patches_applied.length,
+          patchErrors: result.patch_errors.length,
+          touchedFields,
+        });
+      }
+
+      appendChat(params.id, user.id, "user", userMessage);
+      appendChat(
+        params.id,
+        user.id,
+        "assistant",
+        result.reply,
+        result.patches_applied.length > 0 ? result.patches_applied : undefined,
+      );
+
+      return NextResponse.json({
+        reply: result.reply,
+        patches_applied: result.patches_applied,
+        patch_errors: result.patch_errors,
+        brief: writer ? result.brief : undefined,
+        canvas_version: writer ? result.canvas_version : undefined,
+      });
+    } catch (err: any) {
+      return NextResponse.json({ error: friendlyError(err) }, { status: 500 });
+    }
   }
 
   // Sharees get a tools-less, no-patches branch — they can ask questions but
