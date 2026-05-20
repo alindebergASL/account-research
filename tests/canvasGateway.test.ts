@@ -17,7 +17,9 @@ test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
 const require = createRequire(import.meta.url);
 const { db } = require("../web/lib/db") as typeof import("../web/lib/db");
-const { ingestCanvasResponse, listProposals, getCurrentCanvasDocument, listCapabilityProposals, approveProposal } = require("../web/lib/hermes/canvasGenerativeGateway") as typeof import("../web/lib/hermes/canvasGenerativeGateway");
+const { ingestCanvasResponse, listProposals, getCurrentCanvasDocument, listCapabilityProposals, approveProposal, rejectProposal } = require("../web/lib/hermes/canvasGenerativeGateway") as typeof import("../web/lib/hermes/canvasGenerativeGateway");
+const { seedReviewProposals } = require("../web/lib/hermes/canvasSeedFixtures") as typeof import("../web/lib/hermes/canvasSeedFixtures");
+const { summarizeCanvasProposal, summarizeCapabilityProposal } = require("../web/lib/hermes/canvasProposalSummary") as typeof import("../web/lib/hermes/canvasProposalSummary");
 
 function seedBrief(id: string) {
   db().prepare(`INSERT OR IGNORE INTO users (id, email, password_hash, role, display_name, created_at, created_by, must_change_password) VALUES (?, ?, ?, 'admin', 'Admin', ?, null, 0)`).run("u1", `u1-${id}@example.com`, "hash", Date.now());
@@ -84,6 +86,104 @@ test("capability.propose writes capability row only", () => {
   assert.equal(getCurrentCanvasDocument("brief-cap").document.nodes.length, 0);
 });
 
+
+test("seedReviewProposals creates deterministic proposals without provider calls", () => {
+  seedBrief("brief-seed");
+  const first = seedReviewProposals({ briefId: "brief-seed", userId: "u1", canWrite: true, proposedBy: "hermes" });
+  assert.ok(first.proposal_ids.length >= 1, "should create at least one canvas proposal");
+  assert.ok(first.capability_proposal_ids.length >= 1, "should create at least one capability proposal");
+  const proposalsAfterFirst = listProposals({ briefId: "brief-seed" }).length;
+  const capsAfterFirst = listCapabilityProposals({ briefId: "brief-seed" }).length;
+  // Idempotent: re-running with same brief should not spam duplicates.
+  const second = seedReviewProposals({ briefId: "brief-seed", userId: "u1", canWrite: true, proposedBy: "hermes" });
+  assert.deepEqual(second.proposal_ids, first.proposal_ids);
+  assert.equal(listProposals({ briefId: "brief-seed" }).length, proposalsAfterFirst);
+  assert.equal(listCapabilityProposals({ briefId: "brief-seed" }).length, capsAfterFirst);
+});
+
+test("runtime route returns proposal_summaries with review-friendly shape", () => {
+  seedBrief("brief-summary");
+  seedReviewProposals({ briefId: "brief-summary", userId: "u1", canWrite: true, proposedBy: "hermes" });
+  const current = getCurrentCanvasDocument("brief-summary");
+  const proposals = listProposals({ briefId: "brief-summary" });
+  const caps = listCapabilityProposals({ briefId: "brief-summary" });
+  const summaries = proposals.map((p) => summarizeCanvasProposal(p, current.stateVersion));
+  const capSummaries = caps.map((c) => summarizeCapabilityProposal(c, "brief-summary"));
+  assert.ok(summaries.length > 0);
+  for (const s of summaries) {
+    assert.ok(typeof s.id === "string");
+    assert.ok(typeof s.display_title === "string");
+    assert.ok(typeof s.is_approvable === "boolean");
+    assert.ok(typeof s.is_stale_candidate === "boolean");
+  }
+  assert.ok(capSummaries.length > 0);
+  for (const s of capSummaries) {
+    assert.ok(s.viewer_href.includes("brief-summary"));
+    assert.ok(s.viewer_href.includes(s.id));
+    assert.equal(typeof s.has_renderer_source, "boolean");
+  }
+});
+
+test("seed route file uses requireGenerativeCanvasWrite and avoids external runtime calls", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const source = fs.readFileSync(path.join(__dirname, "../web/app/api/briefs/[id]/canvas-proposals/seed/route.ts"), "utf8");
+  assert.match(source, /requireGenerativeCanvasWrite/);
+  assert.doesNotMatch(source, /fetch\(|HERMES_RUNTIME_URL|http:\/\/|https:\/\//);
+  const helper = fs.readFileSync(path.join(__dirname, "../web/lib/hermes/canvasSeedFixtures.ts"), "utf8");
+  assert.doesNotMatch(helper, /fetch\(|HERMES_RUNTIME_URL|http:\/\/|https:\/\//);
+});
+
+test("rejecting a queued proposal records decision and a second reject is a no-op", () => {
+  seedBrief("brief-reject");
+  const queued = ingestCanvasResponse({ briefId: "brief-reject", userId: "u1", canWrite: true, proposedBy: "hermes", requestId: "req-reject" }, { reply: "", patches_applied: [], patch_errors: [], canvas_actions: [
+    { kind: "primitive_surface.create", payload: { node_id: "rej", title: "Reject me", confidence: "Low", rationale: "queued", surface_spec: { root: { p: "text", text: "Reject" } } } },
+  ] } as any);
+  const pid = queued.proposal_ids[0];
+  rejectProposal({ briefId: "brief-reject", userId: "u1", canWrite: true, proposedBy: "user" }, pid, "lab reject");
+  const row = db().prepare(`SELECT status, decided_at, decided_by, error FROM canvas_proposals WHERE id = ?`).get(pid) as any;
+  assert.equal(row.status, "rejected");
+  assert.ok(row.decided_at);
+  assert.equal(row.decided_by, "u1");
+  assert.equal(row.error, "lab reject");
+  // Second reject must not crash and must not change recorded values.
+  rejectProposal({ briefId: "brief-reject", userId: "u1", canWrite: true, proposedBy: "user" }, pid, "second reject");
+  const row2 = db().prepare(`SELECT status, error FROM canvas_proposals WHERE id = ?`).get(pid) as any;
+  assert.equal(row2.status, "rejected");
+  assert.equal(row2.error, "lab reject");
+});
+
+test("approving an already-applied proposal throws proposal_not_approvable", () => {
+  seedBrief("brief-double-approve");
+  const queued = ingestCanvasResponse({ briefId: "brief-double-approve", userId: "u1", canWrite: true, proposedBy: "hermes", requestId: "req-da" }, { reply: "", patches_applied: [], patch_errors: [], canvas_actions: [
+    { kind: "primitive_surface.create", payload: { node_id: "da", title: "Approve once", confidence: "Low", rationale: "queued", surface_spec: { root: { p: "text", text: "Approve" } } } },
+  ] } as any);
+  const pid = queued.proposal_ids[0];
+  approveProposal({ briefId: "brief-double-approve", userId: "u1", canWrite: true, proposedBy: "user" }, pid);
+  assert.throws(() => approveProposal({ briefId: "brief-double-approve", userId: "u1", canWrite: true, proposedBy: "user" }, pid), /proposal_not_approvable/);
+});
+
+test("runtime route source returns summaries and uses requireGenerativeCanvasRead", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const source = fs.readFileSync(path.join(__dirname, "../web/app/api/briefs/[id]/canvas-runtime/route.ts"), "utf8");
+  assert.match(source, /requireGenerativeCanvasRead/);
+  assert.match(source, /proposal_summaries/);
+  assert.match(source, /capability_proposal_summaries/);
+});
+
+test("lab canvas client files do not contain forbidden execution patterns", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const files = [
+    "../web/app/lab/canvas/runtime/CanvasRuntimeClient.tsx",
+    "../web/app/lab/canvas/capability/CapabilityProposalClient.tsx",
+  ];
+  for (const rel of files) {
+    const text = fs.readFileSync(path.join(__dirname, rel), "utf8");
+    assert.doesNotMatch(text, /dangerouslySetInnerHTML/);
+    assert.doesNotMatch(text, /\beval\s*\(/);
+    assert.doesNotMatch(text, /new\s+Function\s*\(/);
+    assert.doesNotMatch(text, /import\s*\(\s*[`'"][^`'"]*(?:proposal|source|payload)/);
+  }
+});
 
 test("capability viewer endpoint is JSON-only with nosniff and browser viewer renders source in pre", () => {
   const fs = require("node:fs") as typeof import("node:fs");
