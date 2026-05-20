@@ -93,3 +93,15 @@ export function hermesChatEnabled(): boolean {
 export function hermesCanvasEventsEnabled(): boolean {
   return process.env.HERMES_CANVAS_EVENTS_ENABLED === "1";
 }
+
+export function hermesCanvasProposalsEnabled(): boolean {
+  return process.env.HERMES_CANVAS_PROPOSALS_ENABLED === "1";
+}
+
+export function hermesCanvasLayoutFreeformEnabled(): boolean {
+  return process.env.HERMES_CANVAS_LAYOUT_FREEFORM === "1";
+}
+
+export function hermesGenerativeCanvasEnabled(): boolean {
+  return hermesRuntimeEnabled() && hermesCanvasProposalsEnabled();
+}

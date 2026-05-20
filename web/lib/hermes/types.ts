@@ -8,6 +8,8 @@
 
 import type { Brief, BriefExtension } from "../schema";
 import type { Canvas } from "../canvas/schema";
+import type { CanvasAction, WidgetCapabilityProposal } from "../canvas/actions";
+import type { CanvasDocument } from "../canvas/document";
 import type { BriefPatch } from "../briefPatches";
 import type { Intake, ResearchMode } from "../researchPipeline";
 
@@ -42,7 +44,22 @@ export type HermesEventKind =
   | "canvas.widget.created"
   | "canvas.widget.updated"
   | "canvas.recommendation.proposed"
-  | "canvas.state.updated";
+  | "canvas.state.updated"
+  | "canvas_proposal.queued"
+  | "canvas_proposal.auto_applied"
+  | "canvas_proposal.applied"
+  | "canvas_proposal.failed"
+  | "canvas_proposal.rejected"
+  | "canvas_proposal.rejected_by_user"
+  | "canvas_proposal.undone"
+  | "canvas_proposal.retried"
+  | "canvas_proposal.timeout"
+  | "canvas_capability.proposed"
+  | "canvas_capability.withdrawn"
+  | "canvas_capability.promoted"
+  | "canvas_layout.preview_proposed"
+  | "canvas_layout.applied"
+  | "canvas_view.changed";
 
 export type HermesJob = {
   id: string;
@@ -137,6 +154,9 @@ export type HermesChatResponse = {
   patch_errors: string[];
   brief?: Brief;
   canvas?: Canvas;
+  canvas_document?: CanvasDocument;
+  canvas_actions?: CanvasAction[];
+  widget_capability_proposals?: WidgetCapabilityProposal[];
   events?: HermesRuntimeEventInput[];
 };
 
@@ -152,6 +172,9 @@ export type HermesCanvasSynthesisRequest = {
 
 export type HermesCanvasSynthesisResponse = {
   canvas: Canvas;
+  canvas_document?: CanvasDocument;
+  canvas_actions?: CanvasAction[];
+  widget_capability_proposals?: WidgetCapabilityProposal[];
   extensions?: BriefExtension[];
   events?: HermesRuntimeEventInput[];
 };

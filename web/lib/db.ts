@@ -373,6 +373,65 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "014_canvas_generative_proposals",
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS canvas_proposals (
+          id                     TEXT PRIMARY KEY,
+          brief_id               TEXT NOT NULL REFERENCES briefs(id) ON DELETE CASCADE,
+          job_id                 TEXT REFERENCES hermes_jobs(id) ON DELETE SET NULL,
+          request_id             TEXT,
+          request_action_index   INTEGER,
+          action_kind            TEXT NOT NULL,
+          action_layer           TEXT NOT NULL,
+          proposed_by            TEXT NOT NULL,
+          action_payload_json    TEXT NOT NULL,
+          rationale              TEXT NOT NULL DEFAULT '',
+          evidence_json          TEXT NOT NULL DEFAULT '[]',
+          confidence             TEXT NOT NULL,
+          status                 TEXT NOT NULL,
+          canvas_version_before  INTEGER NOT NULL,
+          canvas_version_after   INTEGER,
+          canvas_before_json     TEXT,
+          canvas_after_json      TEXT,
+          error                  TEXT,
+          retry_of               TEXT,
+          capability_proposal_id TEXT,
+          lab_only               INTEGER NOT NULL DEFAULT 1,
+          created_at             INTEGER NOT NULL,
+          decided_at             INTEGER,
+          decided_by             TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_canvas_proposals_brief_status ON canvas_proposals(brief_id, status);
+        CREATE INDEX IF NOT EXISTS idx_canvas_proposals_job ON canvas_proposals(job_id);
+        CREATE INDEX IF NOT EXISTS idx_canvas_proposals_layer ON canvas_proposals(action_layer);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_canvas_proposals_request_unique
+          ON canvas_proposals(brief_id, request_id, request_action_index)
+          WHERE request_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS canvas_capability_proposals (
+          id                       TEXT PRIMARY KEY,
+          brief_id                 TEXT NOT NULL REFERENCES briefs(id) ON DELETE CASCADE,
+          proposed_widget_kind     TEXT NOT NULL,
+          rationale                TEXT NOT NULL,
+          data_schema_json         TEXT NOT NULL,
+          ts_renderer_source       TEXT NOT NULL,
+          example_data_json        TEXT NOT NULL,
+          primitive_fallback_json  TEXT NOT NULL,
+          evidence_json            TEXT NOT NULL DEFAULT '[]',
+          status                   TEXT NOT NULL,
+          promoted_widget_kind     TEXT,
+          promoted_at              INTEGER,
+          promoted_by              TEXT,
+          proposed_at              INTEGER NOT NULL,
+          proposed_by_job_id       TEXT REFERENCES hermes_jobs(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_canvas_capability_proposals_brief_status
+          ON canvas_capability_proposals(brief_id, status);
+      `);
+    },
+  },
 ];
 
 // Row types for the Hermes substrate. Kept here next to the rest of the
@@ -416,6 +475,51 @@ export type CanvasStateRow = {
   version: number;
   updated_at: number;
   updated_by_job_id: string | null;
+};
+
+export type CanvasProposalRow = {
+  id: string;
+  brief_id: string;
+  job_id: string | null;
+  request_id: string | null;
+  request_action_index: number | null;
+  action_kind: string;
+  action_layer: "A" | "B" | "C" | "D";
+  proposed_by: "hermes" | "user" | "system";
+  action_payload_json: string;
+  rationale: string;
+  evidence_json: string;
+  confidence: string;
+  status: "queued" | "auto_applied" | "applied" | "rejected" | "failed" | "undone" | "retried" | "timeout";
+  canvas_version_before: number;
+  canvas_version_after: number | null;
+  canvas_before_json: string | null;
+  canvas_after_json: string | null;
+  error: string | null;
+  retry_of: string | null;
+  capability_proposal_id: string | null;
+  lab_only: 0 | 1;
+  created_at: number;
+  decided_at: number | null;
+  decided_by: string | null;
+};
+
+export type CanvasCapabilityProposalRow = {
+  id: string;
+  brief_id: string;
+  proposed_widget_kind: string;
+  rationale: string;
+  data_schema_json: string;
+  ts_renderer_source: string;
+  example_data_json: string;
+  primitive_fallback_json: string;
+  evidence_json: string;
+  status: "proposed" | "under_review" | "promoted" | "withdrawn" | "rejected";
+  promoted_widget_kind: string | null;
+  promoted_at: number | null;
+  promoted_by: string | null;
+  proposed_at: number;
+  proposed_by_job_id: string | null;
 };
 
 function runMigrations(conn: Database.Database): {
