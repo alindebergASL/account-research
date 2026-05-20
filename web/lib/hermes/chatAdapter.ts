@@ -7,9 +7,10 @@
 // calls; fake mode is deterministic and no-spend via client.ts.
 
 import { saveCanvasState } from "../canvas/state";
+import { ingestCanvasResponse } from "./canvasGenerativeGateway";
 import { applyPatches, type BriefPatch } from "../briefPatches";
 import { Brief, type Brief as BriefT } from "../schema";
-import { hermesChatEnabled, hermesRuntimeFake } from "./config";
+import { hermesCanvasProposalsEnabled, hermesChatEnabled, hermesRuntimeFake } from "./config";
 import {
   HermesRuntimeDisabledError,
   HermesRuntimeError,
@@ -182,7 +183,19 @@ export async function runChatViaHermes(
       result.patch_errors = writable.errors;
       if (writable.brief) result.brief = writable.brief;
 
-      if (resp.canvas && typeof resp.canvas === "object") {
+      if (hermesCanvasProposalsEnabled()) {
+        ingestCanvasResponse(
+          {
+            briefId: ctx.brief_id,
+            userId: ctx.user_id,
+            jobId,
+            proposedBy: "hermes",
+            canWrite: ctx.can_write,
+            requestId: jobId,
+          },
+          resp,
+        );
+      } else if (resp.canvas && typeof resp.canvas === "object") {
         const saved = saveCanvasState({
           briefId: ctx.brief_id,
           canvas: resp.canvas,
