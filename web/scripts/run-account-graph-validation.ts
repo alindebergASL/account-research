@@ -132,34 +132,62 @@ export type CliAdapter = "fake" | "real" | undefined;
 export type CliArgs = {
   mode: CliMode;
   maxCostUsd: number;
+  /** Task 7: true iff --max-cost (or --max-cost-usd) was passed explicitly.
+   * The runner defaults maxCostUsd to 10 for backward compatibility, but the
+   * real-adapter activation path REQUIRES the operator to pass --max-cost
+   * explicitly so an automation script can never coast on a defaulted value. */
+  maxCostExplicit: boolean;
   corpus?: string;
   out: string;
+  outExplicit: boolean;
   limit?: number;
   allowCostOver25: boolean;
   /** Task 4: optional adapter selector for `--mode model`. */
   adapter?: string;
   /** Task 4: explicit override for --max-cost > 25. */
   allowHighCost: boolean;
+  /** Task 7: operator acknowledgement that this run will spend real money
+   * against a real provider. Decoupled from --adapter on purpose. */
+  allowRealModel: boolean;
+  /** Task 7: provider identifier (e.g. "anthropic"). Required for --adapter real. */
+  provider?: string;
+  /** Task 7: exact provider model id (operator-supplied; never hardcoded). */
+  model?: string;
 };
 
 export function parseArgs(argv: string[]): CliArgs {
   const args: Partial<CliArgs> = {
     mode: "fixture",
     maxCostUsd: 10,
+    maxCostExplicit: false,
+    outExplicit: false,
     allowCostOver25: false,
     allowHighCost: false,
+    allowRealModel: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--mode") args.mode = argv[++i] as CliMode;
-    else if (a === "--max-cost-usd") args.maxCostUsd = Number(argv[++i]);
-    else if (a === "--max-cost") args.maxCostUsd = Number(argv[++i]);
+    else if (a === "--max-cost-usd") {
+      args.maxCostUsd = Number(argv[++i]);
+      args.maxCostExplicit = true;
+    }
+    else if (a === "--max-cost") {
+      args.maxCostUsd = Number(argv[++i]);
+      args.maxCostExplicit = true;
+    }
     else if (a === "--corpus") args.corpus = argv[++i];
-    else if (a === "--out") args.out = argv[++i];
+    else if (a === "--out") {
+      args.out = argv[++i];
+      args.outExplicit = true;
+    }
     else if (a === "--limit") args.limit = Number(argv[++i]);
     else if (a === "--allow-cost-over-25") args.allowCostOver25 = true;
     else if (a === "--allow-high-cost") args.allowHighCost = true;
     else if (a === "--adapter") args.adapter = argv[++i];
+    else if (a === "--allow-real-model") args.allowRealModel = true;
+    else if (a === "--provider") args.provider = argv[++i];
+    else if (a === "--model") args.model = argv[++i];
   }
   if (args.mode !== "fixture" && args.mode !== "model") {
     throw new Error(
@@ -1717,10 +1745,198 @@ export const MODEL_MODE_REFUSAL_MESSAGE =
 export const MODEL_MODE_REAL_ADAPTER_REFUSAL =
   "model mode requires --adapter fake in this PR; real model adapter is not enabled and A.7 remains BLOCKED per docs/BLOCKERS.md";
 
+// Task 7: the BLOCKED reminder appended to every real-adapter refusal.
+export const REAL_ADAPTER_BLOCKED_REMINDER =
+  "A.7 graph-first writes remain BLOCKED per docs/BLOCKERS.md.";
+
+// Task 7: providers wired in this PR. Adding a new provider requires a new
+// adapter module under web/lib/accountGraph/validationPipeline/adapters/ AND
+// a separate ADR. Hardcoded model IDs are NOT permitted; the operator passes
+// --model exactly.
+export const REAL_ADAPTER_SUPPORTED_PROVIDERS = ["anthropic"] as const;
+export type RealAdapterSupportedProvider =
+  (typeof REAL_ADAPTER_SUPPORTED_PROVIDERS)[number];
+
+export type RealAdapterRefusalContext = {
+  adapter: string | undefined;
+  allowRealModel: boolean;
+  maxCostExplicit: boolean;
+  maxCostUsd: number;
+  allowHighCost: boolean;
+  provider: string | undefined;
+  model: string | undefined;
+  corpus: string | undefined;
+  out: string | undefined;
+  outExplicit: boolean;
+};
+
+/**
+ * Task 7: AGGREGATED refusal for the real-adapter path. Collects EVERY
+ * missing or invalid required flag and returns the full list as a single
+ * human-readable message. Returns `null` if every required flag is present
+ * and individually valid.
+ *
+ * IMPORTANT: this function performs ZERO side effects: no env reads, no
+ * filesystem writes, no provider SDK import, no network. It is called
+ * BEFORE any adapter is constructed.
+ */
+export function collectRealAdapterRefusals(
+  ctx: RealAdapterRefusalContext,
+): { reasons: string[]; message: string } | null {
+  const reasons: string[] = [];
+
+  if (ctx.adapter !== "real") {
+    // Not asking for the real adapter at all; nothing to aggregate.
+    return null;
+  }
+
+  if (!ctx.allowRealModel) {
+    reasons.push("--allow-real-model is required for --adapter real");
+  }
+  if (!ctx.provider) {
+    reasons.push(
+      `--provider is required for --adapter real (supported: ${REAL_ADAPTER_SUPPORTED_PROVIDERS.join(", ")})`,
+    );
+  } else if (
+    !REAL_ADAPTER_SUPPORTED_PROVIDERS.includes(
+      ctx.provider as RealAdapterSupportedProvider,
+    )
+  ) {
+    reasons.push(
+      `--provider ${ctx.provider} is not supported (supported: ${REAL_ADAPTER_SUPPORTED_PROVIDERS.join(", ")})`,
+    );
+  }
+  if (!ctx.model) {
+    reasons.push(
+      "--model is required for --adapter real (operator-supplied; no hardcoded model id)",
+    );
+  }
+  if (!ctx.maxCostExplicit) {
+    reasons.push(
+      "--max-cost is required for --adapter real (must be passed explicitly; the runner default is not accepted)",
+    );
+  } else if (!Number.isFinite(ctx.maxCostUsd) || ctx.maxCostUsd <= 0) {
+    reasons.push(
+      `--max-cost must be a positive number; got ${ctx.maxCostUsd}`,
+    );
+  } else {
+    const budgetErr = validateBudgetConfig({
+      max_cost_usd: ctx.maxCostUsd,
+      allow_high_cost: ctx.allowHighCost,
+    });
+    if (budgetErr) reasons.push(budgetErr);
+  }
+  if (!ctx.corpus) {
+    reasons.push("--corpus is required for --adapter real");
+  } else {
+    const decision = classifyCorpusPath(ctx.corpus);
+    if (decision.decision === "refuse_inside_repo") {
+      reasons.push(formatCorpusRefusal(decision.resolved, decision.repoRoot));
+    }
+  }
+  if (!ctx.outExplicit || !ctx.out) {
+    reasons.push("--out is required for --adapter real");
+  } else {
+    const decision = classifyOutPath(ctx.out);
+    if (decision.decision === "refuse_inside_repo") {
+      reasons.push(formatOutRefusal(decision.resolved, decision.repoRoot));
+    }
+  }
+
+  if (reasons.length === 0) return null;
+  const bulletted = reasons.map((r) => `- ${r}`).join("\n");
+  const message =
+    "Refusing real model mode. Missing or invalid required flags:\n" +
+    bulletted +
+    "\n" +
+    REAL_ADAPTER_BLOCKED_REMINDER +
+    // Back-compat: legacy automation may grep for the PR #44 refusal string;
+    // surface it as a trailing line so the operator still sees one canonical
+    // message but legacy grep continues to match.
+    "\n" +
+    MODEL_MODE_REAL_ADAPTER_REFUSAL;
+  return { reasons, message };
+}
+
+export const REAL_ADAPTER_CREDENTIAL_REFUSAL_PREFIX =
+  "Refusing real Anthropic adapter: ";
+
+export function formatMissingCredentialRefusal(envName: string): string {
+  return (
+    REAL_ADAPTER_CREDENTIAL_REFUSAL_PREFIX +
+    `${envName} is not present in the environment. No provider call was made. ` +
+    REAL_ADAPTER_BLOCKED_REMINDER
+  );
+}
+
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
 
   if (args.mode === "model") {
+    // Task 7: real-adapter path is gated by AGGREGATED refusal. All required
+    // flags are checked together so the operator sees every missing/invalid
+    // flag in one message rather than playing whack-a-mole. This runs BEFORE
+    // any adapter is constructed, BEFORE any provider SDK is dynamically
+    // imported, BEFORE any env var is read, and BEFORE any filesystem write.
+    if (args.adapter === "real") {
+      const refusal = collectRealAdapterRefusals({
+        adapter: args.adapter,
+        allowRealModel: args.allowRealModel,
+        maxCostExplicit: args.maxCostExplicit,
+        maxCostUsd: args.maxCostUsd,
+        allowHighCost: args.allowHighCost,
+        provider: args.provider,
+        model: args.model,
+        corpus: args.corpus,
+        out: args.out,
+        outExplicit: args.outExplicit,
+      });
+      if (refusal) {
+        console.error(`[run-account-graph-validation] ${refusal.message}`);
+        return 1;
+      }
+      // All flag gates passed. Now load the real adapter via dynamic import
+      // — this is the ONLY place the real adapter module is loaded, and the
+      // provider SDK is dynamically imported inside the adapter's init().
+      const { RealAnthropicAdapter, REAL_ANTHROPIC_API_KEY_ENV } = await import(
+        "../lib/accountGraph/validationPipeline/adapters/realAnthropic"
+      );
+      // Credential refusal: do NOT print the value, only the name.
+      const apiKey = process.env[REAL_ANTHROPIC_API_KEY_ENV];
+      if (!apiKey || apiKey.length === 0) {
+        console.error(
+          `[run-account-graph-validation] ${formatMissingCredentialRefusal(REAL_ANTHROPIC_API_KEY_ENV)}`,
+        );
+        return 1;
+      }
+      try {
+        const adapter = await RealAnthropicAdapter.init({
+          provider: args.provider!,
+          model: args.model!,
+          apiKey,
+        });
+        console.log(
+          `[run-account-graph-validation] mode=model adapter=real (PAID PROVIDER) — ${REAL_ADAPTER_BLOCKED_REMINDER}`,
+        );
+        const result = await runModelModeOrchestrator({
+          outDir: args.out,
+          adapter,
+          maxCostUsd: args.maxCostUsd,
+          allowHighCost: args.allowHighCost,
+          limit: args.limit,
+        });
+        console.log(
+          `[run-account-graph-validation] mode=model adapter=real classification=${result.report.classification} cost_usd=${result.report.cost.observed_usd} out=${args.out}`,
+        );
+        return result.report.classification === "fail" ? 2 : 0;
+      } catch (err) {
+        console.error(
+          `[run-account-graph-validation] real-adapter run failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return 1;
+      }
+    }
+
     // Budget config validation BEFORE any adapter is touched. Plan §6: any
     // --max-cost > 25 requires explicit override.
     const budgetErr = validateBudgetConfig({

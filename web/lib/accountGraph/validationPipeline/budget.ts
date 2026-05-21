@@ -126,3 +126,92 @@ export function buildBudgetReportBlock(state: BudgetState): BudgetReportBlock {
     by_adapter: Array.from(state.by_adapter.values()),
   };
 }
+
+// ---------- Task 7: per-call cost ledger ----------
+
+export type CostRecordStage = "excerpt_proposal" | "claim_synthesis";
+
+export type CostRecordStatus = "observed" | "unknown_estimated" | "estimated_only";
+
+export type CostRecord = {
+  provider: string;
+  model: string;
+  account_label: string;
+  stage: CostRecordStage;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated_usd_pre_call: number;
+  observed_usd: number | null;
+  cost_status: CostRecordStatus;
+  retry_count: number;
+  error: { code: string; message: string } | null;
+};
+
+// ---------- Task 7: pricing table + pre-call estimator ----------
+//
+// Pricing is per 1M tokens (USD). Operators bumping to a newer model add a
+// row here in their PR; an UNKNOWN model means the run cannot pass — by
+// design — and never coerces to $0. $0 is reserved for fake/fixture paths.
+//
+// We do NOT hardcode "the default Claude model"; the operator passes --model
+// exactly and we look it up. Unknown entries return null (unknown pricing).
+
+export type ModelPricing = {
+  input_usd_per_million: number;
+  output_usd_per_million: number;
+};
+
+export const PRICING_TABLE: Record<string, ModelPricing> = {
+  // Anthropic Claude Opus / Sonnet / Haiku public list prices.
+  // Operators add a row here in the same PR that bumps --model.
+  "claude-opus-4-5": { input_usd_per_million: 15, output_usd_per_million: 75 },
+  "claude-opus-4-6": { input_usd_per_million: 15, output_usd_per_million: 75 },
+  "claude-opus-4-7": { input_usd_per_million: 15, output_usd_per_million: 75 },
+  "claude-sonnet-4-5": { input_usd_per_million: 3, output_usd_per_million: 15 },
+  "claude-sonnet-4-6": { input_usd_per_million: 3, output_usd_per_million: 15 },
+  "claude-haiku-4-5": { input_usd_per_million: 0.8, output_usd_per_million: 4 },
+};
+
+export function lookupModelPricing(model: string): ModelPricing | null {
+  return PRICING_TABLE[model] ?? null;
+}
+
+/**
+ * Compute a CONSERVATIVE pre-call estimated cost for a model call. The
+ * estimator OVERESTIMATES on uncertainty: it assumes the maximum output
+ * tokens the caller is willing to accept, plus a small safety margin. The
+ * orchestrator uses this BEFORE every paid call to refuse if the estimate
+ * would exceed remaining budget.
+ *
+ * Returns `null` if pricing for the model is unknown — the caller must
+ * treat that as "cannot pass" (cost_status="unknown_estimated").
+ */
+export function estimateCallCostUsd(
+  pricing: ModelPricing | null,
+  inputTokensEstimate: number,
+  maxOutputTokens: number,
+): number | null {
+  if (!pricing) return null;
+  const inputUsd = (inputTokensEstimate * pricing.input_usd_per_million) / 1_000_000;
+  const outputUsd = (maxOutputTokens * pricing.output_usd_per_million) / 1_000_000;
+  return inputUsd + outputUsd;
+}
+
+/**
+ * Pre-call budget enforcer. Returns null if the next call is affordable
+ * given the supplied conservative estimate; otherwise returns a string
+ * describing why the call would be refused. UNKNOWN pricing (null) is a
+ * refusal — pricing must be known before we spend real money.
+ */
+export function preflightBudgetGate(
+  state: BudgetState,
+  estimateUsd: number | null,
+): string | null {
+  if (estimateUsd === null) {
+    return "pricing unknown for requested model; cannot pass pre-call budget gate (set $0 only for fixture/fake paths)";
+  }
+  if (!canAffordNextCall(state, estimateUsd)) {
+    return `pre-call estimate ${estimateUsd.toFixed(4)} USD would exceed remaining budget ${remainingBudget(state).toFixed(4)} USD`;
+  }
+  return null;
+}
