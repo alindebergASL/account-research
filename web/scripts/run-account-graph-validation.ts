@@ -26,7 +26,7 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, isAbsolute, sep, relative } from "node:path";
 
 import { fromBriefJson } from "../lib/accountGraph/fromBriefJson";
 import { buildParityReport } from "../lib/accountGraph/briefParity";
@@ -502,6 +502,396 @@ export function buildPairedBaselinePlaceholder(_now: Date = new Date()): PairedB
     }
   }
   return buildPairedBaseline(_now, selected, per, computeCriteriaCoverage(selected.entries));
+}
+
+// ----------------------- Local-only production-derived corpus -----------------------
+//
+// Phase A.7 Task 5: provide a SAFE, LOCAL-ONLY path for the operator to run
+// the deterministic A.6 paired baseline against the real 3 A.7 gate accounts,
+// sourced from a production-backup-derived corpus on their local machine.
+//
+// HARD SAFETY GUARANTEES (enforced below):
+//   - No network. No provider SDK. No env-var reads.
+//   - The corpus file must NOT live inside the repo working tree (so an
+//     operator cannot accidentally `git add` it).
+//   - The output directory must NOT resolve to a path inside the repo
+//     working tree (so generated artifacts cannot accidentally be staged).
+//   - Input is parsed as JSON (single Brief object) or JSONL (one Brief per
+//     line). Each entry is validated against the Brief Zod schema; malformed
+//     entries are classified as `skipped_malformed_json` or
+//     `skipped_unsupported_schema_variant` and do NOT crash the run.
+//   - The committed `paired-baseline.json` mirrors the synthetic shape but
+//     uses `corpus_kind: "local_production_backup"`. The artifact lives in an
+//     ignored directory; the committed code never carries production-derived
+//     brief content.
+
+export const REPO_ROOT = resolve(__dirname, "..", "..");
+
+const REPO_TRACKED_TOP_LEVEL_DIRS = ["docs", "scripts", "tests", "web"];
+
+/**
+ * Return true if `p` resolves to a path inside the repo working tree's
+ * tracked top-level directories. Paths under `out/` or outside the repo are
+ * considered safe.
+ */
+export function isInsideRepoTrackedTree(p: string): boolean {
+  const abs = resolve(p);
+  const rel = relative(REPO_ROOT, abs);
+  if (rel.startsWith("..") || isAbsolute(rel)) return false; // outside repo
+  if (rel === "") return true; // the repo root itself is tracked
+  const top = rel.split(sep)[0];
+  return REPO_TRACKED_TOP_LEVEL_DIRS.includes(top);
+}
+
+export const LOCAL_CORPUS_INSIDE_REPO_ERROR =
+  "refusing to read --corpus from inside the repo working tree's tracked directories; place the corpus under /tmp or an operator-controlled directory outside the repo";
+export const LOCAL_OUT_INSIDE_REPO_ERROR =
+  "refusing to write --out to a path inside the repo working tree's tracked directories; pass an --out under /tmp, out/local-prod-baseline/, or another ignored location";
+
+export type LocalCorpusKind = "local_production_backup";
+
+export type LocalCorpusEntryClassification =
+  | "ok"
+  | "skipped_malformed_json"
+  | "skipped_unsupported_schema_variant";
+
+export type LocalCorpusEntryRecord = {
+  source_index: number;
+  source_line?: number; // for JSONL
+  classification: LocalCorpusEntryClassification;
+  error?: string;
+  account_label?: string;
+  fixture_id?: string; // synthesized stable id for the entry
+  selection_rationale: string;
+  criteria_covered: string[];
+};
+
+export type LocalCorpusReadResult = {
+  entries_total: number;
+  entries_ok: LocalCorpusEntryRecord[];
+  entries_skipped: LocalCorpusEntryRecord[];
+  briefs_by_fixture_id: Record<string, unknown>;
+  format: "json" | "jsonl";
+};
+
+export const LOCAL_DEFAULT_RATIONALE =
+  "operator-supplied local production-backup-derived brief; rationale not committed (artifact stays in ignored local path)";
+
+/**
+ * Parse a local corpus file (JSON or JSONL). Each line/entry is validated
+ * against the Brief Zod schema; malformed entries are classified rather than
+ * throwing. The function never opens a database, never makes network calls,
+ * never reads env vars.
+ */
+export function readLocalCorpus(corpusPath: string): LocalCorpusReadResult {
+  const raw = readFileSync(corpusPath, "utf8");
+  const trimmed = raw.trim();
+  const isJsonl = corpusPath.toLowerCase().endsWith(".jsonl") ||
+    (trimmed.startsWith("{") && trimmed.includes("\n{"));
+  const briefsByFixtureId: Record<string, unknown> = {};
+  const ok: LocalCorpusEntryRecord[] = [];
+  const skipped: LocalCorpusEntryRecord[] = [];
+
+  function classifyOne(
+    candidate: unknown,
+    sourceIndex: number,
+    sourceLine: number | undefined,
+  ): LocalCorpusEntryRecord {
+    const fixtureId = `local_prod_${sourceIndex}`;
+    const outcome = fromBriefJson({ brief_id: fixtureId, brief_json: candidate });
+    if (outcome.status === "ok") {
+      const briefName =
+        candidate && typeof candidate === "object" &&
+        typeof (candidate as { account_name?: unknown }).account_name === "string"
+          ? ((candidate as { account_name: string }).account_name)
+          : `local_account_${sourceIndex}`;
+      briefsByFixtureId[fixtureId] = candidate;
+      return {
+        source_index: sourceIndex,
+        source_line: sourceLine,
+        classification: "ok",
+        account_label: briefName,
+        fixture_id: fixtureId,
+        selection_rationale: LOCAL_DEFAULT_RATIONALE,
+        criteria_covered: [],
+      };
+    }
+    return {
+      source_index: sourceIndex,
+      source_line: sourceLine,
+      classification: outcome.status,
+      error: outcome.error,
+      selection_rationale: LOCAL_DEFAULT_RATIONALE,
+      criteria_covered: [],
+    };
+  }
+
+  if (isJsonl) {
+    const lines = raw.split(/\r?\n/);
+    let idx = 0;
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      if (!line.trim()) continue;
+      let candidate: unknown;
+      try {
+        candidate = JSON.parse(line);
+      } catch (err) {
+        skipped.push({
+          source_index: idx,
+          source_line: li + 1,
+          classification: "skipped_malformed_json",
+          error: err instanceof Error ? err.message : String(err),
+          selection_rationale: LOCAL_DEFAULT_RATIONALE,
+          criteria_covered: [],
+        });
+        idx += 1;
+        continue;
+      }
+      const rec = classifyOne(candidate, idx, li + 1);
+      if (rec.classification === "ok") ok.push(rec);
+      else skipped.push(rec);
+      idx += 1;
+    }
+    return {
+      entries_total: idx,
+      entries_ok: ok,
+      entries_skipped: skipped,
+      briefs_by_fixture_id: briefsByFixtureId,
+      format: "jsonl",
+    };
+  }
+
+  // Single JSON: object → 1 entry; array → many.
+  let candidates: unknown[];
+  try {
+    const parsed = JSON.parse(raw);
+    candidates = Array.isArray(parsed) ? parsed : [parsed];
+  } catch (err) {
+    return {
+      entries_total: 1,
+      entries_ok: [],
+      entries_skipped: [
+        {
+          source_index: 0,
+          classification: "skipped_malformed_json",
+          error: err instanceof Error ? err.message : String(err),
+          selection_rationale: LOCAL_DEFAULT_RATIONALE,
+          criteria_covered: [],
+        },
+      ],
+      briefs_by_fixture_id: {},
+      format: "json",
+    };
+  }
+  for (let i = 0; i < candidates.length; i++) {
+    const rec = classifyOne(candidates[i], i, undefined);
+    if (rec.classification === "ok") ok.push(rec);
+    else skipped.push(rec);
+  }
+  return {
+    entries_total: candidates.length,
+    entries_ok: ok,
+    entries_skipped: skipped,
+    briefs_by_fixture_id: briefsByFixtureId,
+    format: "json",
+  };
+}
+
+export type LocalBaselineSelectionRecord = {
+  account_label: string;
+  account_id: string;
+  fixture_id: string;
+  selection_rationale: string;
+  criteria_covered: string[];
+  local_artifact: true;
+  committed: false;
+  caveat: string;
+};
+
+export type LocalBaselineSelectionJson = {
+  generated_at: string;
+  corpus_kind: LocalCorpusKind;
+  corpus_path: string;
+  format: "json" | "jsonl";
+  entries_total: number;
+  entries_ok: number;
+  entries_skipped: number;
+  skipped: LocalCorpusEntryRecord[];
+  selections: LocalBaselineSelectionRecord[];
+  local_artifact: true;
+  committed: false;
+  caveat: string;
+};
+
+export const LOCAL_SELECTION_CAVEAT =
+  "local production-derived artifact, ignored, not committed";
+
+export const LOCAL_PAIRED_CAVEAT =
+  "Local production-backup-derived paired baseline. Artifact lives in an ignored output directory; not committed. NOT A.7 model validation. A.7 graph-first writes remain blocked per docs/BLOCKERS.md.";
+
+export type LocalPairedBaselineJson = {
+  generated_at: string;
+  mode: "fixture";
+  fixture_placeholder: false;
+  corpus_kind: LocalCorpusKind;
+  corpus_id: string;
+  corpus_label: string;
+  caveat: string;
+  selection_criteria_coverage: CriteriaCoverage;
+  accounts: PerAccountBaseline[];
+  aggregate: AggregateBaseline;
+};
+
+export type LocalCorpusOrchestratorOptions = {
+  corpusPath: string;
+  outDir: string;
+  adapter: ModelAdapter;
+  now?: Date;
+  git?: { branch: string; commit: string };
+  limit?: number;
+};
+
+export type LocalCorpusOrchestratorResult = {
+  paired: LocalPairedBaselineJson;
+  selection: LocalBaselineSelectionJson;
+  artifacts: {
+    reportJsonPath: string;
+    pairedBaselinePath: string;
+    selectionPath: string;
+  };
+};
+
+export async function runLocalCorpusOrchestrator(
+  opts: LocalCorpusOrchestratorOptions,
+): Promise<LocalCorpusOrchestratorResult> {
+  // Guardrails: refuse to read corpus from inside repo tracked tree; refuse
+  // to write artifacts to a path inside the repo tracked tree.
+  const corpusAbs = resolve(opts.corpusPath);
+  if (isInsideRepoTrackedTree(corpusAbs)) {
+    throw new Error(LOCAL_CORPUS_INSIDE_REPO_ERROR);
+  }
+  const outAbs = resolve(opts.outDir);
+  if (isInsideRepoTrackedTree(outAbs)) {
+    throw new Error(LOCAL_OUT_INSIDE_REPO_ERROR);
+  }
+  if (!existsSync(corpusAbs)) {
+    throw new Error(`--corpus path does not exist: ${corpusAbs}`);
+  }
+
+  const now = opts.now ?? new Date();
+  const git = opts.git ?? gitInfo();
+  mkdirSync(outAbs, { recursive: true });
+
+  // Exercise the adapter (deterministic, $0) to keep the seam wired.
+  await opts.adapter.proposeExcerpts({
+    account_id: "local_corpus_placeholder",
+    source_id: "src_local_corpus_placeholder",
+    source_text: "Local-corpus orchestrator placeholder source text. Deterministic. No model calls.",
+  });
+  await opts.adapter.synthesizeClaims({
+    account_id: "local_corpus_placeholder",
+    accepted_excerpts: [],
+  });
+
+  const read = readLocalCorpus(corpusAbs);
+  const maxN = Math.max(1, opts.limit ?? read.entries_ok.length);
+  const selectedOk = read.entries_ok.slice(0, maxN);
+
+  // Build synthetic entries that the existing paired-baseline measurement
+  // expects. fixture_path is unused because we supply briefJsonByFixtureId.
+  const corpusEntries: SyntheticFixtureEntry[] = selectedOk.map((e) => ({
+    account_label: e.account_label ?? `local_account_${e.source_index}`,
+    fixture_id: e.fixture_id ?? `local_prod_${e.source_index}`,
+    fixture_path: "<unused: brief supplied in-memory>",
+    selection_rationale: e.selection_rationale,
+    criteria_covered: e.criteria_covered,
+  }));
+
+  const perAccount: PerAccountBaseline[] = [];
+  for (const e of corpusEntries) {
+    const briefJson = read.briefs_by_fixture_id[e.fixture_id];
+    perAccount.push(measurePerAccountBaseline(e, briefJson));
+  }
+  const coverage = computeCriteriaCoverage(corpusEntries);
+
+  const paired: LocalPairedBaselineJson = {
+    generated_at: now.toISOString(),
+    mode: "fixture",
+    fixture_placeholder: false,
+    corpus_kind: "local_production_backup",
+    corpus_id: `local-prod-${createHash("sha256").update(corpusAbs).digest("hex").slice(0, 16)}`,
+    corpus_label: "local production-backup-derived corpus",
+    caveat: LOCAL_PAIRED_CAVEAT,
+    selection_criteria_coverage: coverage,
+    accounts: perAccount,
+    aggregate: aggregateBaseline(perAccount),
+  };
+
+  const selections: LocalBaselineSelectionRecord[] = selectedOk.map((e) => ({
+    account_label: e.account_label ?? `local_account_${e.source_index}`,
+    account_id: e.fixture_id ?? `local_prod_${e.source_index}`,
+    fixture_id: e.fixture_id ?? `local_prod_${e.source_index}`,
+    selection_rationale: e.selection_rationale,
+    criteria_covered: e.criteria_covered,
+    local_artifact: true,
+    committed: false,
+    caveat: LOCAL_SELECTION_CAVEAT,
+  }));
+
+  const selection: LocalBaselineSelectionJson = {
+    generated_at: now.toISOString(),
+    corpus_kind: "local_production_backup",
+    corpus_path: corpusAbs,
+    format: read.format,
+    entries_total: read.entries_total,
+    entries_ok: read.entries_ok.length,
+    entries_skipped: read.entries_skipped.length,
+    skipped: read.entries_skipped,
+    selections,
+    local_artifact: true,
+    committed: false,
+    caveat: LOCAL_SELECTION_CAVEAT,
+  };
+
+  const pairedBaselinePath = join(outAbs, "paired-baseline.json");
+  const selectionPath = join(outAbs, "local-baseline-selection.json");
+  const reportJsonPath = join(outAbs, "report.json");
+
+  const reportJson = {
+    branch: git.branch,
+    commit: git.commit,
+    run_at: now.toISOString(),
+    mode: "fixture" as const,
+    corpus_kind: "local_production_backup" as LocalCorpusKind,
+    classification: "pass" as const,
+    cost: { status: "observed" as const, observed_usd: 0 },
+    a7_blocker_status: A7_BLOCKER_STATEMENT,
+    local_artifact: true,
+    committed: false,
+    caveat: LOCAL_PAIRED_CAVEAT,
+    paired_baseline: {
+      path: pairedBaselinePath,
+      corpus_kind: "local_production_backup" as LocalCorpusKind,
+      account_count: paired.aggregate.account_count,
+    },
+    selection: {
+      path: selectionPath,
+      entries_total: read.entries_total,
+      entries_ok: read.entries_ok.length,
+      entries_skipped: read.entries_skipped.length,
+    },
+    adapter: { name: opts.adapter.name },
+  };
+
+  writeFileSync(pairedBaselinePath, JSON.stringify(paired, null, 2));
+  writeFileSync(selectionPath, JSON.stringify(selection, null, 2));
+  writeFileSync(reportJsonPath, JSON.stringify(reportJson, null, 2));
+
+  return {
+    paired,
+    selection,
+    artifacts: { reportJsonPath, pairedBaselinePath, selectionPath },
+  };
 }
 
 // ----------------------- Report types -----------------------
@@ -1289,6 +1679,40 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     );
     return 1;
   }
+
+  // Phase A.7 Task 5: when `--corpus` is supplied, route to the local-only
+  // production-backup-derived path. Both the corpus and out directory must
+  // live OUTSIDE the repo working tree's tracked directories so the operator
+  // cannot accidentally `git add` production-derived content.
+  if (args.corpus) {
+    if (isInsideRepoTrackedTree(args.corpus)) {
+      console.error(`[run-account-graph-validation] ${LOCAL_CORPUS_INSIDE_REPO_ERROR}`);
+      return 1;
+    }
+    if (isInsideRepoTrackedTree(args.out)) {
+      console.error(`[run-account-graph-validation] ${LOCAL_OUT_INSIDE_REPO_ERROR}`);
+      return 1;
+    }
+    try {
+      const result = await runLocalCorpusOrchestrator({
+        corpusPath: args.corpus,
+        outDir: args.out,
+        adapter,
+        limit: args.limit,
+      });
+      console.log(
+        `[run-account-graph-validation] mode=fixture corpus_kind=local_production_backup ok=${result.selection.entries_ok} skipped=${result.selection.entries_skipped} out=${args.out}`,
+      );
+      return 0;
+    } catch (err) {
+      console.error(
+        `[run-account-graph-validation] local-corpus run failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 1;
+    }
+  }
+
+  // Default fixture mode (synthetic fixture corpus path, unchanged from PR #44).
   const result = await runFixtureOrchestrator({
     outDir: args.out,
     adapter,
