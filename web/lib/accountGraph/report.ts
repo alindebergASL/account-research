@@ -37,6 +37,7 @@ export function classifySpikeA(
     "invented_claim_reference",
     "excerpt_verification_failed",
     "verified_without_evidence",
+    "verified_from_legacy_brief_only",
     "high_confidence_without_strong_evidence",
     "disallowed_source_supports_verified_claim",
     "edge_missing_endpoint",
