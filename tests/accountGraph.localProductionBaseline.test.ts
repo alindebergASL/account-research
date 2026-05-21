@@ -77,16 +77,67 @@ function syntheticBrief(label: string): Record<string, unknown> {
   };
 }
 
-test("isInsideRepoTrackedTree flags repo subdirs and ignores outside paths", () => {
+test("isInsideRepoTrackedTree flags any path inside the repo working tree", () => {
+  // PR #45 Hermes patch: semantics changed from "tracked top-level dirs only"
+  // to "any path inside the repo working tree, regardless of git-tracked status".
+  // Callers further classify via classifyCorpusPath / classifyOutPath.
   const mod = require(RUNNER_PATH);
   assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "web", "x")), true);
   assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "tests", "x")), true);
   assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "docs", "x")), true);
   assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "scripts", "x")), true);
-  // out/ is gitignored (apart from out/account-graph-* and out/local-prod-baseline/),
-  // so out/local-prod-baseline/ is NOT a tracked top-level dir.
-  assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "out", "local-prod-baseline", "x")), false);
+  // Repo root and gitignored subdirs are now ALSO inside the repo working tree.
+  assert.equal(mod.isInsideRepoTrackedTree(REPO_ROOT), true);
+  assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "out", "local-prod-baseline", "x")), true);
+  assert.equal(mod.isInsideRepoTrackedTree(join(REPO_ROOT, "a7-root-thing.jsonl")), true);
   assert.equal(mod.isInsideRepoTrackedTree("/tmp/anything"), false);
+});
+
+test("classifyCorpusPath refuses repo-root and any in-repo path; allows /tmp", () => {
+  const mod = require(RUNNER_PATH);
+  // outside the repo → allow
+  assert.equal(mod.classifyCorpusPath("/tmp/x.jsonl").decision, "allow");
+  // repo root → refuse
+  assert.equal(
+    mod.classifyCorpusPath(join(REPO_ROOT, "a7-root-corpus.jsonl")).decision,
+    "refuse_inside_repo",
+  );
+  // tracked dir → refuse
+  assert.equal(
+    mod.classifyCorpusPath(join(REPO_ROOT, "tests", "x.jsonl")).decision,
+    "refuse_inside_repo",
+  );
+  // even out/local-prod-baseline/ → refuse for corpus (only valid for --out)
+  assert.equal(
+    mod.classifyCorpusPath(join(REPO_ROOT, "out", "local-prod-baseline", "x.jsonl")).decision,
+    "refuse_inside_repo",
+  );
+});
+
+test("classifyOutPath allows /tmp + out/local-prod-baseline/**; refuses other in-repo", () => {
+  const mod = require(RUNNER_PATH);
+  assert.equal(mod.classifyOutPath("/tmp/out").decision, "allow_outside_repo");
+  assert.equal(
+    mod.classifyOutPath(join(REPO_ROOT, "out", "local-prod-baseline", "x")).decision,
+    "allow_local_prod_baseline",
+  );
+  assert.equal(
+    mod.classifyOutPath(join(REPO_ROOT, "out", "local-prod-baseline")).decision,
+    "allow_local_prod_baseline",
+  );
+  assert.equal(
+    mod.classifyOutPath(join(REPO_ROOT, "out", "account-graph-validation", "x")).decision,
+    "refuse_inside_repo",
+  );
+  assert.equal(mod.classifyOutPath(REPO_ROOT).decision, "refuse_inside_repo");
+  assert.equal(
+    mod.classifyOutPath(join(REPO_ROOT, "local-out-should-be-refused")).decision,
+    "refuse_inside_repo",
+  );
+  assert.equal(
+    mod.classifyOutPath(join(REPO_ROOT, "web", "x")).decision,
+    "refuse_inside_repo",
+  );
 });
 
 test("runner REFUSES to read --corpus from inside repo tracked tree (exit 1)", async () => {
@@ -102,10 +153,13 @@ test("runner REFUSES to read --corpus from inside repo tracked tree (exit 1)", a
   };
   try {
     const code = await mod.main(["--corpus", insideRepoCorpus, "--out", out]);
-    assert.equal(code, 1, "must exit nonzero when --corpus is inside tracked tree");
+    assert.equal(code, 1, "must exit nonzero when --corpus is inside repo working tree");
+    const stderr = errChunks.join("\n");
     assert.ok(
-      errChunks.join("\n").includes(mod.LOCAL_CORPUS_INSIDE_REPO_ERROR),
-      `expected explicit refusal; got: ${errChunks.join("\n")}`,
+      stderr.includes("--corpus") &&
+        stderr.includes("resolves inside the repo working tree") &&
+        stderr.includes(insideRepoCorpus),
+      `expected explicit per-path refusal naming the offending corpus path; got: ${stderr}`,
     );
   } finally {
     console.error = origErr;
@@ -127,12 +181,16 @@ test("runner REFUSES to write --out to a path inside repo tracked tree (exit 1)"
   };
   try {
     const code = await mod.main(["--corpus", corpusFile, "--out", insideRepoOut]);
-    assert.equal(code, 1, "must exit nonzero when --out is inside tracked tree");
+    assert.equal(code, 1, "must exit nonzero when --out is inside repo working tree");
+    const stderr = errChunks.join("\n");
     assert.ok(
-      errChunks.join("\n").includes(mod.LOCAL_OUT_INSIDE_REPO_ERROR),
-      `expected explicit refusal; got: ${errChunks.join("\n")}`,
+      stderr.includes("--out") &&
+        stderr.includes("resolves inside the repo working tree") &&
+        stderr.includes("out/local-prod-baseline") &&
+        stderr.includes(insideRepoOut),
+      `expected explicit per-path refusal naming the offending out path and allowed location; got: ${stderr}`,
     );
-    assert.equal(existsSync(insideRepoOut), false, "no directory should be created inside tracked tree");
+    assert.equal(existsSync(insideRepoOut), false, "no directory should be created inside repo working tree");
   } finally {
     console.error = origErr;
     rmSync(corpusDir, { recursive: true, force: true });
@@ -424,13 +482,147 @@ test("no production-derived fixtures are tracked under tests/fixtures/ in this P
   void tracked;
 });
 
+test("REGRESSION: --corpus at repo root is REFUSED (Hermes PR #45)", async () => {
+  // Reproduces the Hermes-found hole: a corpus placed at the repo root
+  // (../foo.jsonl from web/) used to pass the old "tracked top-level dirs"
+  // guard. The new policy refuses ANY path inside the repo working tree.
+  const mod = require(RUNNER_PATH);
+  const rootCorpus = join(REPO_ROOT, "a7-root-corpus-should-be-refused-test.jsonl");
+  writeFileSync(rootCorpus, JSON.stringify(syntheticBrief("root")) + "\n");
+  const out = makeTmpDir("a7-root-corpus-out-");
+  const errChunks: string[] = [];
+  const origErr = console.error;
+  console.error = (...args: unknown[]) => {
+    errChunks.push(args.map((a) => String(a)).join(" "));
+  };
+  try {
+    const code = await mod.main(["--corpus", rootCorpus, "--out", out]);
+    assert.equal(code, 1, "repo-root --corpus must exit nonzero");
+    const stderr = errChunks.join("\n");
+    assert.ok(
+      stderr.includes("--corpus") && stderr.includes("resolves inside the repo working tree"),
+      `expected explicit refusal; got: ${stderr}`,
+    );
+    // No artifacts under out/ since we refused before doing any work.
+    assert.equal(existsSync(join(out, "paired-baseline.json")), false);
+    assert.equal(existsSync(join(out, "report.json")), false);
+    assert.equal(existsSync(join(out, "local-baseline-selection.json")), false);
+  } finally {
+    console.error = origErr;
+    rmSync(rootCorpus, { force: true });
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("REGRESSION: --out at repo root is REFUSED and does NOT create a directory (Hermes PR #45)", async () => {
+  const mod = require(RUNNER_PATH);
+  const corpusDir = makeTmpDir("a7-root-out-corpus-");
+  const corpusFile = join(corpusDir, "synthetic.jsonl");
+  writeFileSync(corpusFile, JSON.stringify(syntheticBrief("a")) + "\n");
+  const rootOut = join(REPO_ROOT, "a7-root-out-should-be-refused-test");
+  const errChunks: string[] = [];
+  const origErr = console.error;
+  console.error = (...args: unknown[]) => {
+    errChunks.push(args.map((a) => String(a)).join(" "));
+  };
+  try {
+    const code = await mod.main(["--corpus", corpusFile, "--out", rootOut]);
+    assert.equal(code, 1, "repo-root --out must exit nonzero");
+    assert.equal(existsSync(rootOut), false, "no directory must be created at repo root");
+    const stderr = errChunks.join("\n");
+    assert.ok(
+      stderr.includes("--out") &&
+        stderr.includes("resolves inside the repo working tree") &&
+        stderr.includes("out/local-prod-baseline"),
+      `expected explicit refusal naming allowed location; got: ${stderr}`,
+    );
+  } finally {
+    console.error = origErr;
+    rmSync(corpusDir, { recursive: true, force: true });
+    rmSync(rootOut, { recursive: true, force: true });
+  }
+});
+
+test("REGRESSION: --out under out/local-prod-baseline/<sub>/ is ALLOWED and stays gitignored (Hermes PR #45)", async () => {
+  const mod = require(RUNNER_PATH);
+  const corpusDir = makeTmpDir("a7-allowed-corpus-");
+  const corpusFile = join(corpusDir, "synthetic.jsonl");
+  writeFileSync(corpusFile, JSON.stringify(syntheticBrief("a")) + "\n");
+  const sub = `patchcheck-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const allowedOut = join(REPO_ROOT, "out", "local-prod-baseline", sub);
+  const before = execSync("git status --short", { cwd: REPO_ROOT }).toString();
+  try {
+    const code = await mod.main(["--corpus", corpusFile, "--out", allowedOut]);
+    assert.equal(code, 0, "out/local-prod-baseline/<sub>/ must be allowed");
+    assert.ok(existsSync(join(allowedOut, "paired-baseline.json")));
+    assert.ok(existsSync(join(allowedOut, "report.json")));
+    assert.ok(existsSync(join(allowedOut, "local-baseline-selection.json")));
+    const after = execSync("git status --short", { cwd: REPO_ROOT }).toString();
+    assert.equal(after, before, "out/local-prod-baseline/ must remain gitignored");
+    const lsOut = execSync("git ls-files out/local-prod-baseline/", { cwd: REPO_ROOT })
+      .toString()
+      .trim();
+    assert.equal(lsOut, "");
+  } finally {
+    rmSync(corpusDir, { recursive: true, force: true });
+    rmSync(allowedOut, { recursive: true, force: true });
+  }
+});
+
+test("REGRESSION: all-malformed corpus exits nonzero and writes NO pass-looking artifacts (Hermes PR #45)", async () => {
+  const mod = require(RUNNER_PATH);
+  const corpusDir = makeTmpDir("a7-bad-corpus-");
+  const outDir = makeTmpDir("a7-bad-out-");
+  const corpusFile = join(corpusDir, "all-malformed.jsonl");
+  writeFileSync(corpusFile, "{not-json\n{also-not-json\n");
+  const errChunks: string[] = [];
+  const origErr = console.error;
+  console.error = (...args: unknown[]) => {
+    errChunks.push(args.map((a) => String(a)).join(" "));
+  };
+  try {
+    const code = await mod.main(["--corpus", corpusFile, "--out", outDir]);
+    assert.equal(code, 1, "all-malformed corpus must exit nonzero");
+    assert.equal(
+      existsSync(join(outDir, "paired-baseline.json")),
+      false,
+      "must not write paired-baseline.json on all-malformed corpus",
+    );
+    assert.equal(
+      existsSync(join(outDir, "report.json")),
+      false,
+      "must not write report.json on all-malformed corpus",
+    );
+    assert.equal(
+      existsSync(join(outDir, "local-baseline-selection.json")),
+      false,
+      "must not write local-baseline-selection.json on all-malformed corpus",
+    );
+    const stderr = errChunks.join("\n");
+    assert.ok(
+      stderr.includes("zero valid Brief entries") &&
+        stderr.includes("refusing to write a pass-looking baseline"),
+      `expected zero-valid-entries refusal; got: ${stderr}`,
+    );
+  } finally {
+    console.error = origErr;
+    rmSync(corpusDir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
 test("runner module exports the local-corpus surface", () => {
   const mod = require(RUNNER_PATH);
   assert.equal(typeof mod.isInsideRepoTrackedTree, "function");
+  assert.equal(typeof mod.classifyCorpusPath, "function");
+  assert.equal(typeof mod.classifyOutPath, "function");
+  assert.equal(typeof mod.formatCorpusRefusal, "function");
+  assert.equal(typeof mod.formatOutRefusal, "function");
   assert.equal(typeof mod.readLocalCorpus, "function");
   assert.equal(typeof mod.runLocalCorpusOrchestrator, "function");
   assert.equal(typeof mod.LOCAL_CORPUS_INSIDE_REPO_ERROR, "string");
   assert.equal(typeof mod.LOCAL_OUT_INSIDE_REPO_ERROR, "string");
+  assert.equal(typeof mod.LOCAL_CORPUS_NO_VALID_ENTRIES_ERROR_PREFIX, "string");
   assert.equal(typeof mod.LOCAL_SELECTION_CAVEAT, "string");
   assert.equal(typeof mod.LOCAL_PAIRED_CAVEAT, "string");
 });

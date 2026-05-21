@@ -35,16 +35,53 @@ selection rationale documented in
 ## Prerequisites
 
 - A local production-backup copy of the relevant briefs.
-- The corpus file must live **outside** the repo working tree's tracked
-  directories (`docs/`, `scripts/`, `tests/`, `web/`). Recommended:
-  - Corpus file: under `/tmp/...` or another operator-controlled location
-    outside the repo.
-  - Output directory: `out/local-prod-baseline/<timestamp>/` (gitignored —
-    see [`.gitignore`](../../.gitignore)) **or** a path under `/tmp/...`.
+- The corpus file MUST live **outside the repo working tree entirely**
+  (regardless of git-tracked status). The runner refuses any `--corpus`
+  path that resolves under `git rev-parse --show-toplevel`, including the
+  repo root, `web/`, `tests/`, `docs/`, `scripts/`, AND gitignored
+  subdirectories such as `out/local-prod-baseline/`. Recommended:
+  - Corpus file: under `/tmp/...`, `~/private/...`, or another
+    operator-controlled location outside the repo.
+- The `--out` directory MUST resolve to one of:
+  - A path **outside** the repo working tree (e.g. `/tmp/a7-out-...`,
+    `/var/tmp/...`, or any operator-controlled absolute path off the repo).
+  - A path **under `out/local-prod-baseline/**`** (gitignored — see
+    [`.gitignore`](../../.gitignore)). Any other in-repo path —
+    including the repo root, `web/`, `docs/`, `tests/`,
+    `out/account-graph-validation/`, `out/account-graph-backfill/` — is
+    refused, and the runner does **not** create the directory.
 
-The runner **refuses** to read a `--corpus` from inside the repo's tracked
-tree and **refuses** to write `--out` to such a path. This is a guardrail
-against accidental `git add` of production-derived content.
+Correct examples:
+
+```bash
+# Corpus outside the repo (good).
+CORPUS=/tmp/a7-local-corpus-$(date +%s).jsonl
+CORPUS=~/private/a7-corpus.jsonl
+
+# Out outside the repo (good).
+OUT=/tmp/a7-local-out-$(date +%s)
+
+# Out under the gitignored allow-list (good).
+OUT=out/local-prod-baseline/$(date +%Y%m%dT%H%M%SZ)
+```
+
+Incorrect examples (the runner will REFUSE and exit nonzero, without
+creating anything):
+
+```bash
+# Corpus at the repo root or any in-repo dir → REFUSED.
+CORPUS=./a7-corpus.jsonl
+CORPUS=tests/fixtures/a7-corpus.jsonl
+CORPUS=out/local-prod-baseline/inputs/a7-corpus.jsonl   # also refused for --corpus
+
+# Out at the repo root or any non-allow-listed in-repo path → REFUSED.
+OUT=./local-out
+OUT=web/local-out
+OUT=out/account-graph-validation/local-out
+```
+
+This is a guardrail against accidental `git add` of production-derived
+content.
 
 ## Corpus format
 
@@ -56,7 +93,14 @@ The runner accepts either:
 Each entry is parsed against the Brief Zod schema (`web/lib/schema.ts`).
 Entries that fail JSON parsing are classified `skipped_malformed_json`.
 Entries that fail schema validation are classified
-`skipped_unsupported_schema_variant`. Skips do **not** crash the run.
+`skipped_unsupported_schema_variant`. Per-entry skips do **not** crash the
+run as long as at least one valid Brief entry is present.
+
+If **all** entries in the corpus are malformed or schema-mismatched (zero
+valid Brief entries), the runner **refuses** to write any artifacts and
+exits nonzero with a `zero valid Brief entries; refusing to write a
+pass-looking baseline` error. This prevents an empty corpus from being
+mistaken for a successful baseline. Fix the corpus and re-run.
 
 Operator responsibility: derive the corpus from a local production backup
 using whatever script you prefer (e.g. read from a local SQLite copy and
@@ -122,7 +166,11 @@ as input to any A.7 review.
 
 - [ ] `git status --short` shows **no** changes inside any tracked directory.
 - [ ] `git ls-files out/local-prod-baseline/` prints **nothing**.
-- [ ] The corpus file path is outside the repo, or under `out/local-prod-baseline/`.
+- [ ] The corpus file path is outside the repo working tree entirely (a
+      corpus under `out/local-prod-baseline/` is also refused — that
+      location is for `--out`, not `--corpus`).
+- [ ] The `--out` path is either outside the repo or under
+      `out/local-prod-baseline/**`.
 - [ ] No `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` was set in this shell while
       running the procedure (the runner does not read these, but belt-and-braces).
 - [ ] No edits to public/share/admin/route code as part of this work.

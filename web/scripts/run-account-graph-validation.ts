@@ -527,26 +527,99 @@ export function buildPairedBaselinePlaceholder(_now: Date = new Date()): PairedB
 
 export const REPO_ROOT = resolve(__dirname, "..", "..");
 
-const REPO_TRACKED_TOP_LEVEL_DIRS = ["docs", "scripts", "tests", "web"];
+const LOCAL_PROD_BASELINE_ALLOWED_OUT_PREFIX = "out/local-prod-baseline";
 
 /**
- * Return true if `p` resolves to a path inside the repo working tree's
- * tracked top-level directories. Paths under `out/` or outside the repo are
- * considered safe.
+ * Return true if `p` resolves to a path inside the repo working tree
+ * (the directory tree under `git rev-parse --show-toplevel`), regardless of
+ * git-tracked status. Paths outside the repo (e.g. `/tmp/...`) return false.
+ *
+ * Per the Hermes-revised local-prod-baseline policy (PR #45), even paths
+ * under gitignored repo subdirectories like `out/` count as "inside the
+ * repo working tree" here — the caller decides whether to further allow
+ * specific gitignored subdirs (e.g. `out/local-prod-baseline/**`).
  */
 export function isInsideRepoTrackedTree(p: string): boolean {
   const abs = resolve(p);
   const rel = relative(REPO_ROOT, abs);
   if (rel.startsWith("..") || isAbsolute(rel)) return false; // outside repo
-  if (rel === "") return true; // the repo root itself is tracked
-  const top = rel.split(sep)[0];
-  return REPO_TRACKED_TOP_LEVEL_DIRS.includes(top);
+  // Anything else (rel === "" or any subdir) is inside the repo working tree.
+  return true;
 }
 
+/**
+ * Return the policy decision for a `--corpus` path:
+ *   - "allow" — outside the repo working tree
+ *   - "refuse_inside_repo" — anywhere inside the repo working tree (including
+ *     gitignored subdirs); operator must place local corpus outside the repo
+ */
+export function classifyCorpusPath(
+  p: string,
+): { decision: "allow" } | { decision: "refuse_inside_repo"; repoRoot: string; resolved: string } {
+  const abs = resolve(p);
+  const rel = relative(REPO_ROOT, abs);
+  if (rel.startsWith("..") || isAbsolute(rel)) return { decision: "allow" };
+  return { decision: "refuse_inside_repo", repoRoot: REPO_ROOT, resolved: abs };
+}
+
+/**
+ * Return the policy decision for a `--out` path:
+ *   - "allow_outside_repo" — outside the repo working tree
+ *   - "allow_local_prod_baseline" — inside repo AND under
+ *     `out/local-prod-baseline/**` (which is gitignored)
+ *   - "refuse_inside_repo" — anywhere else inside the repo
+ */
+export function classifyOutPath(
+  p: string,
+):
+  | { decision: "allow_outside_repo"; resolved: string }
+  | { decision: "allow_local_prod_baseline"; resolved: string }
+  | { decision: "refuse_inside_repo"; repoRoot: string; resolved: string } {
+  const abs = resolve(p);
+  const rel = relative(REPO_ROOT, abs);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    return { decision: "allow_outside_repo", resolved: abs };
+  }
+  // Inside the repo. Allow only under out/local-prod-baseline/**.
+  // Use forward-slash form for the prefix check, then also handle platform sep.
+  const normalized = rel.split(sep).join("/");
+  if (
+    normalized === LOCAL_PROD_BASELINE_ALLOWED_OUT_PREFIX ||
+    normalized.startsWith(LOCAL_PROD_BASELINE_ALLOWED_OUT_PREFIX + "/")
+  ) {
+    return { decision: "allow_local_prod_baseline", resolved: abs };
+  }
+  return { decision: "refuse_inside_repo", repoRoot: REPO_ROOT, resolved: abs };
+}
+
+export function formatCorpusRefusal(resolved: string, repoRoot: string): string {
+  return (
+    `--corpus ${resolved} resolves inside the repo working tree (${repoRoot}); ` +
+    `local-only corpus inputs must live outside the repo. ` +
+    `See docs/runbooks/phase-a7-local-production-baseline.md.`
+  );
+}
+
+export function formatOutRefusal(resolved: string, repoRoot: string): string {
+  return (
+    `--out ${resolved} resolves inside the repo working tree (${repoRoot}) ` +
+    `but is not under out/local-prod-baseline/. ` +
+    `Allowed: any path outside the repo (e.g. /tmp/...) OR a path under ` +
+    `out/local-prod-baseline/ (gitignored). ` +
+    `See docs/runbooks/phase-a7-local-production-baseline.md.`
+  );
+}
+
+// Legacy string constants kept for back-compat with prior tests/automation.
+// New code paths surface the per-path messages from formatCorpusRefusal /
+// formatOutRefusal so the offending path and repo root are explicit.
 export const LOCAL_CORPUS_INSIDE_REPO_ERROR =
-  "refusing to read --corpus from inside the repo working tree's tracked directories; place the corpus under /tmp or an operator-controlled directory outside the repo";
+  "--corpus resolves inside the repo working tree; local-only corpus inputs must live outside the repo. See docs/runbooks/phase-a7-local-production-baseline.md.";
 export const LOCAL_OUT_INSIDE_REPO_ERROR =
-  "refusing to write --out to a path inside the repo working tree's tracked directories; pass an --out under /tmp, out/local-prod-baseline/, or another ignored location";
+  "--out resolves inside the repo working tree but is not under out/local-prod-baseline/. Allowed: any path outside the repo (e.g. /tmp/...) OR a path under out/local-prod-baseline/ (gitignored). See docs/runbooks/phase-a7-local-production-baseline.md.";
+
+export const LOCAL_CORPUS_NO_VALID_ENTRIES_ERROR_PREFIX =
+  "yielded zero valid Brief entries; refusing to write a pass-looking baseline.";
 
 export type LocalCorpusKind = "local_production_backup";
 
@@ -764,18 +837,37 @@ export type LocalCorpusOrchestratorResult = {
 export async function runLocalCorpusOrchestrator(
   opts: LocalCorpusOrchestratorOptions,
 ): Promise<LocalCorpusOrchestratorResult> {
-  // Guardrails: refuse to read corpus from inside repo tracked tree; refuse
-  // to write artifacts to a path inside the repo tracked tree.
+  // Guardrails (Hermes-revised PR #45 policy):
+  //   - --corpus must resolve OUTSIDE the repo working tree.
+  //   - --out must resolve outside the repo OR under out/local-prod-baseline/**.
+  // Both checks happen BEFORE any directory is created or any artifact is
+  // written.
   const corpusAbs = resolve(opts.corpusPath);
-  if (isInsideRepoTrackedTree(corpusAbs)) {
-    throw new Error(LOCAL_CORPUS_INSIDE_REPO_ERROR);
+  const corpusDecision = classifyCorpusPath(corpusAbs);
+  if (corpusDecision.decision === "refuse_inside_repo") {
+    throw new Error(formatCorpusRefusal(corpusDecision.resolved, corpusDecision.repoRoot));
   }
   const outAbs = resolve(opts.outDir);
-  if (isInsideRepoTrackedTree(outAbs)) {
-    throw new Error(LOCAL_OUT_INSIDE_REPO_ERROR);
+  const outDecision = classifyOutPath(outAbs);
+  if (outDecision.decision === "refuse_inside_repo") {
+    throw new Error(formatOutRefusal(outDecision.resolved, outDecision.repoRoot));
   }
   if (!existsSync(corpusAbs)) {
     throw new Error(`--corpus path does not exist: ${corpusAbs}`);
+  }
+
+  // Read & classify corpus BEFORE creating the out directory. If zero valid
+  // entries are found, refuse to write a pass-looking baseline.
+  const read = readLocalCorpus(corpusAbs);
+  if (read.entries_ok.length === 0) {
+    const errorLines = read.entries_skipped.map((s) => {
+      const where = s.source_line !== undefined ? `line ${s.source_line}` : `entry ${s.source_index}`;
+      return `  - ${where}: ${s.classification}${s.error ? ` (${s.error})` : ""}`;
+    });
+    const msg =
+      `--corpus ${corpusAbs} ${LOCAL_CORPUS_NO_VALID_ENTRIES_ERROR_PREFIX}` +
+      (errorLines.length > 0 ? `\nErrors:\n${errorLines.join("\n")}` : "");
+    throw new Error(msg);
   }
 
   const now = opts.now ?? new Date();
@@ -793,7 +885,6 @@ export async function runLocalCorpusOrchestrator(
     accepted_excerpts: [],
   });
 
-  const read = readLocalCorpus(corpusAbs);
   const maxN = Math.max(1, opts.limit ?? read.entries_ok.length);
   const selectedOk = read.entries_ok.slice(0, maxN);
 
@@ -1685,12 +1776,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   // live OUTSIDE the repo working tree's tracked directories so the operator
   // cannot accidentally `git add` production-derived content.
   if (args.corpus) {
-    if (isInsideRepoTrackedTree(args.corpus)) {
-      console.error(`[run-account-graph-validation] ${LOCAL_CORPUS_INSIDE_REPO_ERROR}`);
+    const corpusDecision = classifyCorpusPath(args.corpus);
+    if (corpusDecision.decision === "refuse_inside_repo") {
+      console.error(
+        `[run-account-graph-validation] ${formatCorpusRefusal(corpusDecision.resolved, corpusDecision.repoRoot)}`,
+      );
       return 1;
     }
-    if (isInsideRepoTrackedTree(args.out)) {
-      console.error(`[run-account-graph-validation] ${LOCAL_OUT_INSIDE_REPO_ERROR}`);
+    const outDecision = classifyOutPath(args.out);
+    if (outDecision.decision === "refuse_inside_repo") {
+      console.error(
+        `[run-account-graph-validation] ${formatOutRefusal(outDecision.resolved, outDecision.repoRoot)}`,
+      );
       return 1;
     }
     try {
