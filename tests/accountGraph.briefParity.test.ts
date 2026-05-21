@@ -223,8 +223,10 @@ test("runner module import does NOT invoke main() or create artifacts", async ()
   // Importing the runner module must NOT call main(), must NOT touch the
   // filesystem, must NOT create artifacts.
   const mod = require("../web/scripts/run-account-graph-backfill");
-  // Sanity: the module should expose `main` for testability.
+  // Sanity: the module should expose `main` for testability and the parity
+  // parser helper so local-db TEXT rows can be exercised without running CLI.
   assert.equal(typeof mod.main, "function", "runner must export `main` for testability");
+  assert.equal(typeof mod.parseBriefJsonForParity, "function");
 
   const after = ex(outDir) ? new Set(rd(outDir)) : new Set<string>();
   const newEntries: string[] = [];
@@ -242,6 +244,14 @@ test("runner module import does NOT invoke main() or create artifacts", async ()
     0,
     `runner import created artifacts: ${newEntries.join(", ")}`,
   );
+});
+
+test("runner parseBriefJsonForParity handles local-db TEXT brief_json rows", () => {
+  const brief = loadSample();
+  const { parseBriefJsonForParity } = require("../web/scripts/run-account-graph-backfill");
+  const parsed = parseBriefJsonForParity(JSON.stringify(brief));
+  assert.equal(parsed.account_name, brief.account_name);
+  assert.deepEqual(parsed.recent_signals, brief.recent_signals);
 });
 
 test("no public/share route exposure in this branch", () => {
