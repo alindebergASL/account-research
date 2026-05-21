@@ -1,11 +1,21 @@
 # Phase A.5 — Account Graph Spike Results
 
-- Branch: `feature/phase-a5-account-graph-spike`
-- Commit: `4dfcb949e287ad02af517cbaf117f80430a795c3`
-- Run at: 2026-05-21T00:02:10.084Z
+- Branch: `pr-36`
+- Commit: `c2cdbfbf6b6a63c51e8b59b14b36df472e6d1ace`
+- Run at: 2026-05-21T00:18:18.253Z
 - Mode: `fixture` (fixture mode is deterministic, no model/web calls)
-- Runtime: 7 ms
+- Runtime: 10 ms
 - Cost: n/a (fixture mode, no model calls)
+
+## Provenance note
+
+This report was regenerated after PR #36 review from the checked-out PR head (`c2cdbfbf6b6a63c51e8b59b14b36df472e6d1ace`). For committed spike reports, treat the PR head SHA plus rerun command/output as the operational evidence rather than assuming the embedded `Commit` field can always be self-referentially exact after squash merges.
+
+## Metric glossary
+
+- Validation `Exact-span ratio` in the metrics table is computed over accepted/verified evidence excerpts in the assembled graph.
+- Spike B `exact_span_ratio` is the extraction-quality threshold metric; in this run it is 90.0%, exactly at the pass threshold.
+- Spike B `normalized_span_ratio` tracks accepted snippets that required normalized matching, and paraphrase acceptance remains a hard fail.
 
 ## Outcome classification
 
