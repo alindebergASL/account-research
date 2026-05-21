@@ -422,7 +422,11 @@ test("--mode model --adapter fake runs end-to-end with cost.observed_usd === 0",
     assert.ok(existsSync(join(outDir, "paired-baseline.json")));
     const j = JSON.parse(readFileSync(join(outDir, "report.json"), "utf8"));
     assert.equal(j.mode, "model");
-    assert.equal(j.adapter_selected, "fake");
+    // Blocker 2: adapter_selected reflects the actual adapter id, not a
+    // hardcoded literal. The fake deterministic adapter's name is
+    // "fake-deterministic".
+    assert.equal(j.adapter_selected, "fake-deterministic");
+    assert.notEqual(j.adapter_selected, "fake", "Blocker 2: must not be the bare string 'fake'");
     assert.equal(j.cost.observed_usd, 0);
     assert.equal(j.cost.status, "observed");
     // Cost block carries provider/model/calls/tokens.
