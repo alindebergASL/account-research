@@ -73,6 +73,11 @@ function gitInfo(): { branch: string; commit: string } {
 
 type BriefRow = { brief_id: string; brief_json: unknown };
 
+export function parseBriefJsonForParity(briefJson: unknown): unknown {
+  if (typeof briefJson !== "string") return briefJson;
+  return JSON.parse(briefJson);
+}
+
 function loadFixtureBriefs(): BriefRow[] {
   // Use the repo's sample_brief.json + tests/fixtures/*_brief.json as
   // fixture-mode input. These are committed fixtures, not production data.
@@ -209,7 +214,8 @@ export async function main(): Promise<void> {
     const { graph, report } = outcome;
     const validation = validateAccountGraph(graph);
     // Re-parse brief for parity (we know it parsed inside fromBriefJson).
-    const briefParsed = BriefSchema.parse(row.brief_json);
+    // Local DB rows store brief_json as TEXT; fixture mode may already pass objects.
+    const briefParsed = BriefSchema.parse(parseBriefJsonForParity(row.brief_json));
     const parity = buildParityReport(briefParsed, graph, row.brief_id);
     const rec = classifyBrief(row.brief_id, validation, parity, report);
     records.push(rec);
