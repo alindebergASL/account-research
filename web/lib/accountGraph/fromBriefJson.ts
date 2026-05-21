@@ -66,6 +66,21 @@ export function jaccard(a: string, b: string): number {
   return union === 0 ? 0 : inter / union;
 }
 
+// Simple deterministic detection of an event kind from a signal text. This
+// is intentionally crude — A.6 is mechanical, so a keyword check is the
+// honest representation. Returns `"unknown"` when no keyword matches.
+function detectEventKind(text: string): string {
+  const t = (text || "").toLowerCase();
+  if (/\b(announced|announce|announces|announcement|launch(?:ed|es)?|unveil(?:ed|s)?)\b/.test(t)) return "announcement";
+  if (/\b(renew(?:ed|s|al)?|extend(?:ed|s)?)\b/.test(t)) return "renewal";
+  if (/\b(chang(?:ed|es|ing)|transition(?:ed|s|ing)?|reorg(?:anized)?|shift(?:ed|s)?)\b/.test(t)) return "change";
+  if (/\b(hir(?:ed|es|ing)|appoint(?:ed|s)?|join(?:ed|s)?\s+as)\b/.test(t)) return "leadership_change";
+  if (/\b(award(?:ed|s)?|won|secured|grant(?:ed|s)?)\b/.test(t)) return "award";
+  if (/\b(partner(?:ed|s|ship)?|collaborat(?:ed|es|ion))\b/.test(t)) return "partnership";
+  if (/\b(rfp|rfi|procurement|contract\s+award)\b/.test(t)) return "procurement";
+  return "unknown";
+}
+
 function mapConfidence(c: string | undefined): ConfidenceLevel {
   switch ((c || "").toLowerCase()) {
     case "high":
@@ -491,6 +506,11 @@ function buildGraph(
       section: "recent_signals",
       sourceText: sig.source ?? null,
     });
+    // Preserve plan-level conceptual type `signal_or_change` (not present in
+    // AccountObjectType enum). We default to `"signal"` as the closest enum
+    // value and record the conceptual type and a deterministic event_kind
+    // detection in object_data. See plan §4 / Hermes review #1.
+    const eventKind = detectEventKind(sig.text);
     addObject(
       "signal",
       "signal",
@@ -499,7 +519,7 @@ function buildGraph(
       [claim.id],
       mapConfidence(sig.confidence),
       provenance,
-      { ordinal: i },
+      { ordinal: i, conceptual_type: "signal_or_change", event_kind: eventKind },
     );
   });
 
@@ -636,6 +656,11 @@ function buildGraph(
       section: "programs_procurement.ai_governance_policy",
       reason: "plan §4 leaves attachment ambiguous between risk_or_open_question and program; mapper defaults to procurement_program",
     });
+    // Preserve plan-level conceptual type `risk_or_open_question` (not in
+    // AccountObjectType enum). We attach to `procurement_program` (as
+    // currently chosen) and record the conceptual type in object_data so
+    // downstream consumers can recover the ambiguity. See plan §4 /
+    // Hermes review #1.
     addObject(
       "programs_procurement.ai_governance_policy",
       "procurement_program",
@@ -644,6 +669,7 @@ function buildGraph(
       [c.id],
       "unknown",
       "legacy_brief_json",
+      { conceptual_type: "risk_or_open_question" },
     );
   }
   pp.public_ai_use_cases.forEach((t, i) => {

@@ -178,9 +178,69 @@ export function classifyBrief(
   };
 }
 
+export type AggregateConfidenceDowngrades = {
+  total_claims: number;
+  downgraded_claims: number;
+  // Distinct (from, to) pairs observed across the corpus, with counts.
+  from_to_pairs: { from: string; to: string; count: number }[];
+};
+
+export type AggregateOrphanSources = {
+  total: number;
+};
+
+export type AggregateRollup = {
+  classification: AggregateClassification;
+  reasons: string[];
+  confidence_downgrades: AggregateConfidenceDowngrades;
+  orphan_source_documents: AggregateOrphanSources;
+};
+
+export function summarizeConfidenceDowngrades(
+  records: PerBriefRecord[],
+): AggregateConfidenceDowngrades {
+  let totalClaims = 0;
+  let downgraded = 0;
+  const pairCounts = new Map<string, number>();
+  for (const r of records) {
+    if (!r.validation) continue;
+    totalClaims += r.validation.metrics.claim_count;
+    // Per-claim downgrades surface in parity.provenance_gaps (one entry per
+    // claim whose brief-level `high` confidence was downgraded because A.6
+    // has no excerpt verification path).
+    if (!r.parity) continue;
+    for (const gap of r.parity.provenance_gaps) {
+      // Current mapper downgrades high → medium; record that pair.
+      const key = "high|medium";
+      pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+      downgraded += 1;
+      // (gap.tier captures the provenance tier, not the new confidence; the
+      // confidence pair is high→medium by construction of the mapper.)
+      void gap;
+    }
+  }
+  return {
+    total_claims: totalClaims,
+    downgraded_claims: downgraded,
+    from_to_pairs: Array.from(pairCounts.entries()).map(([k, count]) => {
+      const [from, to] = k.split("|");
+      return { from, to, count };
+    }),
+  };
+}
+
+export function summarizeOrphanSources(records: PerBriefRecord[]): AggregateOrphanSources {
+  let total = 0;
+  for (const r of records) {
+    if (!r.mapping) continue;
+    total += r.mapping.orphan_source_ids.length;
+  }
+  return { total };
+}
+
 export function aggregateClassification(
   records: PerBriefRecord[],
-): { classification: AggregateClassification; reasons: string[] } {
+): AggregateRollup {
   const reasons: string[] = [];
   const counts: Record<PerBriefClassification, number> = {
     pass: 0,
@@ -193,24 +253,26 @@ export function aggregateClassification(
     failed_render_parity: 0,
   };
   for (const r of records) counts[r.classification] += 1;
+  const confidence_downgrades = summarizeConfidenceDowngrades(records);
+  const orphan_source_documents = summarizeOrphanSources(records);
 
   if (counts.failed_false_verified_provenance > 0) {
     reasons.push(
       `HARD FAIL: ${counts.failed_false_verified_provenance} briefs with false-verified provenance.`,
     );
-    return { classification: "fail", reasons };
+    return { classification: "fail", reasons, confidence_downgrades, orphan_source_documents };
   }
   if (counts.failed_invented_evidence > 0) {
     reasons.push(
       `HARD FAIL: ${counts.failed_invented_evidence} briefs with invented evidence/source IDs.`,
     );
-    return { classification: "fail", reasons };
+    return { classification: "fail", reasons, confidence_downgrades, orphan_source_documents };
   }
   if (counts.failed_validation > 0) {
     reasons.push(
       `HARD FAIL: ${counts.failed_validation} briefs failed validator hard invariants.`,
     );
-    return { classification: "fail", reasons };
+    return { classification: "fail", reasons, confidence_downgrades, orphan_source_documents };
   }
   // Systematic whole-section loss: >25% of briefs in failed_render_parity.
   const total = records.length || 1;
@@ -218,7 +280,7 @@ export function aggregateClassification(
     reasons.push(
       `HARD FAIL: ${counts.failed_render_parity}/${total} briefs failed render parity (systematic section loss).`,
     );
-    return { classification: "fail", reasons };
+    return { classification: "fail", reasons, confidence_downgrades, orphan_source_documents };
   }
   if (
     counts.partial_with_attribution_gaps / total > 0.5 ||
@@ -227,12 +289,12 @@ export function aggregateClassification(
     reasons.push(
       `borderline: ${counts.partial_with_attribution_gaps} attribution-gap briefs, ${counts.failed_render_parity} render-parity failures.`,
     );
-    return { classification: "borderline", reasons };
+    return { classification: "borderline", reasons, confidence_downgrades, orphan_source_documents };
   }
   reasons.push(
     `pass: ${counts.pass} pass, ${counts.skipped_malformed_json} malformed, ${counts.skipped_unsupported_schema_variant} unsupported variant, ${counts.partial_with_attribution_gaps} attribution gaps.`,
   );
-  return { classification: "pass", reasons };
+  return { classification: "pass", reasons, confidence_downgrades, orphan_source_documents };
 }
 
 // ---------- Markdown renderer ----------
@@ -243,7 +305,7 @@ export type RenderInput = {
   runAt: string;
   mode: "fixture" | "local-db";
   records: PerBriefRecord[];
-  aggregate: { classification: AggregateClassification; reasons: string[] };
+  aggregate: AggregateRollup;
   runtimeMs: number;
 };
 
@@ -263,6 +325,26 @@ export function renderBackfillMarkdown(input: RenderInput): string {
   lines.push("");
   lines.push(`**${aggregate.classification.toUpperCase()}**`);
   for (const r of aggregate.reasons) lines.push(`- ${r}`);
+  lines.push("");
+  lines.push("## Aggregate confidence downgrades");
+  lines.push("");
+  {
+    const cd = aggregate.confidence_downgrades;
+    lines.push(
+      `- ${cd.downgraded_claims} of ${cd.total_claims} claims had confidence downgraded from \`high\` to \`medium\` because A.6 has no verified excerpt path.`,
+    );
+    if (cd.from_to_pairs.length > 0) {
+      for (const p of cd.from_to_pairs) {
+        lines.push(`  - ${p.from} → ${p.to}: ${p.count}`);
+      }
+    }
+  }
+  lines.push("");
+  lines.push("## Aggregate orphan SourceDocuments");
+  lines.push("");
+  lines.push(
+    `- ${aggregate.orphan_source_documents.total} orphan SourceDocuments across the corpus; these are cited sources without EvidenceExcerpt links, expected in A.6 because we do not fabricate excerpts.`,
+  );
   lines.push("");
   lines.push("## Per-brief results");
   lines.push("");

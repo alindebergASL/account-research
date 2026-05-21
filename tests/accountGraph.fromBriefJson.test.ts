@@ -259,6 +259,78 @@ test("fromBriefJson: Jaccard dedup on near-duplicate recent_signals (≥0.7)", (
   assert.equal(sigClaims.length, 1, "near-duplicate signals should dedupe via Jaccard ≥ 0.7");
 });
 
+test("fromBriefJson: non-URL `source` strings materialize SourceDocument(kind=unknown, allowed=false) with NO excerpt or evidence", () => {
+  const brief: Brief = {
+    ...loadSample(),
+    recent_signals: [
+      { text: "Plain prose citation only", source: "internal hallway conversation", confidence: "Medium" },
+    ],
+  };
+  const out = fromBriefJson({ brief_id: "b_nonurl", brief_json: brief });
+  if (out.status !== "ok") throw new Error("expected ok");
+  const nonLegacySources = out.graph.source_documents.filter(
+    (s) => (s.metadata as any).subtype !== "legacy_brief_json",
+  );
+  // At least one external materialized SourceDocument with kind=unknown.
+  const nonUrl = nonLegacySources.find(
+    (s) => (s.metadata as any).original_source_string === "internal hallway conversation",
+  );
+  assert.ok(nonUrl, "non-URL source must materialize");
+  assert.equal(nonUrl!.kind, "unknown");
+  assert.equal(nonUrl!.allowed, false);
+  assert.equal(nonUrl!.url, null);
+  // No excerpt or ClaimEvidence references this SourceDocument.
+  assert.equal(
+    out.graph.evidence_excerpts.filter((e) => e.source_document_id === nonUrl!.id).length,
+    0,
+  );
+  assert.equal(out.graph.claim_evidence.length, 0);
+});
+
+test("fromBriefJson: programs_procurement.active_rfps_contracts → opportunity AccountObject", () => {
+  const brief = loadSample();
+  const out = fromBriefJson({ brief_id: "b_rfp", brief_json: brief });
+  if (out.status !== "ok") throw new Error("expected ok");
+  const rfpObjects = out.graph.account_objects.filter(
+    (o) => ((o.metadata as any).section as string) === "programs_procurement.active_rfps_contracts",
+  );
+  if (brief.programs_procurement.active_rfps_contracts.length > 0) {
+    assert.ok(rfpObjects.length > 0, "expected at least one opportunity object for RFPs");
+    for (const o of rfpObjects) assert.equal(o.type, "opportunity");
+  }
+});
+
+test("fromBriefJson: ai_governance_policy records ambiguity AND preserves object_data.conceptual_type", () => {
+  const brief = loadSample();
+  const out = fromBriefJson({ brief_id: "b_aigov", brief_json: brief });
+  if (out.status !== "ok") throw new Error("expected ok");
+  if (!brief.programs_procurement.ai_governance_policy) return; // skip if absent
+  assert.ok(
+    out.report.ambiguous.some((a) => a.section === "programs_procurement.ai_governance_policy"),
+    "ai_governance_policy must appear in ambiguous list",
+  );
+  const obj = out.graph.account_objects.find(
+    (o) => ((o.metadata as any).section as string) === "programs_procurement.ai_governance_policy",
+  );
+  assert.ok(obj, "expected ai_governance_policy AccountObject");
+  assert.equal((obj!.object_data as any).conceptual_type, "risk_or_open_question");
+});
+
+test("fromBriefJson: recent_signals AccountObjects preserve object_data.conceptual_type=signal_or_change", () => {
+  const brief = loadSample();
+  const out = fromBriefJson({ brief_id: "b_sig", brief_json: brief });
+  if (out.status !== "ok") throw new Error("expected ok");
+  const sigObjs = out.graph.account_objects.filter((o) => o.type === "signal");
+  assert.ok(sigObjs.length > 0);
+  for (const o of sigObjs) {
+    assert.equal(
+      (o.object_data as any).conceptual_type,
+      "signal_or_change",
+      `signal AccountObject ${o.id} missing conceptual_type`,
+    );
+  }
+});
+
 test("rollback: no A.6 code touches public share or admin routes", () => {
   // Pure-code assertion: this test does not write files; it documents the
   // requirement. Static check is performed by the package layout (no files

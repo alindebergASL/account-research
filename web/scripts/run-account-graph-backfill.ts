@@ -150,7 +150,7 @@ function loadLocalDbBriefs(limit: number | undefined, briefId: string | undefine
   return rows.map((r) => ({ brief_id: r.brief_id, brief_json: r.brief_json }));
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const t0 = Date.now();
   const { branch, commit } = gitInfo();
@@ -302,7 +302,14 @@ async function main(): Promise<void> {
   if (aggregate.classification === "fail") process.exit(1);
 }
 
-main().catch((err) => {
-  console.error("[run-account-graph-backfill] error:", err);
-  process.exit(1);
-});
+// Entrypoint guard: only invoke `main()` when this script is run directly,
+// NOT when it is imported (e.g. by a test asserting no side effects). Under
+// the CommonJS tsx runtime used here, `require.main === module` is true only
+// when this file is the entry script. Importing the module must NOT touch
+// the filesystem, must NOT create artifacts, must NOT exit the process.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[run-account-graph-backfill] error:", err);
+    process.exit(1);
+  });
+}

@@ -179,6 +179,71 @@ test("aggregateClassification: idiosyncratic skip → still pass", () => {
   assert.equal(aggregateClassification(records).classification, "pass");
 });
 
+test("aggregateClassification: reports confidence-downgrade total > 0 for sample brief with high-confidence claims", () => {
+  const brief = loadSample();
+  const out = fromBriefJson({ brief_id: "b_agg_cd", brief_json: brief });
+  if (out.status !== "ok") throw new Error("expected ok");
+  const v = validateAccountGraph(out.graph);
+  const parity = buildParityReport(brief, out.graph, "b_agg_cd");
+  const rec = classifyBrief("b_agg_cd", v, parity, out.report);
+  const agg = aggregateClassification([rec]);
+  assert.ok(
+    agg.confidence_downgrades.downgraded_claims > 0,
+    `expected >0 downgrades; got ${agg.confidence_downgrades.downgraded_claims}`,
+  );
+  assert.ok(agg.confidence_downgrades.total_claims > 0);
+  assert.ok(
+    agg.confidence_downgrades.from_to_pairs.some((p) => p.from === "high" && p.to === "medium"),
+    "expected high→medium pair in from_to_pairs",
+  );
+});
+
+test("aggregateClassification: reports orphan SourceDocument total across corpus", () => {
+  const brief = loadSample();
+  const out = fromBriefJson({ brief_id: "b_agg_orph", brief_json: brief });
+  if (out.status !== "ok") throw new Error("expected ok");
+  const v = validateAccountGraph(out.graph);
+  const parity = buildParityReport(brief, out.graph, "b_agg_orph");
+  const rec = classifyBrief("b_agg_orph", v, parity, out.report);
+  const agg = aggregateClassification([rec]);
+  // sample_brief.json has cited sources without excerpts (A.6 never fabricates),
+  // so orphan total should be >0.
+  assert.ok(
+    agg.orphan_source_documents.total > 0,
+    `expected >0 orphan SourceDocuments; got ${agg.orphan_source_documents.total}`,
+  );
+});
+
+test("runner module import does NOT invoke main() or create artifacts", async () => {
+  const { existsSync: ex, readdirSync: rd, rmSync } = require("node:fs");
+  const path = require("node:path");
+  const outDir = path.resolve(__dirname, "..", "out", "account-graph-backfill");
+  const before = ex(outDir) ? new Set(rd(outDir)) : new Set<string>();
+
+  // Importing the runner module must NOT call main(), must NOT touch the
+  // filesystem, must NOT create artifacts.
+  const mod = require("../web/scripts/run-account-graph-backfill");
+  // Sanity: the module should expose `main` for testability.
+  assert.equal(typeof mod.main, "function", "runner must export `main` for testability");
+
+  const after = ex(outDir) ? new Set(rd(outDir)) : new Set<string>();
+  const newEntries: string[] = [];
+  for (const e of after) if (!before.has(e)) newEntries.push(e as string);
+  // Clean up any accidental entries before asserting so the suite is idempotent.
+  for (const e of newEntries) {
+    try {
+      rmSync(path.join(outDir, e), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  assert.equal(
+    newEntries.length,
+    0,
+    `runner import created artifacts: ${newEntries.join(", ")}`,
+  );
+});
+
 test("no public/share route exposure in this branch", () => {
   // Plan §13: "no public/share route exposure — assert no files under
   // web/app/s/** or web/app/api/share/** were created/touched by this branch".
