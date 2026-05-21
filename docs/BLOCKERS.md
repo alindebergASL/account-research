@@ -85,6 +85,22 @@ Rationale:
 - Passing both Spike A and Spike B in fixture mode proves validator/buildability, not real LLM extraction reliability.
 - A.7 is the first phase where untested LLM reliability would affect production graph-first writes.
 
+## Related docs
+
+- A.7 real model adapter implementation plan (Task 7):
+  [`docs/plans/2026-05-21-phase-a7-real-model-adapter-implementation-plan.md`](plans/2026-05-21-phase-a7-real-model-adapter-implementation-plan.md)
+- A.7 paid model validation runbook (Task 8):
+  [`docs/runbooks/phase-a7-paid-model-validation.md`](runbooks/phase-a7-paid-model-validation.md)
+- A.7 graph-first write boundary ADR:
+  [`docs/decisions/2026-05-21-phase-a7-graph-first-write-boundary.md`](decisions/2026-05-21-phase-a7-graph-first-write-boundary.md)
+- A.7 local production baseline runbook:
+  [`docs/runbooks/phase-a7-local-production-baseline.md`](runbooks/phase-a7-local-production-baseline.md)
+- A.7 model-mode validation source plan:
+  [`docs/plans/2026-05-21-phase-a7-model-mode-validation-plan.md`](plans/2026-05-21-phase-a7-model-mode-validation-plan.md)
+
+A.7 graph-first writes remain BLOCKED above; the docs in this section
+inform but do not change that gate.
+
 ## A.6 landed notes / future cleanup
 
 A.6 has landed as deterministic backfill from existing saved briefs. The remaining notes below are no longer A.6 pre-implementation blockers; they are background for future A.7/A.8 planning:

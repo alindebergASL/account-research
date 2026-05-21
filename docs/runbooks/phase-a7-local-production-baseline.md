@@ -187,6 +187,21 @@ as input to any A.7 review.
   `--adapter fake` is **refused** in this PR.
 - It does **not** capture or write any production data into the repo.
 
+## Next step
+
+After this local deterministic baseline is complete and reviewed, the
+*next* gated step is the paid model validation described in
+[`docs/runbooks/phase-a7-paid-model-validation.md`](phase-a7-paid-model-validation.md).
+That runbook depends on the artifacts produced here (especially
+`local-baseline-selection.json` with operator-edited rationales) and
+requires explicit human approval before any paid call.
+
+The implementation plan for the real adapter consumed by Task 8 lives at
+[`docs/plans/2026-05-21-phase-a7-real-model-adapter-implementation-plan.md`](../plans/2026-05-21-phase-a7-real-model-adapter-implementation-plan.md).
+The write-boundary doctrine that governs whether any of this ever
+unblocks graph-first writes lives at
+[`docs/decisions/2026-05-21-phase-a7-graph-first-write-boundary.md`](../decisions/2026-05-21-phase-a7-graph-first-write-boundary.md).
+
 ## Related
 
 - Plan: `docs/plans/2026-05-21-phase-a7-model-mode-validation-plan.md`
