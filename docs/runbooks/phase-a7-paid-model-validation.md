@@ -134,11 +134,16 @@ comment) that records:
 - `max_cost_usd` — the exact `--max-cost` value the operator approves.
 - `allow_high_cost` — whether `--allow-high-cost` is approved (only if
   `--max-cost > 25`).
-- `corpus_path_class` — qualitative description (e.g. `/tmp/...`,
-  `~/private/...`, or `out/local-prod-baseline/inputs/...` — though
-  recall the corpus itself must be outside the repo per §2).
-- `out_path_class` — qualitative description (e.g. `/tmp/...` or
-  `out/local-prod-baseline/<timestamp>`).
+- `corpus_path_class` — qualitative description. The corpus **must be
+  outside the repo working tree** per §2 (`classifyCorpusPath` refuses
+  in-repo paths, including `out/local-prod-baseline/**`). Acceptable
+  examples: `/tmp/...`, `~/private/...`. Do not use
+  `out/local-prod-baseline/**` here — that path is for `--out` only,
+  not `--corpus`.
+- `out_path_class` — qualitative description. Acceptable examples:
+  `/tmp/...` (outside repo) or `out/local-prod-baseline/<timestamp>/`
+  (in-repo, gitignored, the only in-repo location `classifyOutPath`
+  allows).
 - `adapter` — `real` (the only paid choice).
 - `provider` and `model` — the exact provider and model name (e.g.
   `anthropic`, `claude-opus-4.7`).
@@ -209,9 +214,10 @@ If the dry-run refuses, fix the refusal *before* attempting the paid run.
 ### Paid run command shape
 
 ```bash
-mkdir -p /tmp/a7-paid-out-$(date +%Y%m%dT%H%M%SZ)
-OUT=/tmp/a7-paid-out-$(date +%Y%m%dT%H%M%SZ)
+STAMP=$(date +%Y%m%dT%H%M%SZ)
+OUT=/tmp/a7-paid-out-$STAMP
 CORPUS=/tmp/a7-paid-corpus-<timestamp>.jsonl
+mkdir -p "$OUT"
 
 ( cd web && npx tsx scripts/run-account-graph-validation.ts \
     --mode model \

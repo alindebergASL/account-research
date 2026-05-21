@@ -114,16 +114,18 @@ contents are production-derived.
 CORPUS=/tmp/a7-local-corpus-$(date +%s).jsonl
 # ... operator's export step produces $CORPUS ...
 
-# Step 2 — pick an ignored out directory. Either of these is acceptable:
-OUT=out/local-prod-baseline/$(date +%Y%m%dT%H%M%SZ)        # ignored via .gitignore
-# OR
-OUT=/tmp/a7-local-out-$(date +%s)                          # outside repo entirely
+# Step 2 — pick an OUT path. Choose ONE of the two options below.
+# Pass $OUT to --out directly from inside web/; do NOT prepend "../".
+# Option A — in-repo ignored (relative from inside web/):
+OUT=../out/local-prod-baseline/$(date +%Y%m%dT%H%M%SZ)
+# Option B — outside repo entirely (absolute):
+# OUT=/tmp/a7-local-out-$(date +%s)
 
 # Step 3 — run the deterministic paired baseline (fixture mode, $0).
 cd web
 npx tsx scripts/run-account-graph-validation.ts \
   --corpus "$CORPUS" \
-  --out "../$OUT"      # use a path that resolves outside tracked dirs
+  --out "$OUT"
 cd ..
 
 # Step 4 — confirm nothing got staged.
