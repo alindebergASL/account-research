@@ -335,21 +335,29 @@ Immediately after the run finishes:
      `unknown_estimated` cannot pass).
    - `observed_usd` must be `≤ max_cost_usd`. If not, `budget_exceeded`.
    - `by_adapter[]` lists per-adapter call counts and token usage.
-3. **Summarize hard-invariant failures** from
+3. **Confirm provider/model agreement.** Compare the approved §3 values,
+   the CLI invocation, and `report.json.cost.by_adapter[]`:
+   - every real-adapter ledger entry must have `provider` equal to the
+     approved `provider` value;
+   - every real-adapter ledger entry must have `model` equal to the
+     approved `model` value;
+   - if any `provider` / `model` value differs, treat the run as
+     not-pass even if `classification === "pass"`.
+4. **Summarize hard-invariant failures** from
    `report.json.hard_invariants[]`. Any entry with `status: "fail"` and
    `count > 0` triggers a `fail` classification regardless of other
    metrics.
-4. **Confirm `git status` is clean.** No production-derived content
+5. **Confirm `git status` is clean.** No production-derived content
    accidentally tracked:
    ```bash
    git status --short
    git ls-files out/local-prod-baseline/   # must print nothing
    ```
-5. **Archive the artifact directory path** in the post-run review note. Do
+6. **Archive the artifact directory path** in the post-run review note. Do
    not copy artifact contents into the repo. Reference by absolute path
    (e.g. `/tmp/a7-paid-out-<timestamp>/`) so a reviewer can request
    specific contents under the same approval discipline.
-6. **Read `report.md`**. Confirm:
+7. **Read `report.md`**. Confirm:
    - The `A.7 blocker status` line is intact.
    - The `non_production_notice` line is intact (carried forward from PR
      #44 / current orchestrator output).
