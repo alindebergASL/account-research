@@ -96,9 +96,9 @@ The current saved Brief Zod schema (`web/lib/schema.ts:122–145`) is the input.
 | `generated_at`, `audience` | Metadata on the synthetic `SourceDocument(subtype=legacy_brief_json)` representing this brief; not a Claim. | Direct |
 | `snapshot` | `SourceDocument(subtype=legacy_brief_json)` carries the snapshot text. Claims are NOT extracted from prose. | Unsupported |
 | `priority_summary` | Same: stored on the brief-level `SourceDocument`; no automatic Claim extraction. | **Ambiguous** — sentence-level decomposition deferred to future PR. |
-| `recent_signals[]` (each Signal: text, source, confidence, previously_found) | One `Claim` per signal. `ClaimEvidence` links it to an `EvidenceExcerpt` derived from the `text` field. `EvidenceExcerpt.source_document_id` points to a `SourceDocument` materialized from the signal's `source` URL/title; if `source` is empty or null, the excerpt's source is the brief-level `legacy_brief_json` document and the claim's tier becomes `legacy_brief_json`. Signals attach to a `signal_or_change` AccountObject. | Direct when `source` populated; Inferred when not. |
+| `recent_signals[]` (each Signal: text, source, confidence, previously_found) | One `Claim` per signal, attached to a `signal_or_change` AccountObject. **No `EvidenceExcerpt` is created against the external source** — the saved Brief carries only signal text and a source URL/title, not captured source text with verified offsets. If `source` is populated, materialize a `SourceDocument` for the URL/title and assign `source_document_only`-equivalent provenance (mapped to existing `ProvenanceStatus` per §5); do NOT create a `ClaimEvidence`/`EvidenceExcerpt` pair against that external source. If the runtime schema requires `ClaimEvidence`, attach the excerpt only to the synthetic `legacy_brief_json` `SourceDocument` and mark it non-verified / legacy-derived. If `source` is empty, the claim's provenance is `legacy_brief_json`-equivalent. | Source-document-only when `source` populated; Inferred (legacy-derived) when not. |
 | `ai_tech_maturity.rating` + `rationale` | One `Claim` (rating + rationale). Provenance is the brief-level `legacy_brief_json` document unless individual fields carry sources (they do not in current schema). | Inferred |
-| `top_initiatives[]` (title, detail, confidence, source) | One `AccountObject(kind=initiative)` per row, with `claim_ids` pointing at one Claim per initiative carrying the `detail`. Source handling matches `recent_signals[]`. | Direct when `source` populated; Inferred when not. |
+| `top_initiatives[]` (title, detail, confidence, source) | One `AccountObject(kind=initiative)` per row, with `claim_ids` pointing at one Claim per initiative carrying the `detail`. Source handling matches `recent_signals[]`: when `source` is populated, materialize a `SourceDocument` and assign source-document-only provenance, but do NOT fabricate an `EvidenceExcerpt` against that external source from the saved `detail` text. | Source-document-only when `source` populated; Inferred (legacy-derived) when not. |
 | `technical_footprint.ai_in_production[]` | Each entry → one `Claim` attached to a `tech_capability` AccountObject. No per-entry source in brief schema; provenance is `legacy_brief_json`. | Inferred |
 | `technical_footprint.active_pilots[]` | Same as above. | Inferred |
 | `technical_footprint.cloud_platforms[]` | Same. | Inferred |
@@ -112,13 +112,13 @@ The current saved Brief Zod schema (`web/lib/schema.ts:122–145`) is the input.
 | `programs_procurement.active_rfps_contracts[]` | One Claim per entry attached to an `opportunity` AccountObject when the entry implies a procurement window; otherwise a `program` AccountObject. | Inferred |
 | `programs_procurement.ai_governance_policy` | One Claim attached to a `risk_or_open_question` or `program` AccountObject (decision deferred to implementation). | Inferred |
 | `programs_procurement.public_ai_use_cases[]` | One Claim per entry. | Inferred |
-| `personas[]` (name, title, priority, opener, confidence, source) | One `AccountObject(kind=stakeholder)` per persona; the `opener` becomes a Claim with provenance from the persona's `source` if populated, else `legacy_brief_json`. | Direct when `source` populated; Inferred when not. |
+| `personas[]` (name, title, priority, opener, confidence, source) | One `AccountObject(kind=stakeholder)` per persona; the `opener` becomes a Claim. If `source` is populated, materialize a `SourceDocument` for the persona's source URL/title and assign source-document-only provenance. Do NOT fabricate an `EvidenceExcerpt` against the external source from the saved `opener` text — the Brief does not carry verified spans. If `source` is empty, provenance is `legacy_brief_json`-equivalent. | Source-document-only when `source` populated; Inferred (legacy-derived) when not. |
 | `buying_path` | One Claim attached to the root account object; no per-sentence decomposition in A.6. | Inferred |
 | `first_angle` | Free-text recommendation; stored on the brief-level SourceDocument with no automatic Claim. | **Ambiguous** — sentence-level decomposition deferred. |
 | `risks[]` | One `AccountObject(kind=risk_or_open_question)` per entry; one Claim per risk. | Inferred |
 | `competitive_signals[]` | One Claim per entry attached to a competitive-context AccountObject (kind TBD in implementation). | Inferred |
 | `next_action` | One `AccountObject(kind=recommended_action)` plus one Claim. | Inferred |
-| `extensions[]` (kind: card / table / list / narrative; source: "model" / "research" / "chat") | See provenance mapping in §5. `kind=narrative` is **Ambiguous** — narrative bodies don't decompose deterministically into Claims and are deferred. `kind=card/table/list` can produce one Claim per row/bullet with provenance from the `source` flag. | Direct (table/list/card with source="research"); Inferred (source="model"); chat_patch_object_level (source="chat"); narrative is Ambiguous. |
+| `extensions[]` (kind: card / table / list / narrative; source: "model" / "research" / "chat") | See provenance mapping in §5. `kind=narrative` is **Ambiguous** — narrative bodies don't decompose deterministically into Claims and are deferred. `kind=card/table/list` can produce one Claim per row/bullet. For `source="research"`: extensions in the current schema do not carry per-row source URLs or captured excerpt text/spans, so the runner materializes (at most) one `SourceDocument` per extension if any source metadata is present, assigns source-document-only provenance, and **does NOT fabricate an `EvidenceExcerpt` against an external source** from the row/bullet text. For `source="model"` / `source="chat"`, see §5. | Source-document-only (`source="research"` with source metadata); Inferred (`source="model"`); chat-patch object-level (`source="chat"`); narrative is Ambiguous. |
 | `sources[]` (title, url, accessed) | Each entry materializes as one `SourceDocument`. URL collisions are deduped. Sources not referenced by any excerpt are still emitted but flagged in the parity report as "orphan sources". | Direct |
 
 ### Ambiguous sections deferred
@@ -138,16 +138,43 @@ The future runner should mirror `tests/briefMerge.test.ts` semantics (Jaccard si
 
 ## 5. Provenance-tier mapping (load-bearing)
 
-A.6 introduces the following provenance tiers on every `Claim` emitted by the backfill:
+### Reconciliation with the existing A.5 `ProvenanceStatus` enum
 
-| Tier | Meaning | Source basis |
-|---|---|---|
-| `verified` | Claim is backed by an `EvidenceExcerpt` whose `SourceDocument` is on the allowlist and whose span verification passed. | Reserved for claims with real external evidence. NOT auto-applied during A.6 backfill of brief_json — A.6 has no way to verify spans against legacy text. |
-| `source_document_only` | Claim cites a `SourceDocument` but no specific verified excerpt. | Brief signal/initiative/persona with populated `source` URL but no captured excerpt text. |
-| `legacy_brief_json` | Claim's only provenance is the brief-level `legacy_brief_json` SourceDocument (i.e. the saved Brief itself, treated as a single document). | Brief fields without per-field sources: technical_footprint, programs_procurement, ai_tech_maturity, buying_path, risks, competitive_signals, next_action. |
-| `chat_patch_object_level` | Claim originates in user/assistant chat-patch content that modified the saved brief at object level. | Brief sections or extensions with `source="chat"` (and any future per-section chat-patch metadata). |
-| `inferred_from_brief_json` | Deterministic decomposition produced this Claim from structured brief content where no direct external source exists. | Any field deterministically mapped from brief structure that lacks a real source URL. |
-| `unsupported` | Decomposition could not safely attribute the claim. Reserved for cases that surface during backfill that the runner cannot tier. | Edge cases discovered at implementation time. |
+The current A.5 `ProvenanceStatus` enum (`web/lib/accountGraph/schema.ts:122-129`) is:
+
+```
+verified
+legacy_embedded_source
+chat_patch_object_level
+unverified
+source_unavailable
+contradicted
+```
+
+These six values are the only `provenance_status` strings that the A.5 validator accepts today. The A.6 conceptual tiers proposed in this section (`source_document_only`, `legacy_brief_json`, `inferred_from_brief_json`, etc.) are NOT yet in that enum.
+
+**Choice for the future implementation PR: option A — extend `ProvenanceStatus`.**
+
+The plan recommends that the A.6 implementation PR extend the enum so the graph schema carries honest provenance directly, rather than overloading existing values and shoving the distinction into metadata. Concretely, the implementation PR will:
+
+- Add the following values to `ProvenanceStatus`: `source_document_only`, `legacy_brief_json`, `inferred_from_brief_json`. (`chat_patch_object_level` already exists. `unsupported` maps to existing `source_unavailable`; a separate `unsupported` value is not required for A.6.)
+- Update the validator and any narrowing checks so the new values are first-class.
+- Treat this enum extension as a **future implementation schema change** — called out here so reviewers expect it, not buried — that travels with the future A.6 implementation PR, not this docs PR.
+
+Option B (map conceptual tiers onto existing enum values plus metadata labels) was considered and rejected because it would make the hard invariant in this section harder to enforce mechanically: e.g. distinguishing "unsourced legacy brief field" from "source URL present but no excerpt" via free-form metadata would weaken validator coverage. If, during implementation, the schema extension proves churn-heavy, option B is the documented fallback — but the default direction is A.
+
+### Conceptual tiers used throughout this plan
+
+A.6 reasons about every `Claim` emitted by the backfill in these terms. The right-hand column shows the proposed mapping to the extended `ProvenanceStatus` enum.
+
+| Conceptual tier | Meaning | Source basis | Maps to `ProvenanceStatus` |
+|---|---|---|---|
+| `verified` | Claim is backed by an `EvidenceExcerpt` whose `SourceDocument` is on the allowlist and whose span verification passed. | Reserved for claims with real external evidence. **NOT auto-applied during A.6 backfill of brief_json** — A.6 has no way to verify spans against legacy text. | `verified` (existing) |
+| `source_document_only` | Claim cites a `SourceDocument` but no specific verified excerpt. | Brief signal/initiative/persona with populated `source` URL but no captured excerpt text. | `source_document_only` (new) |
+| `legacy_brief_json` | Claim's only provenance is the brief-level `legacy_brief_json` SourceDocument (i.e. the saved Brief itself, treated as a single document). | Brief fields without per-field sources: technical_footprint, programs_procurement, ai_tech_maturity, buying_path, risks, competitive_signals, next_action. | `legacy_brief_json` (new) |
+| `chat_patch_object_level` | Claim originates in user/assistant chat-patch content that modified the saved brief at object level. | Brief sections or extensions with `source="chat"` (and any future per-section chat-patch metadata). | `chat_patch_object_level` (existing) |
+| `inferred_from_brief_json` | Deterministic decomposition produced this Claim from structured brief content where no direct external source exists. | Any field deterministically mapped from brief structure that lacks a real source URL. | `inferred_from_brief_json` (new) |
+| `unsupported` | Decomposition could not safely attribute the claim. Reserved for edge cases surfaced during backfill that the runner cannot tier. | Edge cases discovered at implementation time. | `source_unavailable` (existing) |
 
 ### HARD INVARIANT
 
@@ -443,12 +470,20 @@ These are future files. None are added in this docs PR.
 
 When the implementation PR lands, verification will be:
 
+Run from the repo root unless noted; tests live under top-level `tests/`, not under `web/tests/`.
+
 ```
-cd web && npm run typecheck
+( cd web && npm run typecheck )
 npx tsx --test tests/accountGraph.*.test.ts
 npx tsx --test tests/accountGraph.fromBriefJson.test.ts tests/accountGraph.briefParity.test.ts
-cd web && npx tsx scripts/run-account-graph-backfill.ts --mode fixture
-cd web && npx tsx scripts/run-account-graph-backfill.ts --mode local-db --limit 26 --dry-run
+( cd web && npx tsx scripts/run-account-graph-backfill.ts --mode fixture )
+( cd web && npx tsx scripts/run-account-graph-backfill.ts --mode local-db --limit 26 --dry-run )
+```
+
+If invoking the test runner from inside `web/`, the test glob must reach up to the repo root:
+
+```
+( cd web && npx tsx --test ../tests/accountGraph.*.test.ts )
 ```
 
 The local-db dry-run requires an implementer-local development DB and never runs against production.
