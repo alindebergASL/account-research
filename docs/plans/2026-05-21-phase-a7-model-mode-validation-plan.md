@@ -81,12 +81,18 @@ Do not compare a tiny A.7 sample directly to only the full 26-brief A.6 aggregat
 
 Recommended first corpus:
 
-- Minimum: 1 account for smoke validation.
-- Preferred: 3 accounts for gate validation.
-- Selection should include diversity from the 26-brief corpus:
-  - one `pass` A.6 account,
-  - one `partial_with_attribution_gaps` account with many source-bearing claims,
-  - one `partial_with_attribution_gaps` account with procurement/governance/risk complexity.
+- Minimum: 1 account for smoke validation only. A one-account run can prove plumbing, but cannot unblock A.7.
+- Required for gate validation: 3 accounts unless Andrew explicitly approves a smaller/larger corpus before model mode.
+- Selection must be deliberate and documented in `report.md`; do not randomly sample three accounts.
+- The three-account gate corpus must include, at minimum:
+  - at least one account whose saved Brief has substantial chat-patch/object-level content, so A.7 must handle the `chat_patch_object_level` provenance pattern rather than only original research output;
+  - at least one account/sector with primarily public web sources and clean URL evidence chains;
+  - at least one account with primarily non-URL or weakly recoverable sources, such as analyst-conversation / industry-context / relationship-memory patterns;
+  - at least one account with legacy high-confidence claims, so A.7 must either back them with accepted excerpts or downgrade them honestly;
+  - at least one A.6 `pass` account and at least one A.6 `partial_with_attribution_gaps` account;
+  - at least one account with procurement/governance/risk complexity if present in the 26-brief corpus.
+- If one account satisfies multiple criteria, that is acceptable, but the selection rationale must show every criterion is covered or explicitly explain why the corpus lacks that case.
+- Account names and sensitive details must stay out of committed docs; committed summaries may refer to anonymized labels such as `account_a_public_web`, `account_b_non_url_sources`, and `account_c_chat_patch`.
 
 Privacy/data handling:
 
@@ -121,6 +127,8 @@ Stages:
 4. Claim/object synthesis
    - Model emits Claims, AccountObjects, and ClaimEvidence links using known SourceDocument/EvidenceExcerpt IDs.
    - System validates all IDs, provenance statuses, confidence rules, and graph shape.
+   - URL-found-but-no-valid-excerpt case: keep the SourceDocument as a source hint, but any resulting claim must be `provenance_status: "source_document_only"`, `confidence: "medium"` or lower, and must not be `verified`, `high`, or counted as excerpt-backed. Do not add a new provenance tier in A.7 validation unless a separate schema ADR approves it.
+   - If the claim would be misleading without a span-validating excerpt, reject/drop it and count it as dropped material instead of preserving a weak claim.
 
 5. Report and paired comparison
    - Render A.7 graph output and compare to paired A.6 baseline.
@@ -136,6 +144,13 @@ Source/fetch bounds for the first validation run:
 - Fetch mechanisms must be allowlisted and logged; local fixture/source-text replay is preferred for the first implementation pass.
 - Every selected source/account scope must be written to the source ledger before model synthesis.
 - Any request to exceed these limits turns the run into `borderline` or `budget_exceeded` unless explicitly approved before running.
+
+Rationale for the initial bounds:
+
+- 8 candidates/account gives the selector enough room to include official pages, procurement pages, press/news, and one or two weak/non-URL hints without asking the model to reason over an unbounded search result set.
+- 5 fetched sources/account forces prioritization and caps downstream extraction work; if A.7 cannot improve evidence quality within five good sources, the first validation run should expose that instead of hiding it behind broad crawling.
+- 50,000 captured characters/source is large enough for most strategic-plan, procurement, and policy pages after text extraction while still keeping source capture auditable and chunkable.
+- 6 chunks/source × 4,000 characters bounds prompt volume and cost while allowing coverage across long documents. The run report must show when useful evidence was missed because of these limits so reviewers can decide whether to tune limits or revise architecture.
 
 Do not rely on a single prompt to both browse the web and freehand a fully auditable evidence graph. System owns source capture, IDs, hashes, excerpt verification, and referential integrity. Model owns bounded extraction/synthesis against known IDs.
 
@@ -209,36 +224,40 @@ Outcome bands:
 
 ### Pass
 
-- All hard invariants pass.
-- A.7 paired coverage is >= paired A.6 coverage.
-- Downgrade rate is lower than paired A.6 by at least 5 percentage points relative to total claims, or by at least 20% relative reduction when the paired A.6 downgrade rate is below 25%.
-- Orphan SourceDocuments per claim is strictly lower than paired A.6.
-- Excerpt-backed material claim rate is at least 15%, and every verified/high-confidence claim is backed by accepted EvidenceExcerpts.
-- Dropped-material rate does not increase by more than 5 percentage points vs paired A.6.
-- Total observed cost is under budget and not `unknown_estimated`.
+- All hard invariants pass for every account.
+- Every account's individual classification is `pass`; aggregate pass is the worst per-account classification, not the median.
+- A.7 paired coverage is >= 95% and >= paired A.6 coverage for every account.
+- Downgrade rate is < 15% for the aggregate paired corpus and lower than paired A.6 for every account.
+- Orphan SourceDocuments per claim is < 0.20 for the aggregate paired corpus and lower than paired A.6 for every account.
+- Excerpt-backed material claim rate is at least 50% for the aggregate paired corpus, and every verified/high-confidence claim is backed by accepted EvidenceExcerpts.
+- Dropped-material rate does not increase by more than 5 percentage points vs paired A.6 for any account.
+- Total observed per-run cost is under budget, cumulative A.7 validation spend remains under the approved cumulative cap, and cost status is not `unknown_estimated`.
 - Artifacts and report are complete enough for human review.
 
 ### Borderline
 
-- All hard invariants pass.
+- All hard invariants pass for every account.
+- At least one account misses a quality threshold while no account fails a hard invariant.
 - Coverage is below paired A.6 by <= 5 percentage points, or a scoped-down run is intentionally accepted for review.
-- Downgrade/orphan metrics improve but miss the pass threshold, or improve inconsistently across accounts.
-- Excerpt-backed material claim rate is > 0 but < 15%.
+- Aggregate downgrade rate is >= 15% but improves vs paired A.6, or one account improves but remains above the pass threshold.
+- Aggregate orphan SourceDocuments per claim is >= 0.20 but improves vs paired A.6, or one account improves but remains above the pass threshold.
+- Excerpt-backed material claim rate is > 0 but < 50%.
 - Dropped-material rate increases by <= 5 percentage points.
 - Cost is under budget.
 - Requires human decision before any A.7 unblock.
 
 ### Fail
 
-- Any hard invariant fails.
-- Coverage drops by > 5 percentage points vs paired A.6.
-- Downgrade and orphan rates do not improve.
-- Dropped-material rate increases by > 5 percentage points.
-- Model cost exceeds hard cap.
+- Any hard invariant fails on any account.
+- Any account's individual classification is `fail`; aggregate classification is the worst per-account classification, not the median.
+- Coverage drops by > 5 percentage points vs paired A.6 on any account, or aggregate coverage falls below 95%.
+- Downgrade and orphan rates do not improve vs paired A.6.
+- Dropped-material rate increases by > 5 percentage points on any account.
+- Model cost exceeds the per-run hard cap or the cumulative approved cap.
 - Cost is unknown/estimated and cannot be bounded.
 - Pipeline cannot preserve audit artifacts.
 
-Budget-exceeded is its own operational outcome, not a quality pass. Any below-baseline coverage, even with an accepted reason, is at most `borderline`; automatic `pass` requires coverage >= paired A.6.
+Budget-exceeded is its own operational outcome, not a quality pass. Any below-baseline coverage, even with an accepted reason, is at most `borderline`; automatic `pass` requires coverage >= paired A.6, aggregate coverage >= 95%, and no account worse than `pass`.
 
 ---
 
@@ -247,8 +266,9 @@ Budget-exceeded is its own operational outcome, not a quality pass. Any below-ba
 Default budget:
 
 - Fixture mode: $0. No model calls, no web fetches.
-- Model validation target: <= $10 total.
-- Hard cap: $25 total unless Andrew explicitly approves more.
+- Model validation target: <= $10 per run.
+- Per-run hard cap: $25 unless Andrew explicitly approves more before the run.
+- Cumulative A.7 validation spend cap: $100 across all model-mode validation runs unless Andrew explicitly re-approves more. The report must include cumulative spend if prior run reports are available; if cumulative spend is unknown, the run cannot be an automatic pass.
 - Max accounts for first gate run: 3.
 - Max model retries per stage/account: 1.
 
@@ -477,11 +497,13 @@ Testing:
 Preconditions:
 
 - Tasks 1-4 merged or approved.
-- Fixture mode passes.
-- Import-side-effect tests pass.
-- Budget ceiling confirmed.
-- Selected accounts confirmed.
-- Required model credentials available in local/lab environment, not committed.
+- Fixture mode passes all hard-invariant tests with fake/deterministic adapters.
+- Import-side-effect tests pass and prove no artifacts/model calls are created by importing the runner.
+- Artifact ignore/tracking check passes.
+- Cost projection for the selected accounts is documented and within the per-run and cumulative budgets.
+- The 3-account gate corpus satisfies the explicit selection criteria in Section 2, or Andrew explicitly approves an exception.
+- Andrew explicitly approves the real model-mode execution after reviewing the fixture-mode report, selected-account rationale, and cost projection.
+- Required model credentials are available in local/lab environment, not committed.
 
 Command template:
 

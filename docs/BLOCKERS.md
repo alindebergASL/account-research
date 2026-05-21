@@ -30,10 +30,12 @@ A.7 must not begin as graph-first writes until a model-mode validation run of th
 
 Minimum unblock criteria:
 
-- Run the A.7 validation harness in explicit model mode against a 1-3 account paired validation corpus.
+- Run the A.7 validation harness in explicit model mode against a deliberate 3-account paired validation corpus; a 1-account run is smoke-only and cannot unblock A.7.
+- The corpus must cover chat-patch/object-level content, public-web-source evidence chains, weak/non-URL source patterns, legacy high-confidence claims, at least one A.6 `pass`, at least one A.6 `partial_with_attribution_gaps`, and procurement/governance/risk complexity where present.
 - For each selected account, compare A.7 model-mode output to A.6 deterministic baseline on the same account.
+- Aggregate classification is the worst per-account classification, not the median. Any hard-invariant failure on any account is fail.
 - Model mode must be opt-in, not default.
-- Model mode must honor a configured cost ceiling: target <= $10, hard cap $25 unless explicitly approved.
+- Model mode must honor a configured cost ceiling: target <= $10 per run, per-run hard cap $25, cumulative A.7 validation cap $100 unless explicitly approved.
 - The run must preserve partial artifacts if budget is exceeded.
 - The run must report cost status, provider/model, token/call counts when available, and `unknown_estimated` if exact provider cost is unavailable.
 - Unknown/estimated-only cost cannot count as a validation pass.
@@ -63,15 +65,18 @@ Minimum unblock criteria:
   - max 4,000 characters per chunk
   - any higher limit requires explicit approval before running
 - Paired A.7 output must improve the metrics A.7 is meant to improve:
-  - lower confidence-downgrade rate than paired A.6 baseline
-  - lower orphan SourceDocuments per claim than paired A.6 baseline
+  - lower confidence-downgrade rate than paired A.6 baseline, with aggregate downgrade rate < 15% for pass
+  - lower orphan SourceDocuments per claim than paired A.6 baseline, with aggregate orphan rate < 0.20 per claim for pass
+  - aggregate coverage >= 95% and >= paired A.6 coverage for pass
+  - excerpt-backed material claim rate >= 50% for pass
   - more excerpt-backed material claims than paired A.6 baseline
   - fewer attribution-gap briefs/provenance gaps than paired A.6 baseline
+  - URL-found-but-no-span-validating-excerpt claims must be dropped or classified as `source_document_only`, medium-or-lower confidence, never `verified`/`high`/excerpt-backed
 - Paired A.7 output must not regress the metrics A.6 already keeps safe:
   - false verified provenance remains 0
   - invented evidence remains 0
   - validator hard errors remain 0
-  - coverage remains at or above paired A.6 baseline, unless an explicit human-reviewed scope difference is accepted
+  - automatic pass requires coverage at or above paired A.6 baseline; any below-baseline coverage is at most borderline pending human review
 - The output must include decision inputs, not an automated roadmap decision.
 
 Rationale:
