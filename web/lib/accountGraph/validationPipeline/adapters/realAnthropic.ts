@@ -26,11 +26,14 @@ import type {
   AdapterContext,
   AdapterExcerptProposalInput,
   CostObservation,
+  CostRecordStage,
   ExcerptProposal,
   ModelAdapter,
+  PerCallCostRecord,
 } from "../types";
 import { ExcerptProposalSchema, ClaimProposalSchema, ObjectProposalSchema } from "../types";
-import { callAndValidate } from "../providerResponseValidation";
+import { callAndValidate, ProviderResponseInvalidError } from "../providerResponseValidation";
+export { ProviderResponseInvalidError } from "../providerResponseValidation";
 import {
   callWithRetry,
   classifyProviderError,
@@ -41,6 +44,7 @@ import {
   lookupModelPricing,
   type ModelPricing,
 } from "../budget";
+
 
 export const REAL_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
 
@@ -244,6 +248,7 @@ export class RealAnthropicAdapter implements ModelAdapter {
 
     let usage: ProviderResponse["usage"] = { input_tokens: null, output_tokens: null };
     let providerObserved: number | null | undefined = null;
+    let retries = 0;
 
     const validated = await callAndValidate(
       ExcerptProposalSchema.array(),
@@ -260,7 +265,23 @@ export class RealAnthropicAdapter implements ModelAdapter {
               messages: [{ role: "user", content: userMessage }],
               max_tokens: MAX_OUTPUT_TOKENS_EXCERPT,
             }),
-          { sleep: this.sleep, maxRetries: PROVIDER_MAX_RETRIES },
+          {
+            sleep: this.sleep,
+            maxRetries: PROVIDER_MAX_RETRIES,
+            // Blocker 4: re-check budget before EACH retry. The conservative
+            // estimate must still fit remaining budget after the prior failed
+            // attempt's worst-case cost is hypothetically charged.
+            canAffordNext: () => {
+              const nextEst = estimateCallCostUsd(
+                this.pricing,
+                inputTokensEstimate,
+                MAX_OUTPUT_TOKENS_EXCERPT,
+              );
+              if (nextEst === null) return false;
+              return nextEst <= ctx.remaining_budget_usd;
+            },
+            onAttempt: (n) => { if (n > 1) retries = n - 1; },
+          },
         );
         usage = resp.usage;
         providerObserved = resp.observed_usd ?? null;
@@ -268,9 +289,28 @@ export class RealAnthropicAdapter implements ModelAdapter {
       },
     );
 
-    const output = validated.status === "ok" ? validated.value : [];
     const cost = this.buildCostObservation(usage, providerObserved);
-    return { output, cost };
+    if (validated.status !== "ok") {
+      // Blocker 3: do NOT silently return []. Throw a tagged error so the
+      // system layer records a per-account schema_parse violation and the
+      // affected stage/account classifies non-pass.
+      throw new ProviderResponseInvalidError({
+        stage: "excerpt_proposal",
+        reason: validated.status,
+        detail: validated.lastError,
+        attempts: validated.attempts,
+        cost,
+        partialCostRecord: this.buildCostRecord({
+          account_label: input.account_id,
+          stage: "excerpt_proposal",
+          estimated_usd_pre_call: estimateUsd,
+          cost,
+          retry_count: retries,
+          error: { code: validated.status, message: validated.lastError },
+        }),
+      });
+    }
+    return { output: validated.value, cost };
   }
 
   // ---------- synthesizeClaims ----------
@@ -298,6 +338,7 @@ export class RealAnthropicAdapter implements ModelAdapter {
 
     let usage: ProviderResponse["usage"] = { input_tokens: null, output_tokens: null };
     let providerObserved: number | null | undefined = null;
+    let retries = 0;
 
     const validated = await callAndValidate(
       ClaimSynthesisOutputSchema,
@@ -314,7 +355,20 @@ export class RealAnthropicAdapter implements ModelAdapter {
               messages: [{ role: "user", content: userMessage }],
               max_tokens: MAX_OUTPUT_TOKENS_CLAIM,
             }),
-          { sleep: this.sleep, maxRetries: PROVIDER_MAX_RETRIES },
+          {
+            sleep: this.sleep,
+            maxRetries: PROVIDER_MAX_RETRIES,
+            canAffordNext: () => {
+              const nextEst = estimateCallCostUsd(
+                this.pricing,
+                inputTokensEstimate,
+                MAX_OUTPUT_TOKENS_CLAIM,
+              );
+              if (nextEst === null) return false;
+              return nextEst <= ctx.remaining_budget_usd;
+            },
+            onAttempt: (n) => { if (n > 1) retries = n - 1; },
+          },
         );
         usage = resp.usage;
         providerObserved = resp.observed_usd ?? null;
@@ -322,21 +376,69 @@ export class RealAnthropicAdapter implements ModelAdapter {
       },
     );
 
-    const output: AdapterClaimSynthesisOutput =
-      validated.status === "ok"
-        ? {
-            claims: validated.value.claims.map((c) => ({
-              ...c,
-              evidence: c.evidence ?? [],
-            })),
-            objects: validated.value.objects.map((o) => ({
-              ...o,
-              claim_proposal_indices: o.claim_proposal_indices ?? [],
-            })),
-          }
-        : { claims: [], objects: [] };
     const cost = this.buildCostObservation(usage, providerObserved);
+    if (validated.status !== "ok") {
+      throw new ProviderResponseInvalidError({
+        stage: "claim_synthesis",
+        reason: validated.status,
+        detail: validated.lastError,
+        attempts: validated.attempts,
+        cost,
+        partialCostRecord: this.buildCostRecord({
+          account_label: input.account_id,
+          stage: "claim_synthesis",
+          estimated_usd_pre_call: estimateUsd,
+          cost,
+          retry_count: retries,
+          error: { code: validated.status, message: validated.lastError },
+        }),
+      });
+    }
+    const output: AdapterClaimSynthesisOutput = {
+      claims: validated.value.claims.map((c) => ({
+        ...c,
+        evidence: c.evidence ?? [],
+      })),
+      objects: validated.value.objects.map((o) => ({
+        ...o,
+        claim_proposal_indices: o.claim_proposal_indices ?? [],
+      })),
+    };
     return { output, cost };
+  }
+
+  /**
+   * Blocker 5: construct a per-call ledger record. Surface error metadata
+   * when the call failed. Real-adapter calls always populate this, including
+   * failure paths.
+   */
+  buildCostRecord(args: {
+    account_label: string;
+    stage: CostRecordStage;
+    estimated_usd_pre_call: number | null;
+    cost: CostObservation;
+    retry_count: number;
+    error: { code: string; message: string } | null;
+  }): PerCallCostRecord {
+    const cost_status: PerCallCostRecord["cost_status"] =
+      args.cost.status === "observed"
+        ? "observed"
+        : args.error
+          ? "estimated_only"
+          : "unknown_estimated";
+    return {
+      provider: this.provider,
+      model: this.model,
+      account_label: args.account_label,
+      stage: args.stage,
+      input_tokens: args.cost.input_tokens > 0 ? args.cost.input_tokens : null,
+      output_tokens: args.cost.output_tokens > 0 ? args.cost.output_tokens : null,
+      estimated_usd_pre_call: args.estimated_usd_pre_call ?? 0,
+      observed_usd: args.cost.observed_usd,
+      cost_status,
+      retry_count: args.retry_count,
+      error: args.error,
+    };
   }
 
   // ---------- internals ----------
@@ -384,11 +486,12 @@ export class RealAnthropicAdapter implements ModelAdapter {
       };
     }
     // Pricing or token usage missing — surface as unknown_estimated. NEVER
-    // coerce to $0; $0 is reserved for fake/fixture paths.
+    // coerce to $0; $0 is reserved for fake/fixture paths. Blocker 6: use
+    // `null` as the explicit "not zero, not knowable" sentinel.
     return {
       status: "unknown_estimated",
-      observed_usd: 0,
-      estimated_usd: 0,
+      observed_usd: null,
+      estimated_usd: null,
       input_tokens,
       output_tokens,
     };

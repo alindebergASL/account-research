@@ -8,6 +8,42 @@
 //     non-pass classification for the affected stage (system layer handles).
 
 import { z } from "zod";
+import type { CostObservation, CostRecordStage, PerCallCostRecord } from "./types";
+
+/**
+ * Blocker 3: thrown by adapters when, after one retry, the provider's
+ * response still fails JSON-parse or schema-parse. The system layer catches
+ * this and records a per-account `schema_parse` hard-invariant violation;
+ * the affected account/stage classifies non-pass and the run continues for
+ * remaining accounts.
+ */
+export class ProviderResponseInvalidError extends Error {
+  readonly stage: CostRecordStage;
+  readonly reason: "json_parse_failed" | "schema_mismatch";
+  readonly detail: string;
+  readonly attempts: number;
+  readonly cost: CostObservation;
+  readonly partialCostRecord: PerCallCostRecord;
+  constructor(args: {
+    stage: CostRecordStage;
+    reason: "json_parse_failed" | "schema_mismatch";
+    detail: string;
+    attempts: number;
+    cost: CostObservation;
+    partialCostRecord: PerCallCostRecord;
+  }) {
+    super(
+      `provider response invalid after ${args.attempts} attempt(s) at stage=${args.stage} (reason=${args.reason}): ${args.detail.slice(0, 240)}`,
+    );
+    this.name = "ProviderResponseInvalidError";
+    this.stage = args.stage;
+    this.reason = args.reason;
+    this.detail = args.detail;
+    this.attempts = args.attempts;
+    this.cost = args.cost;
+    this.partialCostRecord = args.partialCostRecord;
+  }
+}
 
 /** Try to extract a JSON value from raw model text. Tolerates a fenced code
  *  block (```json … ```) but does NOT attempt to repair invalid JSON. */

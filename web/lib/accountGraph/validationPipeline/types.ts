@@ -146,12 +146,42 @@ export type AdapterContext = {
 export type CostObservation = {
   /** "observed" when the provider returns exact cost; "unknown_estimated"
    *  if the cost can only be estimated. Plan §6: unknown_estimated MUST NOT
-   *  classify as pass. */
+   *  classify as pass.
+   *
+   *  Blocker 6: `observed_usd` is widened to `number | null`. Fixture/fake
+   *  paths still emit numeric `0` with status="observed" (their $0 is genuine
+   *  and observed). Real-adapter paths emit `null` when actual cost is not
+   *  knowable (status="unknown_estimated"). Downstream consumers must treat
+   *  `null` as "not zero, not knowable" and never as `0`. */
   status: "observed" | "unknown_estimated";
-  observed_usd: number;
+  observed_usd: number | null;
   estimated_usd: number | null;
   input_tokens: number;
   output_tokens: number;
+};
+
+/**
+ * Blocker 5: per-call cost ledger record (one per provider call attempt set
+ * for a given account+stage). Emitted in `report.json.cost.calls[]`.
+ */
+export type CostRecordStage = "excerpt_proposal" | "claim_synthesis";
+
+export type PerCallCostRecord = {
+  provider: string;
+  model: string;
+  /** Non-sensitive identifier for the corpus item / account. */
+  account_label: string;
+  stage: CostRecordStage;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  /** Conservative pre-call estimate. */
+  estimated_usd_pre_call: number;
+  /** Observed cost in USD. `null` when not knowable (status="unknown_estimated"
+   *  or call failed). NEVER coerced to 0 for real adapters. */
+  observed_usd: number | null;
+  cost_status: "observed" | "unknown_estimated" | "estimated_only";
+  retry_count: number;
+  error: { code: string; message: string } | null;
 };
 
 export type AdapterCallResult<T> = {

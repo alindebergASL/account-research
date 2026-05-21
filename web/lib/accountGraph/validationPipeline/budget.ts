@@ -78,7 +78,11 @@ export function recordCost(
   adapter: { name: string; provider: string; model: string },
   cost: CostObservation,
 ): boolean {
-  state.total_observed_usd += cost.observed_usd;
+  // Blocker 6: observed_usd may be null when status=unknown_estimated; that
+  // contributes 0 to the running total but flips `any_unknown_estimated` so
+  // the run cannot classify as pass.
+  const obs = typeof cost.observed_usd === "number" ? cost.observed_usd : 0;
+  state.total_observed_usd += obs;
   state.total_estimated_usd += cost.estimated_usd ?? 0;
   if (cost.status === "unknown_estimated") state.any_unknown_estimated = true;
 
@@ -98,7 +102,7 @@ export function recordCost(
   roll.calls += 1;
   roll.input_tokens += cost.input_tokens;
   roll.output_tokens += cost.output_tokens;
-  roll.observed_usd += cost.observed_usd;
+  roll.observed_usd += obs;
 
   return state.total_observed_usd <= state.config.max_cost_usd;
 }
@@ -128,24 +132,13 @@ export function buildBudgetReportBlock(state: BudgetState): BudgetReportBlock {
 }
 
 // ---------- Task 7: per-call cost ledger ----------
+//
+// The canonical PerCallCostRecord type lives in ./types alongside the other
+// adapter-facing types. Re-export here for back-compat with importers that
+// reached for these names via ./budget.
 
-export type CostRecordStage = "excerpt_proposal" | "claim_synthesis";
-
+export type { CostRecordStage, PerCallCostRecord as CostRecord } from "./types";
 export type CostRecordStatus = "observed" | "unknown_estimated" | "estimated_only";
-
-export type CostRecord = {
-  provider: string;
-  model: string;
-  account_label: string;
-  stage: CostRecordStage;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  estimated_usd_pre_call: number;
-  observed_usd: number | null;
-  cost_status: CostRecordStatus;
-  retry_count: number;
-  error: { code: string; message: string } | null;
-};
 
 // ---------- Task 7: pricing table + pre-call estimator ----------
 //

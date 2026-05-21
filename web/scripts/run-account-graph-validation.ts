@@ -46,6 +46,7 @@ import type {
   HardInvariantKey,
   ModelAdapter as PipelineModelAdapter,
   PerAccountAdapterRun,
+  PerCallCostRecord,
 } from "../lib/accountGraph/validationPipeline/types";
 import type { AccountHierarchyReference, SourceDocument } from "../lib/accountGraph/schema";
 
@@ -1444,9 +1445,13 @@ export type ModelModeReportJson = {
   commit: string;
   run_at: string;
   mode: "model";
-  adapter_selected: "fake";
+  /** Blocker 2: stable adapter id; "fake-deterministic" for the local fake
+   *  adapter, "real-anthropic" for the real Anthropic adapter. Never the
+   *  bare string "fake" — that was an implementation bug. */
+  adapter_selected: string;
   classification: "pass" | "borderline" | "fail" | "budget_exceeded";
-  cost: BudgetReportBlock;
+  /** Blocker 5: per-call cost ledger appended to the cost block as `calls[]`. */
+  cost: BudgetReportBlock & { calls: PerCallCostRecord[] };
   hard_invariants: { key: HardInvariantKey; status: "pass" | "fail"; count: number; details: string[] }[];
   per_account: PerAccountAdapterRun[];
   artifact_paths: string[];
@@ -1555,6 +1560,7 @@ export async function runModelModeOrchestrator(
 
   const perAccount: PerAccountAdapterRun[] = [];
   const violationsByKey = new Map<HardInvariantKey, string[]>();
+  const allCostRecords: PerCallCostRecord[] = [];
 
   // Also compute paired-baseline (system-owned, no adapter). Reused for the
   // paired-baseline.json artifact so model-mode runs produce all three
@@ -1589,6 +1595,7 @@ export async function runModelModeOrchestrator(
       now,
     );
     perAccount.push(result.per_account);
+    for (const r of result.cost_records) allCostRecords.push(r);
     for (const v of result.per_account.hard_invariant_violations) {
       const list = violationsByKey.get(v.key) ?? [];
       list.push(v.detail);
@@ -1614,7 +1621,9 @@ export async function runModelModeOrchestrator(
     }
   }
 
-  const cost = buildBudgetReportBlock(budget);
+  const baseCost = buildBudgetReportBlock(budget);
+  // Blocker 5: emit per-call ledger as a top-level section under cost.
+  const cost = { ...baseCost, calls: allCostRecords };
 
   // Hard invariants table for the model-mode report.
   const hardInvariants = ALL_HARD_INVARIANT_KEYS.map((key) => {
@@ -1645,7 +1654,8 @@ export async function runModelModeOrchestrator(
     commit: git.commit,
     run_at: now.toISOString(),
     mode: "model",
-    adapter_selected: "fake",
+    // Blocker 2: reflect actual adapter id, never a hardcoded "fake".
+    adapter_selected: opts.adapter.name,
     classification,
     cost,
     hard_invariants: hardInvariants,
@@ -1909,6 +1919,41 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         );
         return 1;
       }
+      // Blocker 1: real mode MUST read and use the supplied --corpus. The
+      // refusal aggregator above already required --corpus; here we load it
+      // via the shared local-corpus reader and pass entries+briefs to the
+      // orchestrator so the paid run uses the OPERATOR'S corpus, NOT the
+      // synthetic in-repo fixtures.
+      let realCorpusEntries: SyntheticFixtureEntry[];
+      let realBriefsByFixtureId: Record<string, unknown>;
+      try {
+        const read = readLocalCorpus(args.corpus!);
+        if (read.entries_ok.length === 0) {
+          const errorLines = read.entries_skipped.map((s) => {
+            const where = s.source_line !== undefined ? `line ${s.source_line}` : `entry ${s.source_index}`;
+            return `  - ${where}: ${s.classification}${s.error ? ` (${s.error})` : ""}`;
+          });
+          console.error(
+            `[run-account-graph-validation] --corpus ${args.corpus} ${LOCAL_CORPUS_NO_VALID_ENTRIES_ERROR_PREFIX}` +
+              (errorLines.length > 0 ? `\nErrors:\n${errorLines.join("\n")}` : ""),
+          );
+          return 1;
+        }
+        realCorpusEntries = read.entries_ok.map((e) => ({
+          account_label: e.account_label ?? `local_account_${e.source_index}`,
+          fixture_id: e.fixture_id ?? `local_prod_${e.source_index}`,
+          fixture_path: "<unused: brief supplied in-memory>",
+          selection_rationale: e.selection_rationale,
+          criteria_covered: e.criteria_covered,
+        }));
+        realBriefsByFixtureId = read.briefs_by_fixture_id;
+      } catch (err) {
+        console.error(
+          `[run-account-graph-validation] failed to read --corpus ${args.corpus}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return 1;
+      }
+
       try {
         const adapter = await RealAnthropicAdapter.init({
           provider: args.provider!,
@@ -1924,6 +1969,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           maxCostUsd: args.maxCostUsd,
           allowHighCost: args.allowHighCost,
           limit: args.limit,
+          corpusEntries: realCorpusEntries,
+          briefJsonByFixtureId: realBriefsByFixtureId,
         });
         console.log(
           `[run-account-graph-validation] mode=model adapter=real classification=${result.report.classification} cost_usd=${result.report.cost.observed_usd} out=${args.out}`,

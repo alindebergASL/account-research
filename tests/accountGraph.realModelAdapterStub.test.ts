@@ -88,7 +88,7 @@ function ctxWithBudget(remaining: number): AdapterContext {
 
 // ---------- Response validation ----------
 
-test("Task 7: invalid JSON retries once with corrective framing then returns empty (system records schema_parse upstream)", async () => {
+test("Task 7 (Blocker 3): invalid JSON retries once with corrective framing then THROWS ProviderResponseInvalidError (never silently empty)", async () => {
   const stub = makeStub([
     {
       text: "this is not JSON at all",
@@ -106,12 +106,16 @@ test("Task 7: invalid JSON retries once with corrective framing then returns emp
     providerClient: stub,
     sleep: async () => {},
   });
-  const r = await adapter.proposeExcerpts(fullChunkInput(), ctxWithBudget(100));
-  // After invalid JSON twice, the adapter returns an empty proposal array
-  // (the system layer records this as a schema_parse hard invariant).
-  assert.deepEqual(r.output, []);
+  // Blocker 3: after invalid JSON twice, the adapter MUST throw, not silently
+  // return an empty array (which a downstream consumer could misread as a
+  // successful empty result).
+  await assert.rejects(
+    () => adapter.proposeExcerpts(fullChunkInput(), ctxWithBudget(100)),
+    (err: unknown) =>
+      (err as { name: string }).name === "ProviderResponseInvalidError" &&
+      (err as { reason: string }).reason === "json_parse_failed",
+  );
   assert.equal(stub.calls.length, 2, "must retry exactly once");
-  // Corrective framing on the second attempt mentions the failure reason.
   assert.match(stub.calls[1].system, /PRIOR RESPONSE WAS INVALID/);
 });
 
@@ -242,6 +246,9 @@ test("Task 7: pricing or usage missing → cost.status === 'unknown_estimated' (
   });
   const r = await adapter.proposeExcerpts(fullChunkInput(), ctxWithBudget(100));
   assert.equal(r.cost.status, "unknown_estimated");
+  // Blocker 6: unknown real-provider cost MUST NOT be representable as $0.
+  assert.equal(r.cost.observed_usd, null, "Blocker 6: must be null, never 0");
+  assert.equal(r.cost.estimated_usd, null, "Blocker 6: must be null, never 0");
 });
 
 test("Task 7: post-call observed cost cannot retroactively permit overspend (recordCost reflects overage)", () => {
@@ -557,7 +564,7 @@ test("Task 7 (integration): verified/high claim without supporting excerpt trips
   }
 });
 
-test("Task 7 (integration): provider 429 exhausting retries preserves partial artifacts and classifies non-pass", async () => {
+test("Task 7 (integration, Blockers 3+5): provider 429 exhausting retries preserves partial artifacts, classifies non-pass, and emits ledger error rows", async () => {
   const err = Object.assign(new Error("rate limited"), { status: 429 });
   const stub: ProviderClient = {
     async call() { throw err; },
@@ -571,25 +578,26 @@ test("Task 7 (integration): provider 429 exhausting retries preserves partial ar
   });
   const outDir = tmpOut();
   try {
-    // The exception will propagate from runAccountThroughAdapter; we expect
-    // the orchestrator to fail the run rather than corrupt the artifact set.
-    // Either: the orchestrator catches and produces a failed report, OR it
-    // throws. Both are acceptable so long as partial artifacts (if any) are
-    // not corrupted. We assert it throws (no artifacts) — and that NO
-    // pass-looking artifact landed.
-    await assert.rejects(
-      () => runModelModeOrchestrator({
-        outDir,
-        adapter,
-        maxCostUsd: 10,
-        allowHighCost: false,
-        limit: 1,
-      }),
-    );
-    if (existsSync(join(outDir, "report.json"))) {
-      const j = JSON.parse(readFileSync(join(outDir, "report.json"), "utf8"));
-      assert.notEqual(j.classification, "pass", "must not classify as pass after retry exhaustion");
-    }
+    // The orchestrator MUST catch the retry-exhaustion (provider unreliable
+    // is not a runner crash), record schema_parse violations per-account,
+    // classify the run non-pass, AND preserve artifacts plus a ledger entry
+    // with the provider error code.
+    const r = await runModelModeOrchestrator({
+      outDir,
+      adapter,
+      maxCostUsd: 10,
+      allowHighCost: false,
+      limit: 1,
+    });
+    assert.notEqual(r.report.classification, "pass", "must not classify as pass after retry exhaustion");
+    assert.ok(existsSync(r.artifacts.reportJsonPath));
+    const j = JSON.parse(readFileSync(r.artifacts.reportJsonPath, "utf8"));
+    assert.notEqual(j.classification, "pass");
+    // Blocker 5: ledger row records the provider error code.
+    assert.ok(Array.isArray(j.cost.calls), "cost.calls[] ledger present");
+    const errored = j.cost.calls.find((c: { error: unknown }) => c.error !== null);
+    assert.ok(errored, "must have at least one ledger entry with error metadata");
+    assert.ok(/rate_limited|retries_exhausted/.test(errored.error.code));
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
