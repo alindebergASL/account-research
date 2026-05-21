@@ -201,12 +201,52 @@ export function validateAccountGraph(input: unknown): AccountGraphValidationRepo
     if (supportingLinks.length > 0) claimsWithEvidence += 1;
 
     if (claim.provenance_status === "verified") {
+      // Phase A.6 HARD INVARIANT (plan §5): no high-confidence graph claim
+      // derived from unsupported or unsourced legacy brief text may be
+      // marked `verified`. If the only supporting excerpts trace to a
+      // synthetic `legacy_brief_json` / `chat_patch_event` / `user_edit_event`
+      // SourceDocument, fail hard.
+      const isLegacyBackedOnly =
+        supportingLinks.length > 0 &&
+        supportingLinks.every((l) => {
+          const ex = excerptMap.get(l.evidence_excerpt_id);
+          if (!ex) return false;
+          const src = sourceMap.get(ex.source_document_id);
+          if (!src) return false;
+          const subtype = (src.metadata as Record<string, unknown> | undefined)
+            ?.subtype;
+          return (
+            subtype === "legacy_brief_json" ||
+            subtype === "chat_patch_event" ||
+            subtype === "user_edit_event"
+          );
+        });
+      if (isLegacyBackedOnly) {
+        errors.push({
+          code: "verified_from_legacy_brief_only",
+          severity: "error",
+          message:
+            `Claim ${claim.id} has provenance_status=verified but its only supporting ` +
+            `evidence traces back to a synthetic legacy_brief_json / chat_patch_event / ` +
+            `user_edit_event SourceDocument. The A.6 HARD INVARIANT forbids this.`,
+          ref: claim.id,
+        });
+      }
       const hasValidSupport = supportingLinks.some((l) => {
         const ex = excerptMap.get(l.evidence_excerpt_id);
         if (!ex) return false;
         const src = sourceMap.get(ex.source_document_id);
         if (!src) return false;
         if (!src.allowed) return false;
+        const subtype = (src.metadata as Record<string, unknown> | undefined)
+          ?.subtype;
+        if (
+          subtype === "legacy_brief_json" ||
+          subtype === "chat_patch_event" ||
+          subtype === "user_edit_event"
+        ) {
+          return false;
+        }
         const r = verifyExcerpt(ex, src);
         return r.ok;
       });

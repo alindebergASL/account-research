@@ -119,6 +119,11 @@ export const ClaimOrigin = z.enum([
 ]);
 export type ClaimOrigin = z.infer<typeof ClaimOrigin>;
 
+// Phase A.6 extends this enum with three new tiers used by deterministic
+// brief_json backfill: `source_document_only`, `legacy_brief_json`,
+// `inferred_from_brief_json`. The plan-level "unsupported" concept maps
+// onto existing `source_unavailable` and does NOT add a new value.
+// See docs/plans/2026-05-21-phase-a6-brief-json-graph-backfill-plan.md §5.
 export const ProvenanceStatus = z.enum([
   "verified",
   "legacy_embedded_source",
@@ -126,6 +131,9 @@ export const ProvenanceStatus = z.enum([
   "unverified",
   "source_unavailable",
   "contradicted",
+  "source_document_only",
+  "legacy_brief_json",
+  "inferred_from_brief_json",
 ]);
 export type ProvenanceStatus = z.infer<typeof ProvenanceStatus>;
 
