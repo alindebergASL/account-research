@@ -114,16 +114,18 @@ contents are production-derived.
 CORPUS=/tmp/a7-local-corpus-$(date +%s).jsonl
 # ... operator's export step produces $CORPUS ...
 
-# Step 2 — pick an ignored out directory. Either of these is acceptable:
-OUT=out/local-prod-baseline/$(date +%Y%m%dT%H%M%SZ)        # ignored via .gitignore
-# OR
-OUT=/tmp/a7-local-out-$(date +%s)                          # outside repo entirely
+# Step 2 — pick an OUT path. Choose ONE of the two options below.
+# Pass $OUT to --out directly from inside web/; do NOT prepend "../".
+# Option A — in-repo ignored (relative from inside web/):
+OUT=../out/local-prod-baseline/$(date +%Y%m%dT%H%M%SZ)
+# Option B — outside repo entirely (absolute):
+# OUT=/tmp/a7-local-out-$(date +%s)
 
 # Step 3 — run the deterministic paired baseline (fixture mode, $0).
 cd web
 npx tsx scripts/run-account-graph-validation.ts \
   --corpus "$CORPUS" \
-  --out "../$OUT"      # use a path that resolves outside tracked dirs
+  --out "$OUT"
 cd ..
 
 # Step 4 — confirm nothing got staged.
@@ -186,6 +188,21 @@ as input to any A.7 review.
   (still local, still $0) only for boundary testing; use `--mode model` without
   `--adapter fake` is **refused** in this PR.
 - It does **not** capture or write any production data into the repo.
+
+## Next step
+
+After this local deterministic baseline is complete and reviewed, the
+*next* gated step is the paid model validation described in
+[`docs/runbooks/phase-a7-paid-model-validation.md`](phase-a7-paid-model-validation.md).
+That runbook depends on the artifacts produced here (especially
+`local-baseline-selection.json` with operator-edited rationales) and
+requires explicit human approval before any paid call.
+
+The implementation plan for the real adapter consumed by Task 8 lives at
+[`docs/plans/2026-05-21-phase-a7-real-model-adapter-implementation-plan.md`](../plans/2026-05-21-phase-a7-real-model-adapter-implementation-plan.md).
+The write-boundary doctrine that governs whether any of this ever
+unblocks graph-first writes lives at
+[`docs/decisions/2026-05-21-phase-a7-graph-first-write-boundary.md`](../decisions/2026-05-21-phase-a7-graph-first-write-boundary.md).
 
 ## Related
 
