@@ -1,0 +1,46 @@
+{
+  "account_name": "Synthetic Account A (public_web)",
+  "segment": "synthetic-public-web",
+  "generated_at": "2026-05-21T00:00:00.000Z",
+  "audience": "internal",
+  "snapshot": "Synthetic fixture account A. Designed to exercise the public-web clean-URL evidence chain selection criterion. No real organization, no production data.",
+  "priority_summary": "Synthetic priority summary for fixture corpus coverage testing only.",
+  "recent_signals": [
+    { "text": "Synthetic signal: board approves modernization plan", "source": "https://example.com/synthetic/board-notes", "confidence": "High" },
+    { "text": "Synthetic signal: cloud migration RFP posted publicly", "source": "https://example.com/synthetic/rfp-portal", "confidence": "High" }
+  ],
+  "ai_tech_maturity": { "rating": 3, "rationale": "Synthetic rationale; fixture-only." },
+  "top_initiatives": [
+    { "title": "Synthetic cloud migration", "detail": "Synthetic detail describing a fictional migration initiative", "confidence": "High", "source": "https://example.com/synthetic/initiative" }
+  ],
+  "technical_footprint": {
+    "ai_in_production": [],
+    "active_pilots": ["synthetic pilot A"],
+    "cloud_platforms": ["synthetic-cloud-1"],
+    "data_infrastructure": "Synthetic warehouse",
+    "clinical_platforms": "Not found",
+    "analytics_bi_stack": "Synthetic BI",
+    "build_vs_buy_posture": "Buy-first (synthetic)",
+    "competitive_incumbents": []
+  },
+  "programs_procurement": {
+    "modernization_grants": [],
+    "consortium_purchasing": [],
+    "active_rfps_contracts": ["Synthetic RFP for cloud platform"],
+    "ai_governance_policy": "Synthetic governance policy draft",
+    "public_ai_use_cases": []
+  },
+  "personas": [
+    { "name": "Synthetic Persona One", "title": "Chief Synthetic Officer", "priority": "high", "opener": "Synthetic opener line", "confidence": "High", "source": "https://example.com/synthetic/persona-1" }
+  ],
+  "buying_path": "Synthetic buying path description.",
+  "first_angle": "Synthetic first-angle recommendation.",
+  "risks": [],
+  "competitive_signals": [],
+  "next_action": "Synthetic next-action placeholder.",
+  "extensions": [],
+  "sources": [
+    { "title": "Synthetic source A1", "url": "https://example.com/synthetic/source-a1", "accessed": "2026-05-21" },
+    { "title": "Synthetic source A2", "url": "https://example.com/synthetic/source-a2", "accessed": "2026-05-21" }
+  ]
+}

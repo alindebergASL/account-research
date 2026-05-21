@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
-// Phase A.7 — model-mode validation runner SKELETON (fixture mode only).
+// Phase A.7 — validation runner. Fixture/default mode (paired A.6 baseline
+// over synthetic illustrative fixtures only).
 //
 // HARD SAFETY GUARANTEES:
 //   - No real model/provider calls. No SDK imports from `@anthropic-ai/sdk`,
@@ -14,13 +15,20 @@
 //     with a clear refusal message and does not instantiate any adapter, does
 //     not touch the filesystem, does not call the fake adapter.
 //
-// This PR implements Task 2 of
-// docs/plans/2026-05-21-phase-a7-model-mode-validation-plan.md only. A.7
+// This PR implements Task 3 of
+// docs/plans/2026-05-21-phase-a7-model-mode-validation-plan.md (paired A.6
+// baseline measurement over synthetic illustrative fixture accounts). A.7
 // graph-first writes REMAIN BLOCKED per docs/BLOCKERS.md.
 
 import { execSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
+
+import { fromBriefJson } from "../lib/accountGraph/fromBriefJson";
+import { buildParityReport } from "../lib/accountGraph/briefParity";
+import { validateAccountGraph } from "../lib/accountGraph/validation";
+import { classifyBrief } from "../lib/accountGraph/backfillReport";
+import { Brief as BriefSchema } from "../lib/schema";
 
 // ----------------------- Model adapter boundary -----------------------
 // Narrow interface so the runner depends on a seam, not a concrete provider.
@@ -156,6 +164,318 @@ function gitInfo(): { branch: string; commit: string } {
   }
 }
 
+// ----------------------- Synthetic fixture corpus -----------------------
+//
+// SAFETY: every fixture entry below is synthetic and illustrative. It must
+// NOT name a real organization, must NOT include real source URLs, real
+// prompts, or proprietary text. The runner reads these fixtures as Brief
+// JSON only — it never executes, imports, or interprets fixture text as
+// configuration or as model input.
+
+export type SyntheticFixtureEntry = {
+  account_label: string;
+  fixture_id: string;
+  fixture_path: string;
+  selection_rationale: string;
+  criteria_covered: string[];
+};
+
+const REPO_ROOT_FROM_SCRIPT = resolve(__dirname, "..", "..");
+
+export const SYNTHETIC_FIXTURE_CORPUS: SyntheticFixtureEntry[] = [
+  {
+    account_label: "account_a_public_web",
+    fixture_id: "a7_account_a_public_web",
+    fixture_path: join(
+      REPO_ROOT_FROM_SCRIPT,
+      "tests",
+      "fixtures",
+      "a7_account_a_public_web.json",
+    ),
+    selection_rationale:
+      "Synthetic account with primarily public-web sources and clean URL evidence chains. Designed so deterministic A.6 produces a `pass` classification (small surface, low attribution gap).",
+    criteria_covered: [
+      "public_web_sources",
+      "at_least_one_a6_pass_account",
+    ],
+  },
+  {
+    account_label: "account_b_non_url_sources",
+    fixture_id: "a7_account_b_non_url_sources",
+    fixture_path: join(
+      REPO_ROOT_FROM_SCRIPT,
+      "tests",
+      "fixtures",
+      "a7_account_b_non_url_sources.json",
+    ),
+    selection_rationale:
+      "Synthetic account with primarily non-URL sources (analyst conversations, relationship-memory notes, industry context) and many legacy high-confidence claims. Designed so deterministic A.6 produces `partial_with_attribution_gaps` with confidence downgrades.",
+    criteria_covered: [
+      "non_url_sources",
+      "legacy_high_confidence_claims",
+      "at_least_one_a6_partial_with_attribution_gaps_account",
+    ],
+  },
+  {
+    account_label: "account_c_chat_patch",
+    fixture_id: "a7_account_c_chat_patch",
+    fixture_path: join(
+      REPO_ROOT_FROM_SCRIPT,
+      "tests",
+      "fixtures",
+      "a7_account_c_chat_patch.json",
+    ),
+    selection_rationale:
+      "Synthetic account with substantial chat-appended (chat_patch_object_level) extension content plus procurement/governance complexity. Exercises chat-patch provenance handling alongside a procurement RFP / governance policy surface.",
+    criteria_covered: [
+      "chat_patch_object_level_content",
+      "procurement_governance_complexity",
+    ],
+  },
+];
+
+// Plan §2 selection criteria. Coverage means the runner *can exercise* this
+// criterion against synthetic fixture data; it does NOT mean the criterion is
+// prevalent in production, and it does NOT mean a production gate account has
+// been selected. Real production gate-account selection remains a later,
+// local-only task.
+export const PLAN_S2_CRITERIA = [
+  "chat_patch_object_level_content",
+  "public_web_sources",
+  "non_url_sources",
+  "legacy_high_confidence_claims",
+  "at_least_one_a6_pass_account",
+  "at_least_one_a6_partial_with_attribution_gaps_account",
+  "procurement_governance_complexity",
+] as const;
+
+export type PlanS2Criterion = (typeof PLAN_S2_CRITERIA)[number];
+
+export type CriteriaCoverage = {
+  covered: PlanS2Criterion[];
+  uncovered: { criterion: PlanS2Criterion; reason: string }[];
+  synthetic_only: true;
+};
+
+export function computeCriteriaCoverage(
+  selected: SyntheticFixtureEntry[],
+): CriteriaCoverage {
+  const seen = new Set<string>();
+  for (const e of selected) for (const c of e.criteria_covered) seen.add(c);
+  const covered: PlanS2Criterion[] = [];
+  const uncovered: { criterion: PlanS2Criterion; reason: string }[] = [];
+  for (const crit of PLAN_S2_CRITERIA) {
+    if (seen.has(crit)) covered.push(crit);
+    else {
+      uncovered.push({
+        criterion: crit,
+        reason:
+          "Not exercised by the current synthetic fixture corpus. Synthetic fixtures intentionally do not invent production-like content for this criterion; real production gate-account selection remains a later, local-only step.",
+      });
+    }
+  }
+  return { covered, uncovered, synthetic_only: true };
+}
+
+export type CorpusKind = "synthetic_fixture";
+
+export function selectFixtureCorpus(limit?: number): {
+  kind: CorpusKind;
+  id: string;
+  label: string;
+  entries: SyntheticFixtureEntry[];
+} {
+  const all = SYNTHETIC_FIXTURE_CORPUS;
+  const max = Math.max(1, Math.min(3, limit ?? all.length));
+  return {
+    kind: "synthetic_fixture",
+    id: "a7-synthetic-fixture-corpus-v1",
+    label: "synthetic A.7 fixture corpus",
+    entries: all.slice(0, max),
+  };
+}
+
+// ----------------------- Paired baseline measurement -----------------------
+
+export type PerAccountBaseline = {
+  account_label: string;
+  fixture_id: string;
+  selection_rationale: string;
+  criteria_covered: string[];
+  claims: number;
+  objects: number;
+  classification: string;
+  confidence_downgrades: number;
+  orphan_source_documents: number;
+  parity_coverage_numerator: number;
+  parity_coverage_denominator: number;
+  dropped_material_count: number;
+  validator_errors: number;
+  validator_warnings: number;
+  provenance_gaps: number;
+};
+
+export type AggregateBaseline = {
+  account_count: number;
+  claims: number;
+  objects: number;
+  classification_counts: Record<string, number>;
+  confidence_downgrades: number;
+  orphan_source_documents: number;
+  parity_coverage_numerator: number;
+  parity_coverage_denominator: number;
+  dropped_material_count: number;
+  validator_errors: number;
+  validator_warnings: number;
+  provenance_gaps: number;
+};
+
+export function measurePerAccountBaseline(
+  entry: SyntheticFixtureEntry,
+  briefJson: unknown,
+): PerAccountBaseline {
+  const outcome = fromBriefJson({
+    brief_id: entry.fixture_id,
+    brief_json: briefJson,
+  });
+  if (outcome.status !== "ok") {
+    // Synthetic fixtures are intended to parse; if a fixture is malformed,
+    // surface it as a failed validation classification so the test catches
+    // the regression rather than silently coercing to zeros.
+    return {
+      account_label: entry.account_label,
+      fixture_id: entry.fixture_id,
+      selection_rationale: entry.selection_rationale,
+      criteria_covered: entry.criteria_covered,
+      claims: 0,
+      objects: 0,
+      classification: outcome.status,
+      confidence_downgrades: 0,
+      orphan_source_documents: 0,
+      parity_coverage_numerator: 0,
+      parity_coverage_denominator: 0,
+      dropped_material_count: 0,
+      validator_errors: 1,
+      validator_warnings: 0,
+      provenance_gaps: 0,
+    };
+  }
+  const { graph, report: mapping } = outcome;
+  const validation = validateAccountGraph(graph);
+  const briefParsed = BriefSchema.parse(briefJson);
+  const parity = buildParityReport(briefParsed, graph, entry.fixture_id);
+  const rec = classifyBrief(entry.fixture_id, validation, parity, mapping);
+
+  // Confidence downgrades are recorded as provenance_gaps in parity (high
+  // → medium) per A.6 backfillReport.summarizeConfidenceDowngrades.
+  const confidenceDowngrades = parity.provenance_gaps.length;
+
+  return {
+    account_label: entry.account_label,
+    fixture_id: entry.fixture_id,
+    selection_rationale: entry.selection_rationale,
+    criteria_covered: entry.criteria_covered,
+    claims: validation.metrics.claim_count,
+    objects: validation.metrics.account_object_count,
+    classification: rec.classification,
+    confidence_downgrades: confidenceDowngrades,
+    orphan_source_documents: mapping.orphan_source_ids.length,
+    parity_coverage_numerator: parity.coverage_numerator,
+    parity_coverage_denominator: parity.coverage_denominator,
+    dropped_material_count: parity.dropped_brief_claims.length,
+    validator_errors: validation.errors.length,
+    validator_warnings: validation.warnings.length,
+    provenance_gaps: parity.provenance_gaps.length,
+  };
+}
+
+export function aggregateBaseline(perAccount: PerAccountBaseline[]): AggregateBaseline {
+  const agg: AggregateBaseline = {
+    account_count: perAccount.length,
+    claims: 0,
+    objects: 0,
+    classification_counts: {},
+    confidence_downgrades: 0,
+    orphan_source_documents: 0,
+    parity_coverage_numerator: 0,
+    parity_coverage_denominator: 0,
+    dropped_material_count: 0,
+    validator_errors: 0,
+    validator_warnings: 0,
+    provenance_gaps: 0,
+  };
+  for (const r of perAccount) {
+    agg.claims += r.claims;
+    agg.objects += r.objects;
+    agg.classification_counts[r.classification] =
+      (agg.classification_counts[r.classification] || 0) + 1;
+    agg.confidence_downgrades += r.confidence_downgrades;
+    agg.orphan_source_documents += r.orphan_source_documents;
+    agg.parity_coverage_numerator += r.parity_coverage_numerator;
+    agg.parity_coverage_denominator += r.parity_coverage_denominator;
+    agg.dropped_material_count += r.dropped_material_count;
+    agg.validator_errors += r.validator_errors;
+    agg.validator_warnings += r.validator_warnings;
+    agg.provenance_gaps += r.provenance_gaps;
+  }
+  return agg;
+}
+
+export type PairedBaselineJson = {
+  generated_at: string;
+  mode: "fixture";
+  fixture_placeholder: false;
+  corpus_kind: CorpusKind;
+  corpus_id: string;
+  corpus_label: string;
+  caveat: string;
+  selection_criteria_coverage: CriteriaCoverage;
+  accounts: PerAccountBaseline[];
+  aggregate: AggregateBaseline;
+};
+
+const PAIRED_CAVEAT =
+  "Synthetic illustrative fixture baseline. NOT production gate-account baseline. NOT A.7 model validation. A.7 graph-first writes remain blocked per docs/BLOCKERS.md.";
+
+export function buildPairedBaseline(
+  now: Date,
+  selected: ReturnType<typeof selectFixtureCorpus>,
+  perAccount: PerAccountBaseline[],
+  coverage: CriteriaCoverage,
+): PairedBaselineJson {
+  return {
+    generated_at: now.toISOString(),
+    mode: "fixture",
+    fixture_placeholder: false,
+    corpus_kind: selected.kind,
+    corpus_id: selected.id,
+    corpus_label: selected.label,
+    caveat: PAIRED_CAVEAT,
+    selection_criteria_coverage: coverage,
+    accounts: perAccount,
+    aggregate: aggregateBaseline(perAccount),
+  };
+}
+
+// Back-compat: skeleton callers that imported the placeholder builder will
+// continue to import this name. It now constructs a measured baseline from
+// the synthetic fixture corpus on disk. Tests that fed a custom corpus go
+// through `runFixtureOrchestrator`'s `corpusEntries` option instead.
+export function buildPairedBaselinePlaceholder(_now: Date = new Date()): PairedBaselineJson {
+  const selected = selectFixtureCorpus();
+  const per: PerAccountBaseline[] = [];
+  for (const e of selected.entries) {
+    try {
+      const briefJson = JSON.parse(readFileSync(e.fixture_path, "utf8"));
+      per.push(measurePerAccountBaseline(e, briefJson));
+    } catch {
+      // Skip in this back-compat path. The orchestrator code path used by
+      // the CLI handles errors more explicitly.
+    }
+  }
+  return buildPairedBaseline(_now, selected, per, computeCriteriaCoverage(selected.entries));
+}
+
 // ----------------------- Report types -----------------------
 
 export const HARD_INVARIANT_NAMES = [
@@ -208,10 +528,21 @@ export type ReportJson = {
   artifact_paths: string[];
   a7_blocker_status: string;
   adapter: { name: string; propose_excerpts_calls: number; synthesize_claims_calls: number };
+  // Task 3 additions:
+  paired_baseline: { path: string; corpus_kind: CorpusKind; account_count: number };
+  selection_criteria_coverage: CriteriaCoverage;
+  synthetic_fixture_only_note: string;
+  real_production_gate_account_baseline_status: string;
 };
 
 const A7_BLOCKER_STATEMENT =
   "A.7 graph-first writes remain blocked per docs/BLOCKERS.md; this run does not unblock A.7.";
+
+const SYNTHETIC_FIXTURE_ONLY_NOTE =
+  "Synthetic fixture coverage only. Criteria coverage indicates the runner can exercise the criterion against synthetic illustrative fixture data; it does NOT indicate prevalence in production.";
+
+const REAL_PROD_GATE_STATUS =
+  "Real production gate-account paired baseline remains future local-only work; this run does NOT select or measure production gate accounts.";
 
 // ----------------------- Hard invariant builder -----------------------
 
@@ -254,6 +585,55 @@ export function buildSoftMetricsPlaceholder(): SoftMetricEntry[] {
   ];
 }
 
+// Synthetic-fixture-measured soft metrics. Every ratio/coverage metric MUST
+// include explicit numerator and denominator. No unlabeled orphan percentage.
+export function buildSoftMetricsFromBaseline(agg: AggregateBaseline): SoftMetricEntry[] {
+  const cov = agg.parity_coverage_denominator > 0
+    ? agg.parity_coverage_numerator / agg.parity_coverage_denominator
+    : null;
+  const orphanPerClaim = agg.claims > 0
+    ? agg.orphan_source_documents / agg.claims
+    : null;
+  const downgradeRate = agg.claims > 0
+    ? agg.confidence_downgrades / agg.claims
+    : null;
+  const droppedRate = agg.parity_coverage_denominator > 0
+    ? agg.dropped_material_count / agg.parity_coverage_denominator
+    : null;
+  return [
+    {
+      name: "confidence_downgrade_rate",
+      status: "not_applicable",
+      value: downgradeRate,
+      notes: `synthetic fixture baseline; numerator=${agg.confidence_downgrades} downgrades, denominator=${agg.claims} claims`,
+    },
+    {
+      name: "orphan_source_documents_per_claim",
+      status: "not_applicable",
+      value: orphanPerClaim,
+      notes: `synthetic fixture baseline; numerator=${agg.orphan_source_documents} orphan SourceDocuments, denominator=${agg.claims} claims. NOT an unlabeled "orphan percentage".`,
+    },
+    {
+      name: "parity_coverage",
+      status: "not_applicable",
+      value: cov,
+      notes: `synthetic fixture baseline; numerator=${agg.parity_coverage_numerator}, denominator=${agg.parity_coverage_denominator}`,
+    },
+    {
+      name: "dropped_material_rate",
+      status: "not_applicable",
+      value: droppedRate,
+      notes: `synthetic fixture baseline; numerator=${agg.dropped_material_count}, denominator=${agg.parity_coverage_denominator}`,
+    },
+    {
+      name: "excerpt_backed_material_claim_rate",
+      status: "not_applicable",
+      value: 0,
+      notes: "A.6 deterministic backfill does not fabricate EvidenceExcerpts; rate is 0 by construction. Numerator=0, denominator=" + String(agg.claims) + ".",
+    },
+  ];
+}
+
 // ----------------------- Classifier -----------------------
 
 export type ClassifyInput = {
@@ -272,32 +652,12 @@ export function classify(input: ClassifyInput): Classification {
   return "borderline";
 }
 
-// ----------------------- Paired baseline placeholder -----------------------
-
-export type PairedBaselinePlaceholder = {
-  fixture_placeholder: true;
-  generated_at: string;
-  mode: "fixture";
-  accounts: never[];
-  metrics: { per_account: never[]; aggregate: { count: 0 } };
-  notes: string;
-};
-
-export function buildPairedBaselinePlaceholder(now: Date = new Date()): PairedBaselinePlaceholder {
-  return {
-    fixture_placeholder: true,
-    generated_at: now.toISOString(),
-    mode: "fixture",
-    accounts: [],
-    metrics: { per_account: [], aggregate: { count: 0 } },
-    notes:
-      "Placeholder shape only; populated by a later paired-baseline PR with real A.6 per-account metrics.",
-  };
-}
-
 // ----------------------- Report renderer -----------------------
 
-export function renderReportMarkdown(report: ReportJson): string {
+export function renderReportMarkdown(
+  report: ReportJson,
+  paired: PairedBaselineJson,
+): string {
   const hi = report.hard_invariants
     .map(
       (h) => `| ${h.name} | ${h.status} | ${h.count} | ${h.notes.replace(/\|/g, "\\|")} |`,
@@ -309,6 +669,29 @@ export function renderReportMarkdown(report: ReportJson): string {
         `| ${s.name} | ${s.status} | ${s.value === null ? "n/a" : s.value} | ${s.notes.replace(/\|/g, "\\|")} |`,
     )
     .join("\n");
+  const perAcc = paired.accounts
+    .map(
+      (a) =>
+        `| ${a.account_label} | ${a.fixture_id} | \`${a.classification}\` | ${a.claims} | ${a.objects} | ${a.confidence_downgrades} | ${a.orphan_source_documents} | ${a.parity_coverage_numerator}/${a.parity_coverage_denominator} | ${a.dropped_material_count} | ${a.validator_errors} | ${a.provenance_gaps} |`,
+    )
+    .join("\n");
+  const rationaleLines = paired.accounts
+    .map(
+      (a) =>
+        `- **${a.account_label}** (\`${a.fixture_id}\`): ${a.selection_rationale}\n  - criteria_covered: ${a.criteria_covered.join(", ")}`,
+    )
+    .join("\n");
+  const coveredRows = paired.selection_criteria_coverage.covered
+    .map((c) => `| ${c} | covered | exercised by selected synthetic fixture |`)
+    .join("\n");
+  const uncoveredRows = paired.selection_criteria_coverage.uncovered
+    .map((u) => `| ${u.criterion} | uncovered | ${u.reason.replace(/\|/g, "\\|")} |`)
+    .join("\n");
+  const agg = paired.aggregate;
+  const classCountsLine = Object.entries(agg.classification_counts)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ");
+
   const lines = [
     `# Phase A.7 Validation Run Report`,
     ``,
@@ -324,13 +707,54 @@ export function renderReportMarkdown(report: ReportJson): string {
       : []),
     `- Adapter: ${report.adapter.name} (propose=${report.adapter.propose_excerpts_calls}, synthesize=${report.adapter.synthesize_claims_calls})`,
     ``,
+    `## Caveats`,
+    ``,
+    `- ${SYNTHETIC_FIXTURE_ONLY_NOTE}`,
+    `- ${REAL_PROD_GATE_STATUS}`,
+    `- ${A7_BLOCKER_STATEMENT}`,
+    `- This is a paired A.6 baseline over synthetic illustrative fixtures only. NOT a real A.7 production gate-account baseline. NOT A.7 model validation.`,
+    ``,
+    `## Selected synthetic fixture accounts`,
+    ``,
+    rationaleLines,
+    ``,
+    `## Selection criteria coverage (synthetic-only)`,
+    ``,
+    `| criterion | status | note |`,
+    `|---|---|---|`,
+    coveredRows,
+    uncoveredRows,
+    ``,
+    `## Paired A.6 baseline — per synthetic account`,
+    ``,
+    `| account_label | fixture_id | classification | claims | objects | confidence_downgrades | orphan_source_documents | parity_coverage (num/denom) | dropped_material | validator_errors | provenance_gaps |`,
+    `|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|`,
+    perAcc,
+    ``,
+    `## Paired A.6 baseline — aggregate (synthetic corpus)`,
+    ``,
+    `| metric | value |`,
+    `|---|---:|`,
+    `| account_count | ${agg.account_count} |`,
+    `| claims | ${agg.claims} |`,
+    `| objects | ${agg.objects} |`,
+    `| classification_counts | ${classCountsLine} |`,
+    `| confidence_downgrades | ${agg.confidence_downgrades} |`,
+    `| orphan_source_documents | ${agg.orphan_source_documents} |`,
+    `| parity_coverage_numerator | ${agg.parity_coverage_numerator} |`,
+    `| parity_coverage_denominator | ${agg.parity_coverage_denominator} |`,
+    `| dropped_material_count | ${agg.dropped_material_count} |`,
+    `| validator_errors | ${agg.validator_errors} |`,
+    `| validator_warnings | ${agg.validator_warnings} |`,
+    `| provenance_gaps | ${agg.provenance_gaps} |`,
+    ``,
     `## Hard invariants`,
     ``,
     `| name | status | count | notes |`,
     `|---|---|---:|---|`,
     hi,
     ``,
-    `## Soft metrics`,
+    `## Soft metrics (with explicit denominators)`,
     ``,
     `| name | status | value | notes |`,
     `|---|---|---:|---|`,
@@ -355,10 +779,18 @@ export type OrchestratorOptions = {
   adapter: ModelAdapter;
   now?: Date;
   git?: { branch: string; commit: string };
+  // Optional: override the synthetic fixture corpus list (used by tests to
+  // confirm explicit selection logic without depending on disk).
+  corpusEntries?: SyntheticFixtureEntry[];
+  // Optional: pre-loaded brief JSON keyed by fixture_id; if omitted, the
+  // runner reads from `entry.fixture_path`.
+  briefJsonByFixtureId?: Record<string, unknown>;
+  limit?: number;
 };
 
 export type OrchestratorResult = {
   report: ReportJson;
+  paired: PairedBaselineJson;
   artifacts: { reportMdPath: string; reportJsonPath: string; pairedBaselinePath: string };
 };
 
@@ -386,8 +818,35 @@ export async function runFixtureOrchestrator(
     accepted_excerpts: accepted,
   });
 
+  // ---- Synthetic fixture corpus selection ----
+  const entries = opts.corpusEntries ?? SYNTHETIC_FIXTURE_CORPUS;
+  const maxN = Math.max(1, Math.min(3, opts.limit ?? entries.length));
+  const selectedEntries = entries.slice(0, maxN);
+  const selected = {
+    kind: "synthetic_fixture" as const,
+    id: "a7-synthetic-fixture-corpus-v1",
+    label: "synthetic A.7 fixture corpus",
+    entries: selectedEntries,
+  };
+
+  // ---- Paired A.6 baseline measurement ----
+  const perAccount: PerAccountBaseline[] = [];
+  for (const e of selectedEntries) {
+    const override = opts.briefJsonByFixtureId?.[e.fixture_id];
+    let briefJson: unknown;
+    if (override !== undefined) {
+      briefJson = override;
+    } else {
+      const raw = readFileSync(e.fixture_path, "utf8");
+      briefJson = JSON.parse(raw);
+    }
+    perAccount.push(measurePerAccountBaseline(e, briefJson));
+  }
+  const coverage = computeCriteriaCoverage(selectedEntries);
+  const paired = buildPairedBaseline(now, selected, perAccount, coverage);
+
   const hardInvariants = buildFixtureHardInvariants();
-  const softMetrics = buildSoftMetricsPlaceholder();
+  const softMetrics = buildSoftMetricsFromBaseline(paired.aggregate);
   const cost = { status: "observed" as const, observed_usd: 0 };
 
   const reportMdPath = join(opts.outDir, "report.md");
@@ -416,16 +875,23 @@ export async function runFixtureOrchestrator(
     artifact_paths: [reportMdPath, reportJsonPath, pairedBaselinePath],
     a7_blocker_status: A7_BLOCKER_STATEMENT,
     adapter: adapterStats,
+    paired_baseline: {
+      path: pairedBaselinePath,
+      corpus_kind: paired.corpus_kind,
+      account_count: paired.aggregate.account_count,
+    },
+    selection_criteria_coverage: coverage,
+    synthetic_fixture_only_note: SYNTHETIC_FIXTURE_ONLY_NOTE,
+    real_production_gate_account_baseline_status: REAL_PROD_GATE_STATUS,
   };
 
-  const paired = buildPairedBaselinePlaceholder(now);
-
   writeFileSync(reportJsonPath, JSON.stringify(report, null, 2));
-  writeFileSync(reportMdPath, renderReportMarkdown(report));
+  writeFileSync(reportMdPath, renderReportMarkdown(report, paired));
   writeFileSync(pairedBaselinePath, JSON.stringify(paired, null, 2));
 
   return {
     report,
+    paired,
     artifacts: { reportMdPath, reportJsonPath, pairedBaselinePath },
   };
 }
@@ -448,9 +914,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   // Fixture mode. Use the FakeModelAdapter through the ModelAdapter interface.
   const adapter: ModelAdapter = new FakeModelAdapter();
-  const result = await runFixtureOrchestrator({ outDir: args.out, adapter });
+  // Reject obviously-invalid corpus override paths (defense in depth; the
+  // synthetic fixture corpus is the only allowed input).
+  if (args.corpus && !existsSync(args.corpus)) {
+    console.error(
+      `[run-account-graph-validation] --corpus path does not exist: ${args.corpus}`,
+    );
+    return 1;
+  }
+  const result = await runFixtureOrchestrator({
+    outDir: args.out,
+    adapter,
+    limit: args.limit,
+  });
   console.log(
-    `[run-account-graph-validation] mode=fixture classification=${result.report.classification} out=${args.out}`,
+    `[run-account-graph-validation] mode=fixture classification=${result.report.classification} accounts=${result.paired.aggregate.account_count} out=${args.out}`,
   );
   return 0;
 }
