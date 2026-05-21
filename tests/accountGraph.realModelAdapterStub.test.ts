@@ -88,6 +88,70 @@ function ctxWithBudget(remaining: number): AdapterContext {
 
 // ---------- Response validation ----------
 
+test("Issue #48: claim-synthesis prompt carries exact schema contract and forbids paid-run enum drift", async () => {
+  const stub = makeStub([
+    {
+      text: JSON.stringify({ claims: [], objects: [] }),
+      usage: { input_tokens: 10, output_tokens: 5 },
+    },
+  ]);
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  await adapter.synthesizeClaims(
+    {
+      account_id: "acct_test",
+      accepted_excerpts: [
+        {
+          evidence_excerpt_id: "ex_test_0",
+          source_document_id: "src_test_0",
+          text: "Misty Robotics announced an education robotics initiative.",
+        },
+      ],
+    },
+    ctxWithBudget(100),
+  );
+  assert.equal(stub.calls.length, 1);
+  const prompt = stub.calls[0].system;
+  assert.match(prompt, /Claim\.type allowed values: fact, inference, hypothesis, recommendation, risk, opportunity, signal, open_question/);
+  assert.match(prompt, /AccountObject\.type allowed values: account_snapshot, signal, stakeholder, initiative, risk, opportunity, technical_footprint, procurement_program, competitor, recommended_action, open_question, meddpicc_field/);
+  assert.match(prompt, /confidence allowed values: high, medium, low, unknown/);
+  assert.match(prompt, /provenance_status allowed values: verified, legacy_embedded_source, chat_patch_object_level, unverified, source_unavailable, contradicted, source_document_only, legacy_brief_json, inferred_from_brief_json/);
+  assert.match(prompt, /Do NOT use confidence values like verified/);
+  assert.match(prompt, /Do NOT use provenance_status values like verified_with_evidence/);
+  assert.match(prompt, /Evidence object required fields: evidence_excerpt_id, role, strength, rationale/);
+  assert.match(prompt, /Valid minimal example/);
+});
+
+test("Issue #48: excerpt prompt explains exact span offsets so real providers do not freehand ranges", async () => {
+  const stub = makeStub([
+    {
+      text: JSON.stringify([
+        { source_document_id: "src_test_0", text: "Synthetic source text", char_start: 0, char_end: 21 },
+      ]),
+      usage: { input_tokens: 10, output_tokens: 5 },
+    },
+  ]);
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  await adapter.proposeExcerpts(fullChunkInput(), ctxWithBudget(100));
+  assert.equal(stub.calls.length, 1);
+  const prompt = stub.calls[0].system;
+  assert.match(prompt, /char_start is the zero-based index of the first character/);
+  assert.match(prompt, /char_end is the zero-based exclusive end index/);
+  assert.match(prompt, /source_text\.slice\(char_start, char_end\) MUST exactly equal text/);
+  assert.match(prompt, /If you cannot determine exact offsets, return \[\]/);
+});
+
 test("Task 7 (Blocker 3): invalid JSON retries once with corrective framing then THROWS ProviderResponseInvalidError (never silently empty)", async () => {
   const stub = makeStub([
     {

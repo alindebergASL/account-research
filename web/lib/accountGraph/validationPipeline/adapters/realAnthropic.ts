@@ -98,10 +98,39 @@ const EXCERPT_SYSTEM_PROMPT =
   "and one or more source chunks; each chunk has a `source_document_id` and " +
   "`source_text`. Propose excerpts that are VERBATIM spans of the supplied " +
   "source_text. Cite the exact source_document_id provided. Do NOT invent " +
-  "source_document_ids. Do NOT paraphrase. Output ONLY a JSON array of " +
-  "objects with fields: source_document_id (string), text (string, verbatim), " +
-  "char_start (integer >= 0), char_end (integer > char_start). No prose, " +
-  "no markdown fences, JSON ONLY.";
+  "source_document_ids. Do NOT paraphrase. Offset contract: char_start is " +
+  "the zero-based index of the first character of `text` within " +
+  "`source_text`; char_end is the zero-based exclusive end index immediately " +
+  "after the last character of `text`. The verifier will check that " +
+  "source_text.slice(char_start, char_end) MUST exactly equal text after " +
+  "the same normalization. If you cannot determine exact offsets, return []. " +
+  "Output ONLY a JSON array of objects with fields: source_document_id " +
+  "(string), text (string, verbatim), char_start (integer >= 0), char_end " +
+  "(integer > char_start). No prose, no markdown fences, JSON ONLY.";
+
+const CLAIM_SCHEMA_CONTRACT =
+  "Exact schema contract. Claim required fields: text, type, confidence, " +
+  "provenance_status, evidence. Evidence object required fields: " +
+  "evidence_excerpt_id, role, strength, rationale. AccountObject required " +
+  "fields: type, title, confidence, provenance_status, claim_proposal_indices " +
+  "(body is optional). Claim.type allowed values: fact, inference, " +
+  "hypothesis, recommendation, risk, opportunity, signal, open_question. " +
+  "AccountObject.type allowed values: account_snapshot, signal, stakeholder, " +
+  "initiative, risk, opportunity, technical_footprint, procurement_program, " +
+  "competitor, recommended_action, open_question, meddpicc_field. " +
+  "confidence allowed values: high, medium, low, unknown. confidence is " +
+  "epistemic certainty, not evidence lineage. Do NOT use confidence values " +
+  "like verified. provenance_status allowed values: verified, " +
+  "legacy_embedded_source, chat_patch_object_level, unverified, " +
+  "source_unavailable, contradicted, source_document_only, legacy_brief_json, " +
+  "inferred_from_brief_json. provenance_status is evidence lineage, not " +
+  "certainty. Do NOT use provenance_status values like verified_with_evidence. " +
+  "Evidence.role allowed values: supports, partially_supports, contradicts, " +
+  "context. Evidence.strength allowed values: strong, medium, weak. Do NOT " +
+  "invent domain-specific enum values such as capability, procurement_activity, " +
+  "technology_usage, government_entity, person, organization, technology, or " +
+  "procurement. Valid minimal example: {\"claims\":[{\"text\":\"Example " +
+  "claim grounded in an accepted excerpt.\",\"type\":\"fact\",\"confidence\":\"medium\",\"provenance_status\":\"source_document_only\",\"evidence\":[{\"evidence_excerpt_id\":\"ex_1\",\"role\":\"supports\",\"strength\":\"medium\",\"rationale\":\"The accepted excerpt directly states the claim.\"}]}],\"objects\":[{\"type\":\"account_snapshot\",\"title\":\"Example snapshot\",\"confidence\":\"medium\",\"provenance_status\":\"source_document_only\",\"claim_proposal_indices\":[0]}]}.";
 
 const CLAIM_SYSTEM_PROMPT =
   "You are a claim synthesis assistant. The user supplies an account id and " +
@@ -112,9 +141,10 @@ const CLAIM_SYSTEM_PROMPT =
   "input. Do NOT invent excerpt ids or source ids. Verified/high-confidence " +
   "claims REQUIRE at least one supporting accepted excerpt; if a claim " +
   "cannot be grounded, mark confidence <= medium and provenance_status as " +
-  "source_document_only or legacy_brief_json. Output ONLY a JSON object " +
-  "with shape {\"claims\": [...], \"objects\": [...]}. No prose, no " +
-  "markdown fences, JSON ONLY.";
+  "source_document_only or legacy_brief_json. " +
+  CLAIM_SCHEMA_CONTRACT +
+  " Output ONLY a JSON object with shape {\"claims\": [...], " +
+  "\"objects\": [...]}. No prose, no markdown fences, JSON ONLY.";
 
 const ClaimSynthesisOutputSchema = z.object({
   claims: ClaimProposalSchema.array(),
