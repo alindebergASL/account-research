@@ -105,16 +105,71 @@ Task 7 changes this only by adding a *new* approved path:
 --mode model
 --adapter real
 --allow-real-model
+--provider <provider-id>
+--model <exact-provider-model-id>
 --max-cost <N>
 --corpus <local-path-outside-repo>
 --out <local-out-path>
 ```
 
-If **any** of `--adapter real`, `--allow-real-model`, `--max-cost`, `--corpus`,
-or `--out` is missing, the runner must refuse before any adapter is
-instantiated, before any provider SDK is dynamically imported, before any env
-var is read, and before any filesystem write. The refusal must explicitly
-name the missing flag(s) and re-state that A.7 remains BLOCKED.
+If **any** of `--adapter real`, `--allow-real-model`, `--provider`,
+`--model`, `--max-cost`, `--corpus`, or `--out` is missing, the runner
+must refuse before any adapter is instantiated, before any provider SDK
+is dynamically imported, before any env var is read, and before any
+filesystem write. The refusal must explicitly name the missing flag(s)
+and re-state that A.7 remains BLOCKED.
+
+### No hardcoded provider/model IDs
+
+The real adapter **must not** hardcode a provider model ID such as
+`claude-opus-4.7` (or any specific Opus/Sonnet/Haiku version, or any
+specific OpenAI/other-provider model name). Models change frequently;
+hardcoding a model ID turns every model bump into a code change and
+hides which model an operator actually paid for.
+
+Requirements for Task 7:
+
+- `--provider` and `--model` are mandatory for `--adapter real` and are
+  parsed in `parseArgs` **before** any adapter is constructed or any
+  provider SDK is dynamically imported.
+- The adapter receives `provider` and `model` as constructor / `init()`
+  arguments. It must not consult a hardcoded constant for either value.
+- Unknown `--provider` values (i.e. providers without a wired adapter
+  implementation in this PR — only one is required) must refuse at the
+  CLI layer with a clear message that names the supported provider(s).
+- Unknown `--model` values for a known provider are allowed to flow
+  through to the provider call, but the runner must capture pricing
+  resolution status (see "Unknown model pricing" below).
+- `report.json.cost.by_adapter[]` entries must record `provider` and
+  `model` exactly as the operator passed them — never a hardcoded
+  fallback — so post-run review can verify the paid run matched the
+  approved values from the operator's approval snippet (Doc 2 §3).
+- The approval snippet, the CLI invocation, and the
+  `report.json.cost.by_adapter[]` entry must all agree on
+  `(provider, model)`. Task 7's post-run check should fail the run if
+  the recorded values diverge from the operator's approved values.
+
+### Unknown model pricing
+
+If the runner cannot resolve pricing for the requested `--model` (no
+known per-token rate, provider API does not return a cost field, or the
+pricing table for that model is stale), the run must:
+
+- Set `report.json.cost.status = "unknown_estimated"`.
+- Classify the run as non-pass (see §6); `unknown_estimated` blocks a
+  `pass` outcome unconditionally per Doc 1 §6.
+- **Never** coerce unknown pricing to `observed_usd = 0`. Observed `$0`
+  is reserved for fixture mode and the fake adapter; coercing real-call
+  cost to `$0` would silently launder paid spend as free, defeating
+  the budget guard.
+- Populate `cost.estimated_usd` if a best-effort estimate is available;
+  otherwise leave it `null`.
+
+Operators bumping to a newer model (e.g. Opus 4.8 → 5.0) update the
+approved `--model` value in their approval snippet; no code change in
+the real adapter is required as long as pricing for the new model is
+known to the runner's pricing table. If pricing is not known, the run
+classifies non-pass — by design.
 
 ### Why `--allow-real-model` is a separate flag from `--adapter real`
 
@@ -138,9 +193,11 @@ provides every flag in §2. The defense-in-depth layers Task 7 must preserve
 or extend:
 
 1. **CLI parsing.** `parseArgs` must reject `--mode model --adapter real`
-   without `--allow-real-model`, without `--max-cost`, without `--corpus`,
-   or without `--out`. Each rejection happens in the CLI layer **before**
-   the orchestrator is called.
+   without `--allow-real-model`, without `--max-cost`, without
+   `--provider`, without `--model`, without `--corpus`, or without
+   `--out`. Each rejection happens in the CLI layer **before** the
+   orchestrator is called, and before any provider SDK is dynamically
+   imported.
 2. **Test harness defaults.** Existing tests in
    `tests/accountGraph.validationRunner.test.ts`,
    `tests/accountGraph.modelAdapterBoundary.test.ts`, and

@@ -145,8 +145,16 @@ comment) that records:
   (in-repo, gitignored, the only in-repo location `classifyOutPath`
   allows).
 - `adapter` — `real` (the only paid choice).
-- `provider` and `model` — the exact provider and model name (e.g.
-  `anthropic`, `claude-opus-4.7`).
+- `provider` — the exact provider ID the run will pass to `--provider`
+  (e.g. `anthropic`). Must not be omitted.
+- `model` — the exact provider model ID the run will pass to `--model`
+  (e.g. `claude-opus-4.7` as a *placeholder example*, NOT a prescribed
+  model — newer models such as Opus 4.8 or 5.0 can be approved by
+  updating this value, provided Task 7's pricing table covers the new
+  model; otherwise the run will classify non-pass via
+  `cost.status = "unknown_estimated"`). The exact string here must
+  match the `--model` argument used in §4 and the
+  `report.json.cost.by_adapter[].model` value in the artifacts.
 - `expected_artifact_destination` — exact `--out` value or its directory
   parent.
 - `gate_corpus_account_count` — typically 3, per source plan §2.
@@ -163,8 +171,8 @@ APPROVAL: A.7 paid model validation run
 - corpus_path_class: /tmp/a7-paid-corpus-<timestamp>.jsonl (outside repo)
 - out_path_class: /tmp/a7-paid-out-<timestamp> (outside repo)
 - adapter: real
-- provider: anthropic
-- model: claude-opus-4.7
+- provider: anthropic                   # exact value passed to --provider
+- model: claude-opus-4.7                # exact value passed to --model; example only, not a prescribed model
 - expected_artifact_destination: /tmp/a7-paid-out-<timestamp>/
 - gate_corpus_account_count: 3
 - estimated_max_usd (preflight): <value from preflight>
@@ -217,12 +225,15 @@ If the dry-run refuses, fix the refusal *before* attempting the paid run.
 STAMP=$(date +%Y%m%dT%H%M%SZ)
 OUT=/tmp/a7-paid-out-$STAMP
 CORPUS=/tmp/a7-paid-corpus-<timestamp>.jsonl
+MODEL=claude-opus-4.7    # placeholder example; substitute the exact model from §3 approval
 mkdir -p "$OUT"
 
 ( cd web && npx tsx scripts/run-account-graph-validation.ts \
     --mode model \
     --adapter real \
     --allow-real-model \
+    --provider anthropic \
+    --model "$MODEL" \
     --max-cost 10 \
     --corpus "$CORPUS" \
     --out "$OUT" ) 2>&1 | tee "$OUT/console.log"
@@ -231,6 +242,17 @@ mkdir -p "$OUT"
 Notes:
 
 - `--allow-real-model` is mandatory for the real adapter; see Doc 1 §2.
+- `--provider` and `--model` are mandatory for the real adapter and
+  must NOT be hardcoded inside the adapter; see Doc 1 §2 ("No hardcoded
+  provider/model IDs"). The exact `(provider, model)` pair must match
+  the values in the §3 approval snippet and must equal the
+  `report.json.cost.by_adapter[].provider` and `.model` values
+  recorded by the run.
+- `MODEL=claude-opus-4.7` above is a placeholder example only. To use a
+  newer model (e.g. Opus 4.8 or 5.0), change the approved `model` value
+  in §3 and the `MODEL` variable here, provided Task 7's pricing table
+  covers the new model. Otherwise the run will classify non-pass via
+  `cost.status = "unknown_estimated"` per Doc 1 §2.
 - `--max-cost` is mandatory for the real adapter (the runner default of
   `10` does not satisfy the explicit-flag requirement for `--adapter
   real`); see Doc 1 §4.
