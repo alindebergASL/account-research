@@ -184,9 +184,26 @@ export type PerCallCostRecord = {
   error: { code: string; message: string } | null;
 };
 
+/**
+ * Residual blocker RB2: surface the conservative pre-call estimate and
+ * retry count back to the system layer on success, so the per-call cost
+ * ledger row reflects the real estimate that was actually used to gate the
+ * call (instead of silently coercing to 0).
+ *
+ * Adapters that don't compute a meaningful estimate (the fake/fixture
+ * adapter) may omit `costMeta` or set `estimated_usd_pre_call: 0`. Real
+ * adapters MUST populate this on every successful call.
+ */
+export type AdapterCallCostMeta = {
+  estimated_usd_pre_call: number;
+  retry_count: number;
+  stage: CostRecordStage;
+};
+
 export type AdapterCallResult<T> = {
   output: T;
   cost: CostObservation;
+  costMeta?: AdapterCallCostMeta;
 };
 
 // ---------- ModelAdapter ----------

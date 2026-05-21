@@ -127,13 +127,45 @@ export function computeBackoffMs(
   return exp + Math.floor(Math.random() * (jitter + 1));
 }
 
+/**
+ * RB1: a mutable accumulator threaded through retry + corrective-retry call
+ * sites so the budget gate is CUMULATIVE across attempts. Every attempt
+ * RESERVES its conservative pre-call estimate into `attemptedEstimatedUsd`
+ * BEFORE the provider call is made. The gate then compares
+ *   `remaining_budget_usd - attemptedEstimatedUsd >= nextEst`
+ * which correctly refuses the Nth attempt when the cumulative reserved spend
+ * would exceed the original remaining budget — even though the immutable
+ * `ctx.remaining_budget_usd` snapshot has not changed during this stage.
+ *
+ * Why this design (vs. mutating `remaining_budget_usd`): the budget state
+ * lives one layer up in BudgetState; mutating ctx mid-stage would diverge
+ * from the system-owned cost roll-up which only records OBSERVED cost.
+ * Reservations are conservative and per-stage; reconciliation happens when
+ * the system layer eventually calls `recordCost` with the observed value.
+ */
+export type BudgetTally = {
+  attemptedEstimatedUsd: number;
+};
+
+export function createBudgetTally(): BudgetTally {
+  return { attemptedEstimatedUsd: 0 };
+}
+
 export type CallWithRetryOpts = {
   maxRetries?: number;
   /** Async sleep injection (tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
-  /** Budget gate evaluated BEFORE each attempt (including the first retry).
-   * If it returns false, retries stop and the last error is re-thrown. */
+  /** RB1: budget gate evaluated BEFORE each attempt, INCLUDING the first.
+   * Receives the prospective next-attempt estimate. The callee is responsible
+   * for cumulating it into the tally only when the gate returns true. If it
+   * returns false the call is NOT made, retries stop, and a
+   * `ProviderBudgetHaltError` is thrown. */
   canAffordNext?: () => boolean;
+  /** RB1: invoked AFTER `canAffordNext` returns true and BEFORE the provider
+   * call is attempted. The caller uses this hook to add the conservative
+   * pre-call estimate for this attempt into the cumulative `BudgetTally`,
+   * so subsequent attempts see the increased reserved spend. */
+  reserveAttempt?: (attempt: number) => void;
   /** Pre-attempt hook (for logging/tracing). Never used for budget gating. */
   onAttempt?: (attempt: number) => void;
 };
@@ -175,6 +207,11 @@ export async function callWithRetry<T>(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let lastClassified: ClassifiedProviderError | null = null;
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    // RB1: reserve the conservative estimate for THIS attempt before issuing
+    // it, so the gate on the NEXT iteration sees the cumulative reserved
+    // spend. The first attempt is already gated by the adapter's preflight
+    // check; the gate here covers retries 2..maxRetries+1.
+    opts.reserveAttempt?.(attempt);
     opts.onAttempt?.(attempt);
     try {
       return await fn();

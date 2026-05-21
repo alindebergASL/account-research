@@ -482,7 +482,11 @@ export type PairedBaselineJson = {
   generated_at: string;
   mode: "fixture";
   fixture_placeholder: false;
-  corpus_kind: CorpusKind;
+  // RB4: widened to admit local-production-backup corpora as well as the
+  // synthetic fixture corpus. The actual value is set by the call site (the
+  // real-mode runner sets "local_production_backup"; fake/fixture sets
+  // "synthetic_fixture").
+  corpus_kind: CorpusKind | "local_production_backup";
   corpus_id: string;
   corpus_label: string;
   caveat: string;
@@ -496,7 +500,15 @@ const PAIRED_CAVEAT =
 
 export function buildPairedBaseline(
   now: Date,
-  selected: ReturnType<typeof selectFixtureCorpus>,
+  // RB4: accept either synthetic-fixture or local-production-backup metadata
+  // so model-mode orchestrator can emit the correct corpus_kind for real
+  // local-corpus runs.
+  selected: {
+    kind: "synthetic_fixture" | "local_production_backup";
+    id: string;
+    label: string;
+    entries: SyntheticFixtureEntry[];
+  },
   perAccount: PerAccountBaseline[],
   coverage: CriteriaCoverage,
 ): PairedBaselineJson {
@@ -1067,7 +1079,7 @@ export type ReportJson = {
   a7_blocker_status: string;
   adapter: { name: string; propose_excerpts_calls: number; synthesize_claims_calls: number };
   // Task 3 additions:
-  paired_baseline: { path: string; corpus_kind: CorpusKind; account_count: number };
+  paired_baseline: { path: string; corpus_kind: CorpusKind | "local_production_backup"; account_count: number };
   selection_criteria_coverage: CriteriaCoverage;
   synthetic_fixture_only_note: string;
   real_production_gate_account_baseline_status: string;
@@ -1535,6 +1547,14 @@ export type ModelModeOrchestratorOptions = {
   corpusEntries?: SyntheticFixtureEntry[];
   briefJsonByFixtureId?: Record<string, unknown>;
   limit?: number;
+  // RB4: paired-baseline selected-corpus metadata. Fake/synthetic callers
+  // omit these and the orchestrator falls back to the synthetic-fixture
+  // metadata. Real-mode local-corpus callers supply
+  // ("local_production_backup", derived-id, derived-label) so the emitted
+  // paired-baseline.json reflects the corpus that was actually exercised.
+  corpusKind?: "synthetic_fixture" | "local_production_backup";
+  corpusId?: string;
+  corpusLabel?: string;
 };
 
 export type ModelModeOrchestratorResult = {
@@ -1666,10 +1686,16 @@ export async function runModelModeOrchestrator(
   };
 
   // Paired baseline artifact (reuse Task 3 builder for selected accounts).
+  // RB4: do NOT hardcode synthetic-fixture metadata. The real-mode call site
+  // (web/scripts/run-account-graph-validation.ts `--adapter real` branch)
+  // supplies local-production-backup metadata; the fake-mode path keeps the
+  // synthetic-fixture defaults.
   const selected = {
-    kind: "synthetic_fixture" as const,
-    id: "a7-synthetic-fixture-corpus-v1",
-    label: "synthetic A.7 fixture corpus",
+    kind: (opts.corpusKind ?? "synthetic_fixture") as
+      | "synthetic_fixture"
+      | "local_production_backup",
+    id: opts.corpusId ?? "a7-synthetic-fixture-corpus-v1",
+    label: opts.corpusLabel ?? "synthetic A.7 fixture corpus",
     entries: selectedEntries,
   };
   const paired = buildPairedBaseline(
@@ -1706,7 +1732,11 @@ function renderModelModeReportMarkdown(r: ModelModeReportJson): string {
     )
     .join("\n");
   return [
-    `# Phase A.7 Model-Mode (Fake Adapter) Validation Run`,
+    // RB3: title must NOT hardcode "Fake Adapter"; real-mode runs were
+    // emitting a misleading title. Adapter identity appears on the line
+    // below (`- Adapter: ${r.adapter_selected}`) and is also surfaced in
+    // report.json.adapter_selected.
+    `# Phase A.7 Model-Mode Validation Run`,
     ``,
     `- Branch: \`${r.branch}\``,
     `- Commit: \`${r.commit}\``,
@@ -1963,6 +1993,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         console.log(
           `[run-account-graph-validation] mode=model adapter=real (PAID PROVIDER) — ${REAL_ADAPTER_BLOCKED_REMINDER}`,
         );
+        // RB4: derive local-corpus metadata (same shape PR #45's
+        // paired-baseline.json uses). The id incorporates a stable hash of
+        // the resolved corpus path so multiple runs against the same corpus
+        // file produce the same corpus_id.
+        const corpusAbsForId = resolve(args.corpus!);
+        const localCorpusId = `local-prod-${createHash("sha256").update(corpusAbsForId).digest("hex").slice(0, 16)}`;
         const result = await runModelModeOrchestrator({
           outDir: args.out,
           adapter,
@@ -1971,6 +2007,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           limit: args.limit,
           corpusEntries: realCorpusEntries,
           briefJsonByFixtureId: realBriefsByFixtureId,
+          corpusKind: "local_production_backup",
+          corpusId: localCorpusId,
+          corpusLabel: "local production-backup-derived corpus",
         });
         console.log(
           `[run-account-graph-validation] mode=model adapter=real classification=${result.report.classification} cost_usd=${result.report.cost.observed_usd} out=${args.out}`,

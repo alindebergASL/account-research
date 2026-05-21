@@ -37,6 +37,7 @@ export { ProviderResponseInvalidError } from "../providerResponseValidation";
 import {
   callWithRetry,
   classifyProviderError,
+  createBudgetTally,
   PROVIDER_MAX_RETRIES,
 } from "../providerErrors";
 import {
@@ -249,6 +250,11 @@ export class RealAnthropicAdapter implements ModelAdapter {
     let usage: ProviderResponse["usage"] = { input_tokens: null, output_tokens: null };
     let providerObserved: number | null | undefined = null;
     let retries = 0;
+    // RB1: cumulative tally of conservative pre-call reservations across
+    // EVERY provider attempt for this stage (initial + provider retries +
+    // corrective retry). The retry/corrective gate compares
+    // `remaining_budget_usd - tally.attemptedEstimatedUsd >= nextEst`.
+    const tally = createBudgetTally();
 
     const validated = await callAndValidate(
       ExcerptProposalSchema.array(),
@@ -268,9 +274,11 @@ export class RealAnthropicAdapter implements ModelAdapter {
           {
             sleep: this.sleep,
             maxRetries: PROVIDER_MAX_RETRIES,
-            // Blocker 4: re-check budget before EACH retry. The conservative
-            // estimate must still fit remaining budget after the prior failed
-            // attempt's worst-case cost is hypothetically charged.
+            // RB1: CUMULATIVE budget gate. Before each retry, ensure the
+            // ALREADY-RESERVED spend plus this attempt's estimate still fits
+            // within the original remaining budget. Without the tally, the
+            // gate would keep saying yes to every retry against an unchanged
+            // remaining-budget snapshot.
             canAffordNext: () => {
               const nextEst = estimateCallCostUsd(
                 this.pricing,
@@ -278,7 +286,15 @@ export class RealAnthropicAdapter implements ModelAdapter {
                 MAX_OUTPUT_TOKENS_EXCERPT,
               );
               if (nextEst === null) return false;
-              return nextEst <= ctx.remaining_budget_usd;
+              return tally.attemptedEstimatedUsd + nextEst <= ctx.remaining_budget_usd;
+            },
+            reserveAttempt: () => {
+              const est = estimateCallCostUsd(
+                this.pricing,
+                inputTokensEstimate,
+                MAX_OUTPUT_TOKENS_EXCERPT,
+              );
+              if (est !== null) tally.attemptedEstimatedUsd += est;
             },
             onAttempt: (n) => { if (n > 1) retries = n - 1; },
           },
@@ -286,6 +302,25 @@ export class RealAnthropicAdapter implements ModelAdapter {
         usage = resp.usage;
         providerObserved = resp.observed_usd ?? null;
         return resp.text;
+      },
+      {
+        // RB1: the corrective retry must also count toward cumulative spend.
+        canAffordCorrective: () => {
+          const nextEst = estimateCallCostUsd(
+            this.pricing,
+            inputTokensEstimate,
+            MAX_OUTPUT_TOKENS_EXCERPT,
+          );
+          if (nextEst === null) return false;
+          return tally.attemptedEstimatedUsd + nextEst <= ctx.remaining_budget_usd;
+        },
+        reserveCorrective: () => {
+          // Reservation for the corrective call's first inner attempt will
+          // also be added by callWithRetry.reserveAttempt; we intentionally
+          // do NOT double-count here. The gate above is enough; the inner
+          // reserveAttempt will increment the tally exactly once for that
+          // attempt before the provider call.
+        },
       },
     );
 
@@ -310,7 +345,19 @@ export class RealAnthropicAdapter implements ModelAdapter {
         }),
       });
     }
-    return { output: validated.value, cost };
+    // RB2: surface the pre-call estimate + retries to the system layer so
+    // the per-call ledger row carries the real estimate, not 0.
+    return {
+      output: validated.value,
+      cost,
+      costMeta: {
+        // preflight already threw when estimateUsd was null; coerce for the
+        // type system. Real successful calls have a positive estimate.
+        estimated_usd_pre_call: estimateUsd ?? 0,
+        retry_count: retries,
+        stage: "excerpt_proposal",
+      },
+    };
   }
 
   // ---------- synthesizeClaims ----------
@@ -339,6 +386,8 @@ export class RealAnthropicAdapter implements ModelAdapter {
     let usage: ProviderResponse["usage"] = { input_tokens: null, output_tokens: null };
     let providerObserved: number | null | undefined = null;
     let retries = 0;
+    // RB1: see proposeExcerpts for the rationale of the cumulative tally.
+    const tally = createBudgetTally();
 
     const validated = await callAndValidate(
       ClaimSynthesisOutputSchema,
@@ -365,7 +414,15 @@ export class RealAnthropicAdapter implements ModelAdapter {
                 MAX_OUTPUT_TOKENS_CLAIM,
               );
               if (nextEst === null) return false;
-              return nextEst <= ctx.remaining_budget_usd;
+              return tally.attemptedEstimatedUsd + nextEst <= ctx.remaining_budget_usd;
+            },
+            reserveAttempt: () => {
+              const est = estimateCallCostUsd(
+                this.pricing,
+                inputTokensEstimate,
+                MAX_OUTPUT_TOKENS_CLAIM,
+              );
+              if (est !== null) tally.attemptedEstimatedUsd += est;
             },
             onAttempt: (n) => { if (n > 1) retries = n - 1; },
           },
@@ -373,6 +430,20 @@ export class RealAnthropicAdapter implements ModelAdapter {
         usage = resp.usage;
         providerObserved = resp.observed_usd ?? null;
         return resp.text;
+      },
+      {
+        canAffordCorrective: () => {
+          const nextEst = estimateCallCostUsd(
+            this.pricing,
+            inputTokensEstimate,
+            MAX_OUTPUT_TOKENS_CLAIM,
+          );
+          if (nextEst === null) return false;
+          return tally.attemptedEstimatedUsd + nextEst <= ctx.remaining_budget_usd;
+        },
+        reserveCorrective: () => {
+          // See proposeExcerpts: inner reserveAttempt handles the increment.
+        },
       },
     );
 
@@ -404,7 +475,18 @@ export class RealAnthropicAdapter implements ModelAdapter {
         claim_proposal_indices: o.claim_proposal_indices ?? [],
       })),
     };
-    return { output, cost };
+    // RB2: surface the pre-call estimate + retries to the system layer.
+    return {
+      output,
+      cost,
+      costMeta: {
+        // preflight already threw when estimateUsd was null; coerce for the
+        // type system. Real successful calls have a positive estimate.
+        estimated_usd_pre_call: estimateUsd ?? 0,
+        retry_count: retries,
+        stage: "claim_synthesis",
+      },
+    };
   }
 
   /**

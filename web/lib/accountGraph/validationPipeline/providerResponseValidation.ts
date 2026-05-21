@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import type { CostObservation, CostRecordStage, PerCallCostRecord } from "./types";
+import { ProviderBudgetHaltError, classifyProviderError } from "./providerErrors";
 
 /**
  * Blocker 3: thrown by adapters when, after one retry, the provider's
@@ -81,14 +82,45 @@ export type CallRawFn = (correction?: {
  * considered a stage failure; the caller (system layer) records the
  * appropriate hard-invariant violation and preserves partial artifacts.
  */
+/**
+ * RB1: gate the corrective retry against the cumulative budget tally.
+ * `canAffordCorrective` is consulted ONLY before the second (corrective)
+ * provider call. If it returns false, the corrective call is suppressed and
+ * a `ProviderBudgetHaltError` propagates up — the system layer records a
+ * ledger row with `provider_budget_halt` and classifies the affected
+ * account/stage non-pass.
+ *
+ * `reserveCorrective` is invoked AFTER `canAffordCorrective` returns true
+ * and BEFORE the second provider call, so the cumulative tally reflects
+ * the reservation for the corrective attempt.
+ */
+export type CallAndValidateBudgetHooks = {
+  canAffordCorrective?: () => boolean;
+  reserveCorrective?: () => void;
+};
+
 export async function callAndValidate<T>(
   schema: z.ZodType<T>,
   call: CallRawFn,
+  hooks?: CallAndValidateBudgetHooks,
 ): Promise<ValidatedResponse<T>> {
   let attempts = 0;
   let lastJsonError = "";
   let lastSchemaError = "";
   for (let i = 0; i < 2; i++) {
+    if (i === 1 && hooks?.canAffordCorrective && !hooks.canAffordCorrective()) {
+      // RB1: suppress corrective provider call when cumulative budget would
+      // be exceeded. The caller catches ProviderBudgetHaltError, preserves
+      // partial artifacts, and records a budget-halt ledger row.
+      throw new ProviderBudgetHaltError(
+        classifyProviderError(
+          new Error(
+            `corrective retry suppressed: cumulative provider-call budget would be exceeded`,
+          ),
+        ),
+      );
+    }
+    if (i === 1) hooks?.reserveCorrective?.();
     attempts += 1;
     const correction =
       i === 0

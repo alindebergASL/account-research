@@ -194,9 +194,13 @@ export async function runAccountThroughAdapter(
         model: adapter.model,
         account_label: input.account_id,
         stage: "excerpt_proposal",
-        estimated_usd_pre_call: null,
+        // RB2: prefer the adapter-surfaced pre-call estimate (real adapter)
+        // so the ledger row reflects the conservative estimate that gated
+        // the call instead of being silently coerced to 0.
+        estimated_usd_pre_call:
+          proposeResult.costMeta?.estimated_usd_pre_call ?? null,
         cost: proposeResult.cost,
-        retry_count: 0,
+        retry_count: proposeResult.costMeta?.retry_count ?? 0,
         error: null,
       }),
     );
@@ -359,9 +363,11 @@ export async function runAccountThroughAdapter(
           model: adapter.model,
           account_label: input.account_id,
           stage: "claim_synthesis",
-          estimated_usd_pre_call: null,
+          // RB2: see excerpt_proposal record above for rationale.
+          estimated_usd_pre_call:
+            synthResult.costMeta?.estimated_usd_pre_call ?? null,
           cost: synthResult.cost,
-          retry_count: 0,
+          retry_count: synthResult.costMeta?.retry_count ?? 0,
           error: null,
         }),
       );

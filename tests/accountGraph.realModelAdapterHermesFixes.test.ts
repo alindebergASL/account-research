@@ -548,6 +548,249 @@ test("Blocker 6: fixture/fake adapter $0 observed remains valid (NOT widened to 
   }
 });
 
+// ============================================================================
+// Residual blockers (round 2): RB1 (cumulative retry budget), RB2 (success
+// ledger pre-call estimate), RB3 (markdown title), RB4 (paired-baseline
+// corpus metadata).
+// ============================================================================
+
+// ---------------- RB1: cumulative retry budget gate ----------------
+
+test("RB1: 429 retry HALTED by cumulative tally — provider mock called exactly once when budget fits one attempt but not two", async () => {
+  // Two attempts would each reserve the same conservative estimate; with a
+  // budget just over the per-attempt estimate, the second attempt's gate
+  // (attempted + nextEst > remaining) must REFUSE before the provider is hit.
+  let calls = 0;
+  const stub: ProviderClient = {
+    async call() {
+      calls += 1;
+      throw Object.assign(new Error("rate limited"), { status: 429 });
+    },
+  };
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  // Excerpt pre-call estimate for opus@KNOWN_MODEL with ~tiny input is
+  // dominated by output: 2000 tokens * $75/1M = $0.15. Budget of $0.20
+  // affords the first attempt (preflight passes) but NOT a second
+  // ($0.15 reserved + $0.15 next = $0.30 > $0.20).
+  await assert.rejects(
+    () => adapter.proposeExcerpts(
+      {
+        account_id: "acct_rb1",
+        chunks: [{ source_document_id: "src0", source_text: "abc", chunk_index: 0 }],
+      },
+      { account_id: "acct_rb1", remaining_budget_usd: 0.20 },
+    ),
+    /budget/i,
+  );
+  assert.equal(calls, 1, `provider call count must be 1, got ${calls}`);
+});
+
+test("RB1: corrective JSON-retry SUPPRESSED when cumulative tally would exceed budget — provider call count exactly 1, artifact preserved, non-pass classification", async () => {
+  // The provider returns invalid JSON on the first call. The corrective
+  // retry's `canAffordCorrective` gate must see that the first attempt's
+  // reservation already used budget and refuse to issue the second call.
+  let calls = 0;
+  const stub: ProviderClient = {
+    async call() {
+      calls += 1;
+      return { text: "definitely not json", usage: { input_tokens: 5, output_tokens: 5 } };
+    },
+  };
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  const outDir = tmpOut("rb1-corrective");
+  try {
+    // maxCost 0.20 fits ONE call ($0.15 estimated) but NOT a corrective
+    // retry ($0.15 + $0.15 = $0.30 > $0.20).
+    const r = await runModelModeOrchestrator({
+      outDir,
+      adapter,
+      maxCostUsd: 0.20,
+      allowHighCost: false,
+      limit: 1,
+    });
+    assert.equal(calls, 1, `corrective retry must be suppressed; got ${calls} provider calls`);
+    assert.notEqual(r.report.classification, "pass");
+    assert.ok(existsSync(r.artifacts.reportJsonPath), "artifact must be preserved");
+    // A budget-halt note should appear on the affected account.
+    const acct = r.report.per_account[0];
+    assert.ok(
+      acct.notes.some((n: string) => /budget/i.test(n)),
+      `expected budget-halt note; got ${acct.notes.join(" | ")}`,
+    );
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------- RB2: success ledger pre-call estimate ----------------
+
+test("RB2: every real-adapter cost.calls[] row has estimated_usd_pre_call > 0 on success", async () => {
+  const fixtureSrc = `src_${SYNTHETIC_FIXTURE_CORPUS[0].fixture_id}_0`;
+  const text = `Synthetic source body 1 for `;
+  const stub: ProviderClient = {
+    async call(req) {
+      if (req.max_tokens === 2000) {
+        return {
+          text: JSON.stringify([{ source_document_id: fixtureSrc, text, char_start: 0, char_end: text.length }]),
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      }
+      return {
+        text: JSON.stringify({ claims: [], objects: [] }),
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+    },
+  };
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  const outDir = tmpOut("rb2");
+  try {
+    const r = await runModelModeOrchestrator({
+      outDir, adapter, maxCostUsd: 10, allowHighCost: false, limit: 1,
+    });
+    const j = JSON.parse(readFileSync(r.artifacts.reportJsonPath, "utf8"));
+    const realRows = j.cost.calls.filter((c: { provider: string }) => c.provider === "anthropic");
+    assert.ok(realRows.length >= 2, "expected at least one excerpt + one claim row");
+    for (const row of realRows) {
+      assert.ok(
+        typeof row.estimated_usd_pre_call === "number" && row.estimated_usd_pre_call > 0,
+        `RB2: every real-adapter ledger row must carry estimated_usd_pre_call > 0; got ${row.estimated_usd_pre_call} for stage=${row.stage}`,
+      );
+    }
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("RB2: fake-adapter rows keep estimated_usd_pre_call === 0 (fake has no real estimate)", async () => {
+  const outDir = tmpOut("rb2-fake");
+  try {
+    const r = await runModelModeOrchestrator({
+      outDir,
+      adapter: new FakeDeterministicAdapter(),
+      maxCostUsd: 10, allowHighCost: false, limit: 1,
+    });
+    const j = JSON.parse(readFileSync(r.artifacts.reportJsonPath, "utf8"));
+    for (const c of j.cost.calls) {
+      assert.equal(c.estimated_usd_pre_call, 0, "fake-adapter rows have no real estimate");
+    }
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------- RB3: markdown title is adapter-aware ----------------
+
+test("RB3: real-adapter report.md does NOT contain 'Fake Adapter' in title or body (case-insensitive)", async () => {
+  const stub: ProviderClient = {
+    async call(req) {
+      if (req.max_tokens === 2000) return { text: "[]", usage: { input_tokens: 1, output_tokens: 1 } };
+      return { text: JSON.stringify({ claims: [], objects: [] }), usage: { input_tokens: 1, output_tokens: 1 } };
+    },
+  };
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  const outDir = tmpOut("rb3");
+  try {
+    const r = await runModelModeOrchestrator({
+      outDir, adapter, maxCostUsd: 10, allowHighCost: false, limit: 1,
+    });
+    const md = readFileSync(r.artifacts.reportMdPath, "utf8");
+    assert.ok(!/fake adapter/i.test(md), `RB3: real-adapter report.md must not say "Fake Adapter"; first 200 chars:\n${md.slice(0, 200)}`);
+    // Title should still identify this as a model-mode run.
+    assert.ok(md.startsWith("# Phase A.7 Model-Mode"), `unexpected title line: ${md.split("\n")[0]}`);
+    // Body should still surface the adapter id.
+    assert.ok(/Adapter:\s*real-anthropic/.test(md), "adapter id must appear in body");
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------- RB4: paired-baseline corpus metadata ----------------
+
+test("RB4: real/stub local-corpus run emits corpus_kind=local_production_backup and a derived corpus_id (not the synthetic one)", async () => {
+  const stub: ProviderClient = {
+    async call(req) {
+      if (req.max_tokens === 2000) return { text: "[]", usage: { input_tokens: 1, output_tokens: 1 } };
+      return { text: JSON.stringify({ claims: [], objects: [] }), usage: { input_tokens: 1, output_tokens: 1 } };
+    },
+  };
+  const adapter = await RealAnthropicAdapter.init({
+    provider: "anthropic",
+    model: KNOWN_MODEL,
+    apiKey: "stub-key",
+    providerClient: stub,
+    sleep: async () => {},
+  });
+  const corpusDir = mkdtempSync(join(tmpdir(), "rb4-corpus-"));
+  const corpusPath = join(corpusDir, "corpus.jsonl");
+  writeFileSync(corpusPath, syntheticBriefJson("RB4_ACCT", "rb4-unique-snapshot") + "\n");
+  const read = readLocalCorpus(corpusPath);
+  const corpusEntries = read.entries_ok.map((e) => ({
+    account_label: e.account_label!,
+    fixture_id: e.fixture_id!,
+    fixture_path: "<unused>",
+    selection_rationale: e.selection_rationale,
+    criteria_covered: e.criteria_covered,
+  }));
+  const outDir = tmpOut("rb4");
+  try {
+    const r = await runModelModeOrchestrator({
+      outDir, adapter, maxCostUsd: 10, allowHighCost: false, limit: 1,
+      corpusEntries, briefJsonByFixtureId: read.briefs_by_fixture_id,
+      corpusKind: "local_production_backup",
+      corpusId: "local-prod-rb4-test",
+      corpusLabel: "RB4 local corpus",
+    });
+    const paired = JSON.parse(readFileSync(r.artifacts.pairedBaselinePath, "utf8"));
+    assert.equal(paired.corpus_kind, "local_production_backup");
+    assert.notEqual(paired.corpus_id, "a7-synthetic-fixture-corpus-v1");
+    assert.equal(paired.corpus_id, "local-prod-rb4-test");
+    assert.equal(paired.corpus_label, "RB4 local corpus");
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+    rmSync(corpusDir, { recursive: true, force: true });
+  }
+});
+
+test("RB4: default fake model-mode run preserves synthetic-fixture metadata", async () => {
+  const outDir = tmpOut("rb4-fake");
+  try {
+    const r = await runModelModeOrchestrator({
+      outDir,
+      adapter: new FakeDeterministicAdapter(),
+      maxCostUsd: 10, allowHighCost: false, limit: 1,
+    });
+    const paired = JSON.parse(readFileSync(r.artifacts.pairedBaselinePath, "utf8"));
+    assert.equal(paired.corpus_kind, "synthetic_fixture");
+    assert.equal(paired.corpus_id, "a7-synthetic-fixture-corpus-v1");
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
 // ---------------- Sanity: void unused suppressors ----------------
 void main;
 void REPO_ROOT;
