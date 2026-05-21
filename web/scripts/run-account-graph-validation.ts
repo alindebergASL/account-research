@@ -1,6 +1,5 @@
 #!/usr/bin/env tsx
-// Phase A.7 — validation runner. Fixture/default mode (paired A.6 baseline
-// over synthetic illustrative fixtures only).
+// Phase A.7 — validation runner.
 //
 // HARD SAFETY GUARANTEES:
 //   - No real model/provider calls. No SDK imports from `@anthropic-ai/sdk`,
@@ -11,16 +10,21 @@
 //   - Importing this module must not call `main`, must not touch the
 //     filesystem, must not invoke any adapter. The `require.main === module`
 //     guard at the bottom enforces this.
-//   - `--mode model` is recognized but REFUSED in this PR. It exits nonzero
+//   - `--mode model` without `--adapter fake` is REFUSED. It exits nonzero
 //     with a clear refusal message and does not instantiate any adapter, does
 //     not touch the filesystem, does not call the fake adapter.
+//   - `--mode model --adapter fake` runs the model-adapter *boundary* with a
+//     fully deterministic local fake adapter. No network, no provider SDKs,
+//     no env reads. Cost is observed $0. A.7 graph-first writes remain
+//     BLOCKED per docs/BLOCKERS.md regardless of this run.
 //
-// This PR implements Task 3 of
-// docs/plans/2026-05-21-phase-a7-model-mode-validation-plan.md (paired A.6
-// baseline measurement over synthetic illustrative fixture accounts). A.7
-// graph-first writes REMAIN BLOCKED per docs/BLOCKERS.md.
+// This PR implements Task 4 of
+// docs/plans/2026-05-21-phase-a7-model-mode-validation-plan.md (model-mode
+// adapter boundary without graph-first writes). A.7 graph-first writes
+// REMAIN BLOCKED per docs/BLOCKERS.md.
 
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 
@@ -29,6 +33,21 @@ import { buildParityReport } from "../lib/accountGraph/briefParity";
 import { validateAccountGraph } from "../lib/accountGraph/validation";
 import { classifyBrief } from "../lib/accountGraph/backfillReport";
 import { Brief as BriefSchema } from "../lib/schema";
+import {
+  buildBudgetReportBlock,
+  budgetExceeded,
+  createBudgetState,
+  validateBudgetConfig,
+  type BudgetReportBlock,
+} from "../lib/accountGraph/validationPipeline/budget";
+import { runAccountThroughAdapter } from "../lib/accountGraph/validationPipeline/systemSteps";
+import { FakeDeterministicAdapter } from "../lib/accountGraph/validationPipeline/adapters/fakeDeterministic";
+import type {
+  HardInvariantKey,
+  ModelAdapter as PipelineModelAdapter,
+  PerAccountAdapterRun,
+} from "../lib/accountGraph/validationPipeline/types";
+import type { AccountHierarchyReference, SourceDocument } from "../lib/accountGraph/schema";
 
 // ----------------------- Model adapter boundary -----------------------
 // Narrow interface so the runner depends on a seam, not a concrete provider.
@@ -108,6 +127,7 @@ export class FakeModelAdapter implements ModelAdapter {
 // ----------------------- CLI parsing -----------------------
 
 export type CliMode = "fixture" | "model";
+export type CliAdapter = "fake" | "real" | undefined;
 
 export type CliArgs = {
   mode: CliMode;
@@ -116,6 +136,10 @@ export type CliArgs = {
   out: string;
   limit?: number;
   allowCostOver25: boolean;
+  /** Task 4: optional adapter selector for `--mode model`. */
+  adapter?: string;
+  /** Task 4: explicit override for --max-cost > 25. */
+  allowHighCost: boolean;
 };
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -123,15 +147,19 @@ export function parseArgs(argv: string[]): CliArgs {
     mode: "fixture",
     maxCostUsd: 10,
     allowCostOver25: false,
+    allowHighCost: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--mode") args.mode = argv[++i] as CliMode;
     else if (a === "--max-cost-usd") args.maxCostUsd = Number(argv[++i]);
+    else if (a === "--max-cost") args.maxCostUsd = Number(argv[++i]);
     else if (a === "--corpus") args.corpus = argv[++i];
     else if (a === "--out") args.out = argv[++i];
     else if (a === "--limit") args.limit = Number(argv[++i]);
     else if (a === "--allow-cost-over-25") args.allowCostOver25 = true;
+    else if (a === "--allow-high-cost") args.allowHighCost = true;
+    else if (a === "--adapter") args.adapter = argv[++i];
   }
   if (args.mode !== "fixture" && args.mode !== "model") {
     throw new Error(
@@ -896,23 +924,362 @@ export async function runFixtureOrchestrator(
   };
 }
 
+// ----------------------- Model-mode (fake adapter) orchestrator -----------------------
+//
+// Task 4: run the model-adapter *boundary* against synthetic A.7 fixtures
+// using the local fake deterministic adapter. No provider SDKs, no env
+// reads, no network. Cost is observed $0.
+
+export type ModelModeReportJson = {
+  branch: string;
+  commit: string;
+  run_at: string;
+  mode: "model";
+  adapter_selected: "fake";
+  classification: "pass" | "borderline" | "fail" | "budget_exceeded";
+  cost: BudgetReportBlock;
+  hard_invariants: { key: HardInvariantKey; status: "pass" | "fail"; count: number; details: string[] }[];
+  per_account: PerAccountAdapterRun[];
+  artifact_paths: string[];
+  a7_blocker_status: string;
+  non_production_notice: string;
+};
+
+const NON_PRODUCTION_NOTICE =
+  "MODEL ADAPTER IS NON-PRODUCTION FAKE DETERMINISTIC. NO PROVIDER SDKs IMPORTED. NO ENV READS. NO NETWORK. A.7 graph-first writes remain BLOCKED per docs/BLOCKERS.md.";
+
+const ALL_HARD_INVARIANT_KEYS: HardInvariantKey[] = [
+  "schema_parse",
+  "referential_integrity",
+  "invented_source_document_ids",
+  "invented_evidence_excerpt_ids",
+  "dangling_claim_evidence",
+  "false_verified",
+  "verified_high_claims_without_accepted_excerpts",
+  "accepted_paraphrases",
+  "production_writes",
+  "unbudgeted_model_calls",
+  "automatic_model_calls_from_tests_imports_fixture_mode",
+];
+
+/**
+ * Build synthetic SourceDocuments per fixture account. These are constructed
+ * from the synthetic brief JSON's snapshot/signals; they never reference real
+ * URLs or fetched data. Content text is large enough for excerpt verification
+ * (>= 20 chars per excerpt) and is fully deterministic.
+ */
+export function buildSyntheticSourceDocumentsForFixture(
+  fixtureId: string,
+  briefJson: unknown,
+  now: Date,
+): { sources: SourceDocument[]; accountRef: AccountHierarchyReference } {
+  const b = (briefJson as Record<string, unknown>) ?? {};
+  const accountName =
+    typeof b.account_name === "string" ? b.account_name : fixtureId;
+  const snapshot = typeof b.snapshot === "string" ? b.snapshot : "synthetic snapshot text for fixture-only validation";
+  const prioritySummary =
+    typeof b.priority_summary === "string" ? b.priority_summary : "synthetic priority summary";
+  const accountRef: AccountHierarchyReference = {
+    account_id: fixtureId,
+    account_name: accountName,
+    scope: "enterprise",
+  };
+  // Build 1-3 deterministic source bodies. Each is composed entirely of
+  // synthetic fixture text already present in the brief JSON (which is in
+  // the repo and contains no real organization references).
+  const bodies = [
+    `Synthetic source body 1 for ${accountName}. ${snapshot} ${prioritySummary}`,
+    `Synthetic source body 2 for ${accountName}. ${snapshot}`,
+  ].map((s) => s.padEnd(120, " ").slice(0, 4000));
+  const sources: SourceDocument[] = bodies.map((text, i) => ({
+    id: `src_${fixtureId}_${i}`,
+    kind: "public_web",
+    title: `Synthetic fixture source ${i + 1} for ${fixtureId}`,
+    url: null,
+    publisher: null,
+    captured_at: now.toISOString(),
+    published_at: null,
+    fetched_at: null,
+    content_sha256: createHash("sha256").update(text).digest("hex"),
+    content_text: text,
+    allowed: true,
+    allowlist_rule: "synthetic_fixture",
+    pii_risk: "none",
+    retention: "store_full_text_lab",
+    metadata: { synthetic: true, fixture_id: fixtureId },
+  }));
+  return { sources, accountRef };
+}
+
+export type ModelModeOrchestratorOptions = {
+  outDir: string;
+  adapter: PipelineModelAdapter;
+  maxCostUsd: number;
+  allowHighCost: boolean;
+  now?: Date;
+  git?: { branch: string; commit: string };
+  corpusEntries?: SyntheticFixtureEntry[];
+  briefJsonByFixtureId?: Record<string, unknown>;
+  limit?: number;
+};
+
+export type ModelModeOrchestratorResult = {
+  report: ModelModeReportJson;
+  artifacts: { reportMdPath: string; reportJsonPath: string; pairedBaselinePath: string };
+};
+
+export async function runModelModeOrchestrator(
+  opts: ModelModeOrchestratorOptions,
+): Promise<ModelModeOrchestratorResult> {
+  const now = opts.now ?? new Date();
+  const git = opts.git ?? gitInfo();
+  mkdirSync(opts.outDir, { recursive: true });
+
+  const budget = createBudgetState({
+    max_cost_usd: opts.maxCostUsd,
+    allow_high_cost: opts.allowHighCost,
+  });
+
+  const entries = opts.corpusEntries ?? SYNTHETIC_FIXTURE_CORPUS;
+  const maxN = Math.max(1, Math.min(3, opts.limit ?? entries.length));
+  const selectedEntries = entries.slice(0, maxN);
+
+  const perAccount: PerAccountAdapterRun[] = [];
+  const violationsByKey = new Map<HardInvariantKey, string[]>();
+
+  // Also compute paired-baseline (system-owned, no adapter). Reused for the
+  // paired-baseline.json artifact so model-mode runs produce all three
+  // artifacts the plan requires.
+  const perAccountBaseline: PerAccountBaseline[] = [];
+
+  for (const entry of selectedEntries) {
+    const override = opts.briefJsonByFixtureId?.[entry.fixture_id];
+    let briefJson: unknown;
+    if (override !== undefined) {
+      briefJson = override;
+    } else {
+      const raw = readFileSync(entry.fixture_path, "utf8");
+      briefJson = JSON.parse(raw);
+    }
+    perAccountBaseline.push(measurePerAccountBaseline(entry, briefJson));
+
+    const { sources, accountRef } = buildSyntheticSourceDocumentsForFixture(
+      entry.fixture_id,
+      briefJson,
+      now,
+    );
+
+    const result = await runAccountThroughAdapter(
+      {
+        account_id: entry.fixture_id,
+        account_ref: accountRef,
+        source_documents: sources,
+      },
+      opts.adapter,
+      budget,
+      now,
+    );
+    perAccount.push(result.per_account);
+    for (const v of result.per_account.hard_invariant_violations) {
+      const list = violationsByKey.get(v.key) ?? [];
+      list.push(v.detail);
+      violationsByKey.set(v.key, list);
+    }
+    if (result.budget_stopped) {
+      // Mark remaining accounts as skipped_budget_exceeded.
+      const idx = selectedEntries.indexOf(entry);
+      for (let j = idx + 1; j < selectedEntries.length; j++) {
+        perAccount.push({
+          account_id: selectedEntries[j].fixture_id,
+          classification: "skipped_budget_exceeded",
+          hard_invariant_violations: [],
+          excerpt_proposals: 0,
+          accepted_excerpts: 0,
+          claim_proposals: 0,
+          object_proposals: 0,
+          observed_usd: 0,
+          notes: ["budget exhausted before this account started"],
+        });
+      }
+      break;
+    }
+  }
+
+  const cost = buildBudgetReportBlock(budget);
+
+  // Hard invariants table for the model-mode report.
+  const hardInvariants = ALL_HARD_INVARIANT_KEYS.map((key) => {
+    const details = violationsByKey.get(key) ?? [];
+    return {
+      key,
+      status: (details.length > 0 ? "fail" : "pass") as "pass" | "fail",
+      count: details.length,
+      details,
+    };
+  });
+
+  // Classification.
+  let classification: ModelModeReportJson["classification"] = "pass";
+  if (budgetExceeded(budget)) classification = "budget_exceeded";
+  else if (hardInvariants.some((h) => h.status === "fail")) classification = "fail";
+  else if (cost.status === "unknown_estimated") classification = "borderline";
+  else if (perAccount.some((a) => a.classification === "budget_exceeded" || a.classification === "skipped_budget_exceeded")) {
+    classification = "budget_exceeded";
+  } else classification = "pass";
+
+  const reportJsonPath = join(opts.outDir, "report.json");
+  const reportMdPath = join(opts.outDir, "report.md");
+  const pairedBaselinePath = join(opts.outDir, "paired-baseline.json");
+
+  const report: ModelModeReportJson = {
+    branch: git.branch,
+    commit: git.commit,
+    run_at: now.toISOString(),
+    mode: "model",
+    adapter_selected: "fake",
+    classification,
+    cost,
+    hard_invariants: hardInvariants,
+    per_account: perAccount,
+    artifact_paths: [reportMdPath, reportJsonPath, pairedBaselinePath],
+    a7_blocker_status: A7_BLOCKER_STATEMENT,
+    non_production_notice: NON_PRODUCTION_NOTICE,
+  };
+
+  // Paired baseline artifact (reuse Task 3 builder for selected accounts).
+  const selected = {
+    kind: "synthetic_fixture" as const,
+    id: "a7-synthetic-fixture-corpus-v1",
+    label: "synthetic A.7 fixture corpus",
+    entries: selectedEntries,
+  };
+  const paired = buildPairedBaseline(
+    now,
+    selected,
+    perAccountBaseline,
+    computeCriteriaCoverage(selectedEntries),
+  );
+
+  writeFileSync(reportJsonPath, JSON.stringify(report, null, 2));
+  writeFileSync(reportMdPath, renderModelModeReportMarkdown(report));
+  writeFileSync(pairedBaselinePath, JSON.stringify(paired, null, 2));
+
+  return {
+    report,
+    artifacts: { reportMdPath, reportJsonPath, pairedBaselinePath },
+  };
+}
+
+function renderModelModeReportMarkdown(r: ModelModeReportJson): string {
+  const hi = r.hard_invariants
+    .map((h) => `| ${h.key} | ${h.status} | ${h.count} |`)
+    .join("\n");
+  const acct = r.per_account
+    .map(
+      (a) =>
+        `| ${a.account_id} | \`${a.classification}\` | ${a.excerpt_proposals} | ${a.accepted_excerpts} | ${a.claim_proposals} | ${a.object_proposals} | ${a.observed_usd} |`,
+    )
+    .join("\n");
+  const adapterRows = r.cost.by_adapter
+    .map(
+      (b) =>
+        `| ${b.adapter_name} | ${b.provider} | ${b.model} | ${b.calls} | ${b.input_tokens} | ${b.output_tokens} | ${b.observed_usd} |`,
+    )
+    .join("\n");
+  return [
+    `# Phase A.7 Model-Mode (Fake Adapter) Validation Run`,
+    ``,
+    `- Branch: \`${r.branch}\``,
+    `- Commit: \`${r.commit}\``,
+    `- Run at: ${r.run_at}`,
+    `- Mode: ${r.mode}`,
+    `- Adapter: ${r.adapter_selected}`,
+    `- Classification: **${r.classification}**`,
+    ``,
+    `## Non-production notice`,
+    ``,
+    `- ${r.non_production_notice}`,
+    `- ${r.a7_blocker_status}`,
+    ``,
+    `## Cost`,
+    ``,
+    `- status: ${r.cost.status}`,
+    `- observed_usd: ${r.cost.observed_usd}`,
+    `- estimated_usd: ${r.cost.estimated_usd ?? "null"}`,
+    `- max_cost_usd: ${r.cost.max_cost_usd}`,
+    `- allow_high_cost: ${r.cost.allow_high_cost}`,
+    ``,
+    `| adapter_name | provider | model | calls | input_tokens | output_tokens | observed_usd |`,
+    `|---|---|---|---:|---:|---:|---:|`,
+    adapterRows,
+    ``,
+    `## Hard invariants`,
+    ``,
+    `| key | status | count |`,
+    `|---|---|---:|`,
+    hi,
+    ``,
+    `## Per-account`,
+    ``,
+    `| account_id | classification | excerpt_proposals | accepted_excerpts | claim_proposals | object_proposals | observed_usd |`,
+    `|---|---|---:|---:|---:|---:|---:|`,
+    acct,
+    ``,
+  ].join("\n");
+}
+
 // ----------------------- Main CLI entrypoint -----------------------
 
 export const MODEL_MODE_REFUSAL_MESSAGE =
   "model mode is not implemented/enabled in this PR; run fixture mode only";
 
+export const MODEL_MODE_REAL_ADAPTER_REFUSAL =
+  "model mode requires --adapter fake in this PR; real model adapter is not enabled and A.7 remains BLOCKED per docs/BLOCKERS.md";
+
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
 
   if (args.mode === "model") {
-    // HARD REFUSAL: do NOT route to FakeModelAdapter. Do NOT touch the
-    // filesystem. Do NOT import or instantiate any provider adapter. Exit
-    // nonzero.
-    console.error(`[run-account-graph-validation] ${MODEL_MODE_REFUSAL_MESSAGE}`);
-    return 1;
+    // Budget config validation BEFORE any adapter is touched. Plan §6: any
+    // --max-cost > 25 requires explicit override.
+    const budgetErr = validateBudgetConfig({
+      max_cost_usd: args.maxCostUsd,
+      allow_high_cost: args.allowHighCost,
+    });
+    if (budgetErr) {
+      console.error(`[run-account-graph-validation] ${budgetErr}`);
+      return 1;
+    }
+
+    if (args.adapter !== "fake") {
+      // HARD REFUSAL: do NOT route to any adapter. Do NOT touch the
+      // filesystem. Do NOT import or instantiate any provider adapter.
+      // Print both the legacy and the explicit refusal messages so any
+      // automation that grepped the legacy one still matches.
+      console.error(`[run-account-graph-validation] ${MODEL_MODE_REFUSAL_MESSAGE}`);
+      console.error(`[run-account-graph-validation] ${MODEL_MODE_REAL_ADAPTER_REFUSAL}`);
+      return 1;
+    }
+
+    // Model mode with explicit fake adapter. Print non-production banner.
+    console.log(
+      `[run-account-graph-validation] mode=model adapter=fake (NON-PRODUCTION) — ${NON_PRODUCTION_NOTICE}`,
+    );
+    const fake = new FakeDeterministicAdapter();
+    const result = await runModelModeOrchestrator({
+      outDir: args.out,
+      adapter: fake,
+      maxCostUsd: args.maxCostUsd,
+      allowHighCost: args.allowHighCost,
+      limit: args.limit,
+    });
+    console.log(
+      `[run-account-graph-validation] mode=model adapter=fake classification=${result.report.classification} cost_usd=${result.report.cost.observed_usd} out=${args.out}`,
+    );
+    return result.report.classification === "fail" ? 2 : 0;
   }
 
-  // Fixture mode. Use the FakeModelAdapter through the ModelAdapter interface.
+  // Fixture mode. Use the FakeModelAdapter through the local ModelAdapter interface.
   const adapter: ModelAdapter = new FakeModelAdapter();
   // Reject obviously-invalid corpus override paths (defense in depth; the
   // synthetic fixture corpus is the only allowed input).
