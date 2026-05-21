@@ -1,0 +1,71 @@
+{
+  "account_name": "Synthetic Account C (chat_patch)",
+  "segment": "synthetic-chat-patch",
+  "generated_at": "2026-05-21T00:00:00.000Z",
+  "audience": "internal",
+  "snapshot": "Synthetic fixture account C. Designed to exercise the chat-patch object-level provenance pattern plus procurement/governance complexity. No real organization, no production data.",
+  "priority_summary": "Synthetic priority summary focused on procurement and chat-appended context.",
+  "recent_signals": [
+    { "text": "Synthetic signal: procurement office opens new RFP window", "source": "https://example.com/synthetic/procurement-portal", "confidence": "High" }
+  ],
+  "ai_tech_maturity": { "rating": 3, "rationale": "Synthetic rationale; fixture-only." },
+  "top_initiatives": [
+    { "title": "Synthetic procurement modernization", "detail": "Synthetic detail describing a fictional procurement modernization initiative", "confidence": "High", "source": "https://example.com/synthetic/procurement-initiative" }
+  ],
+  "technical_footprint": {
+    "ai_in_production": [],
+    "active_pilots": [],
+    "cloud_platforms": ["synthetic-cloud-2"],
+    "data_infrastructure": "Synthetic data infra",
+    "clinical_platforms": "Not found",
+    "analytics_bi_stack": "Synthetic analytics",
+    "build_vs_buy_posture": "Mixed (synthetic)",
+    "competitive_incumbents": []
+  },
+  "programs_procurement": {
+    "modernization_grants": ["Synthetic modernization grant reference"],
+    "consortium_purchasing": ["Synthetic consortium reference"],
+    "active_rfps_contracts": ["Synthetic RFP 1", "Synthetic RFP 2"],
+    "ai_governance_policy": "Synthetic AI governance policy draft (fixture-only)",
+    "public_ai_use_cases": ["Synthetic public AI use case"]
+  },
+  "personas": [
+    { "name": "Synthetic Procurement Lead", "title": "Director of Synthetic Procurement", "priority": "high", "opener": "Synthetic opener about procurement", "confidence": "Medium", "source": "https://example.com/synthetic/procurement-persona" }
+  ],
+  "buying_path": "Synthetic procurement-led buying path description.",
+  "first_angle": "Synthetic first-angle for procurement coverage.",
+  "risks": ["Synthetic governance risk reference"],
+  "competitive_signals": [],
+  "next_action": "Synthetic next-action for procurement coverage.",
+  "extensions": [
+    {
+      "kind": "card",
+      "id": "synthetic_chat_card_1",
+      "title": "Synthetic chat-patch card",
+      "source": "chat",
+      "created_at": "2026-05-21T00:00:00.000Z",
+      "why_included": "Synthetic chat-appended context exercising chat_patch_object_level provenance.",
+      "confidence": "Medium",
+      "sources": [],
+      "body": "Synthetic chat-patch body line describing object-level context appended via chat. Fixture-only content."
+    },
+    {
+      "kind": "list",
+      "id": "synthetic_chat_list_1",
+      "title": "Synthetic chat-patch list",
+      "source": "chat",
+      "created_at": "2026-05-21T00:00:00.000Z",
+      "why_included": "Synthetic chat-appended bullet list exercising chat_patch_object_level provenance.",
+      "confidence": "Medium",
+      "sources": [],
+      "items": [
+        "Synthetic chat-appended bullet one",
+        "Synthetic chat-appended bullet two",
+        "Synthetic chat-appended bullet three"
+      ]
+    }
+  ],
+  "sources": [
+    { "title": "Synthetic procurement source", "url": "https://example.com/synthetic/procurement-source", "accessed": "2026-05-21" }
+  ]
+}

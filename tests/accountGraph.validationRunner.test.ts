@@ -141,7 +141,7 @@ test("fixture mode emits report.md, report.json, paired-baseline.json", async ()
   }
 });
 
-test("paired-baseline.json is the placeholder structure (no synthetic measured baseline)", async () => {
+test("paired-baseline.json is a measured synthetic fixture baseline (not placeholder)", async () => {
   const mod = require(RUNNER_PATH);
   const outDir = makeTmpOut();
   try {
@@ -150,12 +150,19 @@ test("paired-baseline.json is the placeholder structure (no synthetic measured b
       adapter: new mod.FakeModelAdapter(),
     });
     const paired = JSON.parse(readFileSync(result.artifacts.pairedBaselinePath, "utf8"));
-    assert.equal(paired.fixture_placeholder, true);
+    assert.equal(paired.fixture_placeholder, false);
     assert.equal(paired.mode, "fixture");
-    assert.deepEqual(paired.accounts, []);
-    assert.deepEqual(paired.metrics.per_account, []);
-    assert.equal(paired.metrics.aggregate.count, 0);
-    assert.ok(typeof paired.notes === "string" && paired.notes.length > 0);
+    assert.equal(paired.corpus_kind, "synthetic_fixture");
+    assert.ok(typeof paired.corpus_id === "string" && paired.corpus_id.length > 0);
+    assert.ok(typeof paired.corpus_label === "string" && paired.corpus_label.length > 0);
+    assert.ok(
+      typeof paired.caveat === "string" && /synthetic/i.test(paired.caveat) && /not production/i.test(paired.caveat),
+      `caveat must say synthetic and not production; got: ${paired.caveat}`,
+    );
+    assert.ok(Array.isArray(paired.accounts));
+    assert.ok(paired.accounts.length > 0, "accounts must contain measured synthetic baselines");
+    assert.ok(paired.accounts.length <= 3, "accounts must be 1..3");
+    assert.equal(paired.aggregate.account_count, paired.accounts.length);
     assert.ok(typeof paired.generated_at === "string");
   } finally {
     rmSync(outDir, { recursive: true, force: true });
@@ -352,4 +359,187 @@ test("classifier: fixture-mode happy path (observed $0, no fails) classifies as 
     hard_invariants: hi,
   });
   assert.equal(result, "pass");
+});
+
+// ----------------------- Phase A.7 Task 3 -----------------------
+
+test("selectFixtureCorpus selects 1..3 synthetic fixture accounts by default", () => {
+  const mod = require(RUNNER_PATH);
+  const sel = mod.selectFixtureCorpus();
+  assert.equal(sel.kind, "synthetic_fixture");
+  assert.ok(typeof sel.id === "string" && sel.id.length > 0);
+  assert.ok(typeof sel.label === "string" && /synthetic/i.test(sel.label));
+  assert.ok(sel.entries.length >= 1 && sel.entries.length <= 3);
+  for (const e of sel.entries) {
+    assert.ok(typeof e.account_label === "string" && e.account_label.length > 0);
+    assert.ok(typeof e.fixture_id === "string");
+    assert.ok(typeof e.selection_rationale === "string" && e.selection_rationale.length > 0);
+    assert.ok(Array.isArray(e.criteria_covered) && e.criteria_covered.length > 0);
+  }
+});
+
+test("selectFixtureCorpus honors --limit and clamps to 1..3", () => {
+  const mod = require(RUNNER_PATH);
+  assert.equal(mod.selectFixtureCorpus(1).entries.length, 1);
+  assert.equal(mod.selectFixtureCorpus(2).entries.length, 2);
+  assert.equal(mod.selectFixtureCorpus(3).entries.length, 3);
+  assert.ok(mod.selectFixtureCorpus(10).entries.length <= 3);
+  assert.ok(mod.selectFixtureCorpus(0).entries.length >= 1);
+});
+
+test("computeCriteriaCoverage produces explicit covered + uncovered with reasons", () => {
+  const mod = require(RUNNER_PATH);
+  const sel = mod.selectFixtureCorpus();
+  const cov = mod.computeCriteriaCoverage(sel.entries);
+  assert.equal(cov.synthetic_only, true);
+  assert.ok(Array.isArray(cov.covered));
+  assert.ok(Array.isArray(cov.uncovered));
+  // The plan §2 criteria set is finite and well-known; ensure both arrays
+  // partition it (no overlap, full union).
+  const planCriteria: string[] = mod.PLAN_S2_CRITERIA.slice();
+  const all = new Set<string>([...cov.covered, ...cov.uncovered.map((u: { criterion: string }) => u.criterion)]);
+  for (const c of planCriteria) assert.ok(all.has(c), `criterion ${c} must appear in covered or uncovered`);
+  for (const u of cov.uncovered) {
+    assert.ok(typeof u.reason === "string" && u.reason.length > 0, "uncovered must include a reason");
+  }
+  // The synthetic corpus must cover at least one criterion concretely.
+  assert.ok(cov.covered.length >= 1);
+});
+
+test("fixture orchestrator computes paired A.6 baseline metrics per synthetic account and aggregate", async () => {
+  const mod = require(RUNNER_PATH);
+  const outDir = makeTmpOut();
+  try {
+    const result = await mod.runFixtureOrchestrator({
+      outDir,
+      adapter: new mod.FakeModelAdapter(),
+    });
+    const paired = result.paired;
+    assert.equal(paired.fixture_placeholder, false);
+    assert.equal(paired.corpus_kind, "synthetic_fixture");
+    assert.ok(paired.accounts.length >= 1 && paired.accounts.length <= 3);
+    for (const a of paired.accounts) {
+      assert.equal(typeof a.account_label, "string");
+      assert.equal(typeof a.fixture_id, "string");
+      assert.equal(typeof a.selection_rationale, "string");
+      assert.ok(Array.isArray(a.criteria_covered));
+      assert.equal(typeof a.claims, "number");
+      assert.equal(typeof a.objects, "number");
+      assert.equal(typeof a.classification, "string");
+      assert.equal(typeof a.confidence_downgrades, "number");
+      assert.equal(typeof a.orphan_source_documents, "number");
+      assert.equal(typeof a.parity_coverage_numerator, "number");
+      assert.equal(typeof a.parity_coverage_denominator, "number");
+      assert.equal(typeof a.dropped_material_count, "number");
+      assert.equal(typeof a.validator_errors, "number");
+      assert.equal(typeof a.validator_warnings, "number");
+      assert.equal(typeof a.provenance_gaps, "number");
+    }
+    // Aggregate equals sums.
+    const agg = paired.aggregate;
+    const sumClaims = paired.accounts.reduce((s: number, a: { claims: number }) => s + a.claims, 0);
+    const sumObjects = paired.accounts.reduce((s: number, a: { objects: number }) => s + a.objects, 0);
+    assert.equal(agg.account_count, paired.accounts.length);
+    assert.equal(agg.claims, sumClaims);
+    assert.equal(agg.objects, sumObjects);
+    assert.ok(typeof agg.classification_counts === "object");
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("report.json carries paired_baseline reference, criteria coverage, synthetic-only + production-gate notes", async () => {
+  const mod = require(RUNNER_PATH);
+  const outDir = makeTmpOut();
+  try {
+    const result = await mod.runFixtureOrchestrator({
+      outDir,
+      adapter: new mod.FakeModelAdapter(),
+    });
+    const j = JSON.parse(readFileSync(result.artifacts.reportJsonPath, "utf8"));
+    assert.ok(j.paired_baseline);
+    assert.equal(j.paired_baseline.corpus_kind, "synthetic_fixture");
+    assert.ok(typeof j.paired_baseline.path === "string");
+    assert.ok(typeof j.paired_baseline.account_count === "number" && j.paired_baseline.account_count >= 1);
+    assert.ok(j.selection_criteria_coverage);
+    assert.equal(j.selection_criteria_coverage.synthetic_only, true);
+    assert.ok(typeof j.synthetic_fixture_only_note === "string");
+    assert.ok(/synthetic fixture/i.test(j.synthetic_fixture_only_note));
+    assert.ok(typeof j.real_production_gate_account_baseline_status === "string");
+    assert.ok(/future local-only/i.test(j.real_production_gate_account_baseline_status));
+    assert.ok(/blocked/i.test(j.a7_blocker_status));
+    // Cost stays $0 in fixture mode.
+    assert.equal(j.cost.observed_usd, 0);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("report.md mentions synthetic-only, production-gate caveat, blocked, paired tables, per-account criteria", async () => {
+  const mod = require(RUNNER_PATH);
+  const outDir = makeTmpOut();
+  try {
+    const result = await mod.runFixtureOrchestrator({
+      outDir,
+      adapter: new mod.FakeModelAdapter(),
+    });
+    const md = readFileSync(result.artifacts.reportMdPath, "utf8");
+    assert.ok(/Synthetic fixture coverage only/i.test(md), "report.md must say synthetic-only");
+    assert.ok(/future local-only work/i.test(md), "report.md must say production gate-account baseline is future local-only work");
+    assert.ok(/remain blocked per docs\/BLOCKERS\.md/i.test(md), "report.md must say A.7 remains blocked");
+    assert.ok(/Paired A\.6 baseline/i.test(md));
+    assert.ok(/Selection criteria coverage/i.test(md));
+    assert.ok(/account_a_public_web/.test(md));
+    assert.ok(/parity_coverage \(num\/denom\)/.test(md));
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("soft metrics emit explicit numerator and denominator (no unlabeled orphan percentage)", async () => {
+  const mod = require(RUNNER_PATH);
+  const outDir = makeTmpOut();
+  try {
+    const result = await mod.runFixtureOrchestrator({
+      outDir,
+      adapter: new mod.FakeModelAdapter(),
+    });
+    const j = JSON.parse(readFileSync(result.artifacts.reportJsonPath, "utf8"));
+    const byName: Record<string, { notes: string; value: number | null }> = {};
+    for (const m of j.soft_metrics) byName[m.name] = m;
+    assert.ok(byName.orphan_source_documents_per_claim, "orphan rate must be present");
+    assert.ok(
+      /numerator=/i.test(byName.orphan_source_documents_per_claim.notes) &&
+        /denominator=/i.test(byName.orphan_source_documents_per_claim.notes),
+      `orphan metric must include explicit numerator and denominator; got: ${byName.orphan_source_documents_per_claim.notes}`,
+    );
+    // No metric should be named just "orphan_percentage" or "orphan_rate" without labels.
+    for (const m of j.soft_metrics) {
+      assert.notEqual(m.name, "orphan_percentage", "unlabeled orphan percentage is forbidden");
+    }
+    assert.ok(byName.parity_coverage);
+    assert.ok(
+      /numerator=/i.test(byName.parity_coverage.notes) && /denominator=/i.test(byName.parity_coverage.notes),
+    );
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("paired baseline accepts a custom corpus via orchestrator option and respects limit", async () => {
+  const mod = require(RUNNER_PATH);
+  const outDir = makeTmpOut();
+  try {
+    const onlyOne = mod.SYNTHETIC_FIXTURE_CORPUS.slice(0, 1);
+    const result = await mod.runFixtureOrchestrator({
+      outDir,
+      adapter: new mod.FakeModelAdapter(),
+      corpusEntries: onlyOne,
+      limit: 1,
+    });
+    assert.equal(result.paired.accounts.length, 1);
+    assert.equal(result.paired.aggregate.account_count, 1);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
 });

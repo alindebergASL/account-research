@@ -1,0 +1,50 @@
+{
+  "account_name": "Synthetic Account B (non_url_sources)",
+  "segment": "synthetic-non-url",
+  "generated_at": "2026-05-21T00:00:00.000Z",
+  "audience": "internal",
+  "snapshot": "Synthetic fixture account B. Designed to exercise the weak / non-URL source selection criterion, plus legacy high-confidence claims that cannot be backed by an excerpt. No real organization, no production data.",
+  "priority_summary": "Synthetic priority summary referencing non-URL analyst-conversation context only.",
+  "recent_signals": [
+    { "text": "Synthetic signal: analyst conversation suggests budget shift", "source": "Analyst conversation, Q1 (synthetic)", "confidence": "High" },
+    { "text": "Synthetic signal: relationship memory note about org change", "source": "Relationship memory note (synthetic)", "confidence": "High" },
+    { "text": "Synthetic signal: industry-context inference about consolidation", "source": "Industry context (synthetic)", "confidence": "High" },
+    { "text": "Synthetic signal: hallway conversation about leadership change", "source": "Internal note (synthetic)", "confidence": "High" },
+    { "text": "Synthetic signal: rumored vendor renewal", "source": "Trade chatter (synthetic)", "confidence": "High" },
+    { "text": "Synthetic signal: legacy memo references modernization plan", "source": "Legacy memo (synthetic)", "confidence": "High" }
+  ],
+  "ai_tech_maturity": { "rating": 2, "rationale": "Synthetic rationale based on non-URL context only; fixture-only." },
+  "top_initiatives": [
+    { "title": "Synthetic data initiative", "detail": "Synthetic initiative detail drawn from analyst-call context only", "confidence": "High", "source": "Analyst call (synthetic)" },
+    { "title": "Synthetic workflow modernization", "detail": "Synthetic initiative detail from industry context", "confidence": "High", "source": "Industry context (synthetic)" },
+    { "title": "Synthetic consolidation play", "detail": "Synthetic detail about a fictional consolidation initiative", "confidence": "High", "source": "Relationship memory (synthetic)" }
+  ],
+  "technical_footprint": {
+    "ai_in_production": ["synthetic AI pilot A recalled from analyst conversation", "synthetic AI pilot B referenced in memo", "synthetic AI pilot C from industry context"],
+    "active_pilots": ["synthetic pilot 1", "synthetic pilot 2", "synthetic pilot 3"],
+    "cloud_platforms": ["synthetic-cloud-x", "synthetic-cloud-y"],
+    "data_infrastructure": "Synthetic warehouse described in non-URL memo",
+    "clinical_platforms": "Not found",
+    "analytics_bi_stack": "Synthetic BI (memo)",
+    "build_vs_buy_posture": "Build-first (synthetic memo)",
+    "competitive_incumbents": ["synthetic competitor 1", "synthetic competitor 2", "synthetic competitor 3"]
+  },
+  "programs_procurement": {
+    "modernization_grants": ["Synthetic grant 1", "Synthetic grant 2", "Synthetic grant 3", "Synthetic grant 4"],
+    "consortium_purchasing": ["Synthetic consortium 1", "Synthetic consortium 2", "Synthetic consortium 3"],
+    "active_rfps_contracts": ["Synthetic procurement reference 1", "Synthetic procurement reference 2"],
+    "ai_governance_policy": "Synthetic policy reference recalled from analyst conversation",
+    "public_ai_use_cases": ["Synthetic use case 1", "Synthetic use case 2", "Synthetic use case 3", "Synthetic use case 4", "Synthetic use case 5"]
+  },
+  "personas": [
+    { "name": "Synthetic Persona X", "title": "VP Synthetic", "priority": "high", "opener": "Synthetic opener", "confidence": "High", "source": "Analyst conversation (synthetic)" },
+    { "name": "Synthetic Persona Y", "title": "Director Synthetic", "priority": "medium", "opener": "Synthetic opener 2", "confidence": "High", "source": "Relationship memory (synthetic)" }
+  ],
+  "buying_path": "Synthetic buying path drawn from non-URL relationship context only.",
+  "first_angle": "Synthetic first-angle recommendation.",
+  "risks": ["Synthetic risk 1", "Synthetic risk 2", "Synthetic risk 3", "Synthetic risk 4", "Synthetic risk 5"],
+  "competitive_signals": ["Synthetic competitive signal 1", "Synthetic competitive signal 2", "Synthetic competitive signal 3", "Synthetic competitive signal 4"],
+  "next_action": "Synthetic next-action placeholder.",
+  "extensions": [],
+  "sources": []
+}
