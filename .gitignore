@@ -3,4 +3,5 @@ __pycache__/
 out/*.pdf
 out/*.docx
 out/account-graph-backfill/
+out/account-graph-validation/
 .venv/
