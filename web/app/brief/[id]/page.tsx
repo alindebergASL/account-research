@@ -8,6 +8,7 @@ import BriefCanvas from "@/components/BriefCanvas";
 import ReadOnlyCanvasView from "@/components/canvas/ReadOnlyCanvasView";
 import { buildReadOnlyCanvasFromBrief } from "@/lib/canvas/fromBrief";
 import type { Canvas } from "@/lib/canvas/schema";
+import CommentsSection from "./CommentsSection";
 
 type Access = {
   is_owner: boolean;
@@ -31,6 +32,23 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   // opaque — it cannot read the env var directly and shouldn't infer
   // anything from it beyond "render the toggle or not".
   const [canvasPreview, setCanvasPreview] = useState<boolean>(false);
+  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.user?.id) {
+          setMe({ id: data.user.id, role: data.user.role });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const canvas = useMemo(
     () =>
       persistedCanvas ??
@@ -202,6 +220,13 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           canManage={access.can_manage}
           lastRefreshedAt={lastRefreshedAt}
           versionsCount={versionsCount}
+        />
+      )}
+      {me && (
+        <CommentsSection
+          briefId={params.id}
+          currentUserId={me.id}
+          isAdmin={me.role === "admin"}
         />
       )}
     </main>
