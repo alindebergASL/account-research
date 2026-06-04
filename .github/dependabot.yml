@@ -1,0 +1,52 @@
+# Dependabot config — weekly dependency PRs.
+#
+# Scope:
+#   - npm packages in web/ (the Next.js app)
+#   - GitHub Actions versions in .github/workflows/
+#
+# Output is grouped to reduce PR noise: @types/* into one PR per ecosystem,
+# everything else into individual PRs. Open-PR cap stays modest so the
+# Actions runner queue and review surface don't get spammed.
+#
+# Security updates are not throttled by these limits per the GitHub policy
+# they bypass open-pull-requests-limit so vulnerable transitives still get
+# attention promptly.
+
+version: 2
+updates:
+  # Next.js app
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "npm"
+    groups:
+      types:
+        patterns:
+          - "@types/*"
+      eslint:
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@typescript-eslint/*"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # GitHub Actions used by .github/workflows/ci.yml
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
