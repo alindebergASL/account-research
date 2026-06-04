@@ -1,0 +1,133 @@
+# GitHub Actions CI for account-research
+#
+# SAFETY POLICY (do not relax without owner approval):
+#   - This workflow MUST NOT set ANTHROPIC_API_KEY, OPENAI_API_KEY, RESEND_API_KEY,
+#     or any other paid-provider secret. CI does not call real model adapters.
+#   - This workflow MUST NOT invoke `web/scripts/run-account-graph-validation.ts`
+#     with `--mode model --adapter real`. Only `--mode fixture` and
+#     `--mode model --adapter fake` are reachable from CI, and even those are
+#     not wired up here (out of scope for this PR).
+#   - A.7 graph-first writes remain BLOCKED per docs/BLOCKERS.md. CI does
+#     nothing that touches that gate.
+#   - References:
+#       docs/BLOCKERS.md
+#       docs/runbooks/phase-a7-paid-model-validation.md
+#
+# Triggers: pull_request to any branch, push to main.
+# Concurrency: per-ref, cancel in-progress duplicate runs.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install deps
+        working-directory: web
+        run: npm ci
+      - name: TypeScript check
+        working-directory: web
+        run: npm run typecheck
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    # NON-BLOCKING: `next lint` is not initialized on main (interactive setup
+    # prompt; eslint-config-next has a peer-dep conflict with the pinned
+    # eslint@8). Owner can flip continue-on-error to false after ESLint is
+    # configured. See PR description for details.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install deps
+        working-directory: web
+        run: npm ci
+      - name: Lint
+        working-directory: web
+        # `< /dev/null` so the interactive ESLint init prompt fails fast in
+        # CI rather than hanging the job.
+        run: npm run lint < /dev/null
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # tests/accountGraph.localProductionBaseline.test.ts asserts no
+          # production-derived fixtures are added vs origin/main, which
+          # requires full history to resolve the base ref.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install deps (builds better-sqlite3 native module)
+        working-directory: web
+        # ubuntu-latest already has build-essential + python3; npm ci handles
+        # the better-sqlite3 native compile cleanly on this image.
+        run: npm ci
+      - name: Run tests (tsx + node:test)
+        working-directory: web
+        run: npx tsx --test ../tests/*.ts
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install deps
+        working-directory: web
+        run: npm ci
+      - name: Next.js build
+        working-directory: web
+        # No runtime env vars are required for `next build`; runtime routes
+        # read provider keys lazily at request time, not at build time. If
+        # this ever changes, flip continue-on-error rather than adding
+        # secrets here.
+        run: npm run build
+
+  safety-grep:
+    name: safety-grep
+    # Only on PRs.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run safety grep against PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/safety-grep.sh "$BASE_SHA" "$HEAD_SHA"
