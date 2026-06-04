@@ -6,3 +6,6 @@ out/account-graph-backfill/
 out/account-graph-validation/
 out/local-prod-baseline/
 .venv/
+
+# Claude Code agent worktrees (transient, per-session)
+.claude/worktrees/
