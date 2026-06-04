@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, type BriefCommentRow } from "@/lib/db";
+import { db } from "@/lib/db";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
 import { notifyCommentCreated } from "@/lib/commentNotifications";
+import {
+  listCommentRowsForBrief,
+  rowToAuthenticatedDto,
+  type CommentListRow,
+} from "@/lib/briefComments";
 
 export const runtime = "nodejs";
 
@@ -15,41 +20,10 @@ function authError(e: unknown) {
   return null;
 }
 
-type CommentListRow = BriefCommentRow & {
-  author_display_name: string | null;
-  author_email: string;
-};
-
-type CommentDto = {
-  id: string;
-  parent_id: string | null;
-  body: string | null;
-  ai_assisted: boolean;
-  created_at: number;
-  edited_at: number | null;
-  deleted_at: number | null;
-  author: { id: string; display_name: string | null; email: string };
-};
-
-function rowToDto(r: CommentListRow): CommentDto {
-  const deleted = r.deleted_at !== null;
-  return {
-    id: r.id,
-    parent_id: r.parent_id,
-    body: deleted ? null : r.body,
-    ai_assisted: !!r.ai_assisted,
-    created_at: r.created_at,
-    edited_at: r.edited_at,
-    deleted_at: r.deleted_at,
-    author: deleted
-      ? { id: r.user_id, display_name: null, email: "" }
-      : {
-          id: r.user_id,
-          display_name: r.author_display_name,
-          email: r.author_email,
-        },
-  };
-}
+// Local alias preserves the existing call sites in this file while the
+// underlying mapper lives in @/lib/briefComments so it can be reused by
+// the public share-view list endpoint.
+const rowToDto = rowToAuthenticatedDto;
 
 export async function GET(
   req: NextRequest,
@@ -67,16 +41,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const rows = db()
-    .prepare(
-      `SELECT c.*, u.display_name AS author_display_name, u.email AS author_email
-         FROM brief_comments c
-         JOIN users u ON u.id = c.user_id
-        WHERE c.brief_id = ?
-        ORDER BY c.created_at ASC`,
-    )
-    .all(params.id) as CommentListRow[];
-
+  const rows = listCommentRowsForBrief(params.id);
   return NextResponse.json({ comments: rows.map(rowToDto) });
 }
 
