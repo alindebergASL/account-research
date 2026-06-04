@@ -432,7 +432,50 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "015_brief_comments",
+    // Human-to-human comments thread on a brief. Distinct from `brief_chats`
+    // (which is the AI-edit chat). Comments are one-level threaded via
+    // `parent_id`. Soft-delete (`deleted_at`) keeps rows so thread structure
+    // is preserved when a parent is deleted but children remain visible.
+    // `ai_assisted` is purely an authorship marker — set to 1 when the user
+    // posted text that came from the AI-assist helper. AI-assist itself does
+    // not write rows; it only returns draft text the user can post.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS brief_comments (
+          id           TEXT PRIMARY KEY,
+          brief_id     TEXT NOT NULL,
+          user_id      TEXT NOT NULL,
+          parent_id    TEXT,
+          body         TEXT NOT NULL,
+          ai_assisted  INTEGER NOT NULL DEFAULT 0,
+          created_at   INTEGER NOT NULL,
+          edited_at    INTEGER,
+          deleted_at   INTEGER,
+          FOREIGN KEY (brief_id)  REFERENCES briefs(id)         ON DELETE CASCADE,
+          FOREIGN KEY (user_id)   REFERENCES users(id)          ON DELETE CASCADE,
+          FOREIGN KEY (parent_id) REFERENCES brief_comments(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_comments_brief_created
+          ON brief_comments(brief_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_comments_parent
+          ON brief_comments(parent_id);
+      `),
+  },
 ];
+
+export type BriefCommentRow = {
+  id: string;
+  brief_id: string;
+  user_id: string;
+  parent_id: string | null;
+  body: string;
+  ai_assisted: 0 | 1;
+  created_at: number;
+  edited_at: number | null;
+  deleted_at: number | null;
+};
 
 // Row types for the Hermes substrate. Kept here next to the rest of the
 // row type definitions so callers can import them from "@/lib/db" like
