@@ -77,6 +77,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tests/accountGraph.localProductionBaseline.test.ts asserts no
+          # production-derived fixtures are added vs origin/main, which
+          # requires full history to resolve the base ref.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
