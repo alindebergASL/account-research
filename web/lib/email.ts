@@ -65,6 +65,28 @@ export type EmailSendResult =
   | { ok: true }
   | { ok: false; code: "not_configured" | "send_failed"; error: string };
 
+// Test seam: substitute the mail-send step without a real SMTP transport.
+// `null` (default) = use the real transport path. When set, the mailer is
+// invoked with the exact args the real transport would receive AND the
+// "not configured" gate is bypassed so tests don't need SMTP env vars.
+export type TestMailer = (args: {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}) => Promise<void>;
+
+let _testMailer: TestMailer | null = null;
+
+export function __setTestMailer(m: TestMailer | null) {
+  _testMailer = m;
+}
+
+export function __getTestMailer(): TestMailer | null {
+  return _testMailer;
+}
+
 async function send(args: {
   to: string;
   subject: string;
@@ -73,6 +95,26 @@ async function send(args: {
   scope: string;
   id: string;
 }): Promise<EmailSendResult> {
+  if (_testMailer) {
+    const from = (readSmtpEnv().from || "test@example.com");
+    try {
+      await _testMailer({
+        from,
+        to: args.to,
+        subject: args.subject,
+        text: args.text,
+        html: args.html,
+      });
+      return { ok: true };
+    } catch (err: any) {
+      const msg = String(err?.message ?? err).slice(0, 500);
+      // eslint-disable-next-line no-console
+      console.error(
+        `[email] send_failed scope=${args.scope} id=${args.id} err=${msg}`,
+      );
+      return { ok: false, code: "send_failed", error: msg };
+    }
+  }
   const t = transport();
   if (!t) {
     noteSkippedNotConfigured(args.scope, args.id);
@@ -183,6 +225,27 @@ export async function sendShareLinkEmail(args: {
 <p><a href="${args.linkUrl}">Open public brief</a></p>
 <p>— AccountBriefBuilder</p>`,
   });
+}
+
+export async function sendCommentNotificationEmail(args: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  scopeId: string;
+}): Promise<EmailSendResult> {
+  return send({
+    to: args.to,
+    scope: "comment",
+    id: args.scopeId,
+    subject: args.subject,
+    text: args.text,
+    html: args.html,
+  });
+}
+
+export function escapeHtmlExternal(s: string): string {
+  return escapeHtml(s);
 }
 
 function formatExpiry(ts: number): string {

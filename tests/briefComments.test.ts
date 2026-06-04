@@ -24,6 +24,8 @@ const aiMod = require("../web/lib/briefCommentsAi") as typeof import("../web/lib
 const commentsRoute = require("../web/app/api/briefs/[id]/comments/route") as typeof import("../web/app/api/briefs/[id]/comments/route");
 const commentRoute = require("../web/app/api/briefs/[id]/comments/[commentId]/route") as typeof import("../web/app/api/briefs/[id]/comments/[commentId]/route");
 const assistRoute = require("../web/app/api/briefs/[id]/comments/ai-assist/route") as typeof import("../web/app/api/briefs/[id]/comments/ai-assist/route");
+const emailMod = require("../web/lib/email") as typeof import("../web/lib/email");
+const notifyMod = require("../web/lib/commentNotifications") as typeof import("../web/lib/commentNotifications");
 
 // Force initial DB boot so migrations apply.
 initDb();
@@ -460,4 +462,193 @@ test("POSTing with ai_assisted: true persists the flag; GET returns it", async (
   const found = (await jsonOf(listRes)).comments.find((x: any) => x.id === c.id);
   assert.ok(found);
   assert.equal(found.ai_assisted, true);
+});
+
+// ---------------------------------------------------------------------------
+// Comment email notifications (PR #51 follow-up).
+// ---------------------------------------------------------------------------
+
+type SentMail = { to: string; subject: string; text: string; html: string };
+
+function installMailerStub(opts: { throwError?: Error } = {}): {
+  sent: SentMail[];
+} {
+  const sent: SentMail[] = [];
+  emailMod.__setTestMailer(async (args) => {
+    if (opts.throwError) throw opts.throwError;
+    sent.push({
+      to: args.to,
+      subject: args.subject,
+      text: args.text,
+      html: args.html,
+    });
+  });
+  return { sent };
+}
+
+async function flushNotify() {
+  const p = notifyMod.__getLastNotifyPromise();
+  if (p) {
+    await p;
+  }
+}
+
+test("notify: top-level comment by non-owner -> owner receives one mail", async () => {
+  const { sent } = installMailerStub();
+  try {
+    // reader-1 posts a top-level on owner-1's brief
+    const res = await commentsRoute.POST(
+      makeReq({ sessionId: readerSession, body: { body: "Hello owner" } }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(res.status, 200);
+    await flushNotify();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, "owner@example.com");
+    assert.ok(/New comment/.test(sent[0].subject));
+    assert.ok(sent[0].text.includes("Hello owner"));
+  } finally {
+    emailMod.__setTestMailer(null);
+  }
+});
+
+test("notify: top-level comment by owner -> no mail (no self-notify)", async () => {
+  const { sent } = installMailerStub();
+  try {
+    const res = await commentsRoute.POST(
+      makeReq({ sessionId: ownerSession, body: { body: "Owner talks to self" } }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(res.status, 200);
+    await flushNotify();
+    assert.equal(sent.length, 0);
+  } finally {
+    emailMod.__setTestMailer(null);
+  }
+});
+
+test("notify: reply -> parent author receives a 'Reply' mail", async () => {
+  const { sent } = installMailerStub();
+  try {
+    // Owner posts parent; reader replies. Parent author (owner) is notified.
+    const parentRes = await commentsRoute.POST(
+      makeReq({ sessionId: ownerSession, body: { body: "Parent body" } }),
+      { params: { id: "brief-1" } },
+    );
+    await flushNotify(); // top-level by owner -> no mail
+    assert.equal(sent.length, 0);
+    const parent = (await jsonOf(parentRes)).comment;
+
+    const childRes = await commentsRoute.POST(
+      makeReq({
+        sessionId: readerSession,
+        body: { body: "Child reply text", parent_id: parent.id },
+      }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(childRes.status, 200);
+    await flushNotify();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, "owner@example.com");
+    assert.ok(/Reply/.test(sent[0].subject));
+    assert.ok(sent[0].text.includes("Child reply text"));
+  } finally {
+    emailMod.__setTestMailer(null);
+  }
+});
+
+test("notify: reply by parent author to own comment -> no mail", async () => {
+  const { sent } = installMailerStub();
+  try {
+    const parentRes = await commentsRoute.POST(
+      makeReq({ sessionId: readerSession, body: { body: "Reader parent" } }),
+      { params: { id: "brief-1" } },
+    );
+    await flushNotify();
+    sent.length = 0; // ignore the top-level notification to owner
+    const parent = (await jsonOf(parentRes)).comment;
+
+    const childRes = await commentsRoute.POST(
+      makeReq({
+        sessionId: readerSession,
+        body: { body: "Reader self-reply", parent_id: parent.id },
+      }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(childRes.status, 200);
+    await flushNotify();
+    assert.equal(sent.length, 0);
+  } finally {
+    emailMod.__setTestMailer(null);
+  }
+});
+
+test("notify: owner with email_notifications_enabled=0 -> no mail", async () => {
+  const { sent } = installMailerStub();
+  try {
+    db()
+      .prepare(`UPDATE users SET email_notifications_enabled = 0 WHERE id = ?`)
+      .run("owner-1");
+    const res = await commentsRoute.POST(
+      makeReq({ sessionId: readerSession, body: { body: "Should be silent" } }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(res.status, 200);
+    await flushNotify();
+    assert.equal(sent.length, 0);
+  } finally {
+    db()
+      .prepare(`UPDATE users SET email_notifications_enabled = 1 WHERE id = ?`)
+      .run("owner-1");
+    emailMod.__setTestMailer(null);
+  }
+});
+
+test("notify: email not configured + no test mailer -> returns silently, no error", async () => {
+  // No test mailer installed -> send() takes the real path; with no SMTP env,
+  // isEmailConfigured() is false -> noop return.
+  emailMod.__setTestMailer(null);
+  const res = await commentsRoute.POST(
+    makeReq({ sessionId: readerSession, body: { body: "Quietly drop" } }),
+    { params: { id: "brief-1" } },
+  );
+  assert.equal(res.status, 200);
+  await flushNotify(); // must not throw
+});
+
+test("notify: sendMail throws -> POST still returns the comment", async () => {
+  installMailerStub({ throwError: new Error("smtp boom") });
+  try {
+    const res = await commentsRoute.POST(
+      makeReq({ sessionId: readerSession, body: { body: "Despite smtp boom" } }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(res.status, 200);
+    const data = await jsonOf(res);
+    assert.equal(data.comment.body, "Despite smtp boom");
+    await flushNotify(); // must not throw
+  } finally {
+    emailMod.__setTestMailer(null);
+  }
+});
+
+test("notify: shared user posts top-level -> only owner is notified", async () => {
+  const { sent } = installMailerStub();
+  try {
+    // reader-1 is a shared user on brief-1; outsider-1 is not.
+    // Confirm fan-out is exactly {owner}, no spam to shared users.
+    const res = await commentsRoute.POST(
+      makeReq({ sessionId: readerSession, body: { body: "From shared user" } }),
+      { params: { id: "brief-1" } },
+    );
+    assert.equal(res.status, 200);
+    await flushNotify();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, "owner@example.com");
+    // Reader (the author) and outsider must NOT be recipients.
+    assert.ok(!sent.some((m) => m.to === "reader@example.com"));
+    assert.ok(!sent.some((m) => m.to === "outsider@example.com"));
+  } finally {
+    emailMod.__setTestMailer(null);
+  }
 });

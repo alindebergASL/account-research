@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, type BriefCommentRow } from "@/lib/db";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
+import { notifyCommentCreated } from "@/lib/commentNotifications";
 
 export const runtime = "nodejs";
 
@@ -158,6 +159,26 @@ export async function POST(
         WHERE c.id = ?`,
     )
     .get(id) as CommentListRow;
+
+  // Fire-and-forget: notification path must never block or fail the POST.
+  // Any error inside notifyCommentCreated is already swallowed there; the
+  // extra .catch is belt-and-suspenders for unexpected sync throws.
+  void notifyCommentCreated({
+    comment: {
+      id: row.id,
+      brief_id: row.brief_id,
+      user_id: row.user_id,
+      parent_id: row.parent_id,
+      body: row.body,
+      created_at: row.created_at,
+    },
+    authorId: user.id,
+    authorDisplayName: row.author_display_name,
+    authorEmail: row.author_email,
+  }).catch((err) =>
+    // eslint-disable-next-line no-console
+    console.error("[comment-notify] failed", err),
+  );
 
   return NextResponse.json({ comment: rowToDto(row) });
 }
