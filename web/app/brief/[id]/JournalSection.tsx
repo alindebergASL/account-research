@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpen,
+  FileText,
   Loader2,
+  Paperclip,
   Pencil,
   Sparkles,
   Trash2,
@@ -15,6 +17,15 @@ type Author = {
   email: string;
 };
 
+type JournalDocument = {
+  id: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  created_at: number;
+  content_preview: string;
+};
+
 type Entry = {
   id: string;
   author_type: "user" | "assistant";
@@ -24,6 +35,7 @@ type Entry = {
   edited_at: number | null;
   deleted_at: number | null;
   author: Author | null;
+  documents?: JournalDocument[];
 };
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
@@ -65,6 +77,8 @@ export default function JournalSection({
   const [composeText, setComposeText] = useState("");
   const [askAi, setAskAi] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const composeRef = useRef<HTMLTextAreaElement>(null);
@@ -116,6 +130,32 @@ export default function JournalSection({
       setError(e?.message || "Failed to post entry");
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function uploadDocument() {
+    if (!selectedFile || uploading) return;
+    setUploading(true);
+    setAiError(null);
+    try {
+      const form = new FormData();
+      form.set("file", selectedFile);
+      if (composeText.trim()) form.set("body", composeText.trim());
+      const r = await fetch(`/api/briefs/${briefId}/journal/documents`, {
+        method: "POST",
+        body: form,
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      setSelectedFile(null);
+      setComposeText("");
+      await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to upload document");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -258,6 +298,28 @@ export default function JournalSection({
               )}
             </p>
           )}
+
+          {!editing && !deleted && e.documents && e.documents.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {e.documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800"
+                >
+                  <div className="flex items-center gap-2 font-medium text-ink">
+                    <FileText className="size-3.5" />
+                    <span>{doc.filename}</span>
+                    <span className="text-muted font-normal">
+                      · {Math.ceil(doc.byte_size / 1024)} KB
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-muted">
+                    {doc.content_preview}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -315,7 +377,7 @@ export default function JournalSection({
           rows={3}
           className="w-full rounded-lg border border-[var(--line)] p-2 text-sm"
         />
-        <div className="mt-2 flex items-center justify-between gap-3">
+        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <label className="inline-flex items-center gap-2 text-sm text-ink cursor-pointer select-none">
             <input
               type="checkbox"
@@ -328,15 +390,36 @@ export default function JournalSection({
               Ask the assistant
             </span>
           </label>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={posting || !composeText.trim()}
-            className="inline-flex items-center gap-1.5 rounded-md bg-ink text-white px-3 py-1.5 text-sm disabled:opacity-50"
-          >
-            {posting && <Loader2 className="size-3.5 animate-spin" />}
-            {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink hover:bg-slate-50">
+              <Paperclip className="size-3.5" />
+              <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
+              <input
+                type="file"
+                accept=".pdf,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,text/*,application/json,application/xml"
+                className="sr-only"
+                onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={uploadDocument}
+              disabled={uploading || !selectedFile}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink disabled:opacity-50"
+            >
+              {uploading && <Loader2 className="size-3.5 animate-spin" />}
+              {uploading ? "Uploading…" : "Upload document"}
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={posting || !composeText.trim()}
+              className="inline-flex items-center gap-1.5 rounded-md bg-ink text-white px-3 py-1.5 text-sm disabled:opacity-50"
+            >
+              {posting && <Loader2 className="size-3.5 animate-spin" />}
+              {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
+            </button>
+          </div>
         </div>
       </div>
     </section>

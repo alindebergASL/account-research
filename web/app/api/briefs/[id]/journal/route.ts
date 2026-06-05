@@ -14,6 +14,10 @@ import {
   type JournalContextEntry,
 } from "@/lib/journalAi";
 import { friendlyAnthropicError } from "@/lib/anthropicError";
+import {
+  listDocumentsForEntries,
+  listRecentDocumentsForBrief,
+} from "@/lib/journalDocuments";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,7 +40,8 @@ function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
         WHERE j.id = ? AND j.brief_id = ?`,
     )
     .get(entryId, briefId) as JournalListRow;
-  return rowToJournalDto(row);
+  const docs = listDocumentsForEntries([entryId]).get(entryId) ?? [];
+  return rowToJournalDto(row, docs);
 }
 
 export async function GET(
@@ -56,7 +61,10 @@ export async function GET(
   }
 
   const rows = listEntryRowsForBrief(params.id);
-  return NextResponse.json({ entries: rows.map(rowToJournalDto) });
+  const docsByEntry = listDocumentsForEntries(rows.map((r) => r.id));
+  return NextResponse.json({
+    entries: rows.map((r) => rowToJournalDto(r, docsByEntry.get(r.id) ?? [])),
+  });
 }
 
 export async function POST(
@@ -152,6 +160,7 @@ export async function POST(
     const result = await runJournalReply({
       brief_json: briefJson,
       entries: contextEntries,
+      documents: listRecentDocumentsForBrief(params.id),
     });
     const aiEntryId = insertJournalEntry({
       briefId: params.id,
