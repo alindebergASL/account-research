@@ -16,5 +16,5 @@ export function friendlyAnthropicError(err: unknown, label = "Request"): string 
   if (err instanceof Anthropic.AuthenticationError) {
     return "Server is misconfigured (invalid Anthropic API key).";
   }
-  return msg || `${label} failed`;
+  return `${label} failed — please retry in a moment.`;
 }

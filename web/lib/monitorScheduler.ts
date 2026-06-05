@@ -71,6 +71,26 @@ export function enqueueMonitorJob(
   return jobId;
 }
 
+// Disable/cancel semantics: once a user turns monitoring off, active monitor
+// work for that brief must not later mutate the brief or send notifications.
+// Running work is marked cancelled; executeMonitorJob re-checks status after
+// the scan returns before committing any side effects.
+export function cancelActiveMonitorJobsForBrief(briefId: string): number {
+  const res = db()
+    .prepare(
+      `UPDATE research_jobs
+       SET status = 'cancelled', finished_at = ?
+       WHERE intent = 'monitor'
+         AND target_brief_id = ?
+         AND status IN ('queued','running')`,
+    )
+    .run(Date.now(), briefId);
+  return res.changes;
+}
+
+// Backwards-compatible name for callers/tests that only care about queued jobs.
+export const cancelQueuedMonitorJobsForBrief = cancelActiveMonitorJobsForBrief;
+
 // Enqueue a monitor job for every monitor-enabled brief, attributed to the
 // brief owner. Deduped per brief. Returns the number of jobs enqueued.
 export function enqueueAllMonitorJobs(): number {

@@ -65,9 +65,26 @@ export function listEntryRowsForBrief(briefId: string): JournalListRow[] {
          FROM journal_entries j
          LEFT JOIN users u ON u.id = j.user_id
         WHERE j.brief_id = ?
-        ORDER BY j.created_at ASC`,
+        ORDER BY j.created_at ASC, j.rowid ASC`,
     )
     .all(briefId) as JournalListRow[];
+}
+
+export function listRecentEntryRowsForBrief(
+  briefId: string,
+  limit = 24,
+): JournalListRow[] {
+  const rows = db()
+    .prepare(
+      `SELECT j.*, u.display_name AS author_display_name, u.email AS author_email
+         FROM journal_entries j
+         LEFT JOIN users u ON u.id = j.user_id
+        WHERE j.brief_id = ? AND j.deleted_at IS NULL
+        ORDER BY j.created_at DESC, j.rowid DESC
+        LIMIT ?`,
+    )
+    .all(briefId, limit) as JournalListRow[];
+  return rows.reverse();
 }
 
 export function rowToJournalDto(r: JournalListRow): JournalEntryDto {

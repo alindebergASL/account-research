@@ -4,6 +4,7 @@ import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
 import {
   insertJournalEntry,
   listEntryRowsForBrief,
+  listRecentEntryRowsForBrief,
   rowToJournalDto,
   type JournalEntryDto,
   type JournalListRow,
@@ -135,10 +136,10 @@ export async function POST(
     });
   }
 
-  // Build context from the full (non-deleted) feed including the just-posted
-  // user entry. selectJournalContext() bounds this to the most recent slice.
-  const contextEntries: JournalContextEntry[] = listEntryRowsForBrief(params.id)
-    .filter((r) => r.deleted_at === null)
+  // Build context from the recent non-deleted feed including the just-posted
+  // user entry. Query a bounded slice so large journals do not make assistant
+  // requests increasingly expensive over time.
+  const contextEntries: JournalContextEntry[] = listRecentEntryRowsForBrief(params.id)
     .map((r) => ({
       author_type: r.author_type,
       author_display_name:
