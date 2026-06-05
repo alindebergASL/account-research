@@ -882,6 +882,56 @@ test("monitor applies distinct signals that cite the same canonical source URL",
   assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
 });
 
+test("monitor update writes a visible journal note and pre-update brief version", async () => {
+  const owner = ownerId();
+  const briefId = insertBrief(owner, makeBrief("Visible Monitor Update"), true);
+  __setTestMonitorClient({
+    messages: {
+      create: async () => ({
+        stop_reason: "tool_use",
+        content: [{
+          type: "tool_use",
+          name: "record_monitor_findings",
+          id: "findings",
+          input: {
+            has_updates: true,
+            summary: "A new e-filing modernization RFP was published.",
+            patches: [
+              { op: "append", field: "recent_signals", value: { text: "The court published an e-filing modernization RFP.", source: "https://procurement.example.com/efiling-rfp", confidence: "High" } },
+              { op: "append", field: "sources", value: { title: "E-filing modernization RFP", url: "https://procurement.example.com/efiling-rfp", accessed: "2026-06-05" } },
+            ],
+          },
+        }],
+      }),
+    },
+  });
+
+  const before = (db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json;
+  const job = insertMonitorJob(briefId, owner, "Visible Monitor Update");
+  await executeMonitorJob(job);
+  __setTestMonitorClient(null);
+
+  const journal = db()
+    .prepare("SELECT author_type, body FROM journal_entries WHERE brief_id = ?")
+    .get(briefId) as any;
+  assert.equal(journal.author_type, "assistant");
+  assert.match(journal.body, /Daily monitor update/);
+  assert.match(journal.body, /recent signals/i);
+  assert.match(journal.body, /sources/i);
+  assert.match(journal.body, /Applied changes: 2/);
+  assert.match(journal.body, /Previous brief snapshot: v1/);
+  assert.match(journal.body, /A new e-filing modernization RFP was published/);
+
+  const version = db()
+    .prepare("SELECT version_no, reason, triggered_by, refresh_job_id, brief_json FROM brief_versions WHERE brief_id = ?")
+    .get(briefId) as any;
+  assert.equal(version.version_no, 1);
+  assert.equal(version.reason, "pre-monitor");
+  assert.equal(version.triggered_by, owner);
+  assert.equal(version.refresh_job_id, job.id);
+  assert.equal(version.brief_json, before);
+});
+
 test("malformed monitor patch warning allowlists field names and does not log model-controlled field text", async () => {
   const owner = ownerId();
   const briefId = insertBrief(owner, makeBrief("Log Safety Monitor"), true);
