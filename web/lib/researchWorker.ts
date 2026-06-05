@@ -29,7 +29,7 @@ import {
   logBriefRefreshed,
   logJobCompleted,
 } from "./briefEvents";
-import { applyPatches } from "./briefPatches";
+import { applyPatches, type BriefPatch } from "./briefPatches";
 import { runMonitorScan } from "./monitor";
 import { insertJournalEntry } from "./journal";
 import { listBriefEmailRecipients } from "./briefRecipients";
@@ -237,6 +237,33 @@ function markMonitorDone(
   tx();
 }
 
+function applyValidMonitorPatches(
+  base: Brief,
+  patches: BriefPatch[],
+): { brief: Brief; patches: BriefPatch[]; skipped: number } {
+  let current = base;
+  const applied: BriefPatch[] = [];
+  let skipped = 0;
+
+  for (const patch of patches) {
+    try {
+      current = applyPatches(current, [patch]);
+      applied.push(patch);
+    } catch (err: any) {
+      skipped += 1;
+      // A single malformed model-supplied patch should not fail the whole
+      // monitor run. Keep any valid targeted updates and ignore the bad patch.
+      // Do not log patch values; they can contain model/user content.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[worker] monitor skipped malformed patch field=${String(patch?.field ?? "unknown").slice(0, 80)} err=${String(err?.message ?? err).slice(0, 300)}`,
+      );
+    }
+  }
+
+  return { brief: current, patches: applied, skipped };
+}
+
 export async function executeMonitorJob(job: ResearchJobRow) {
   // eslint-disable-next-line no-console
   console.log(
@@ -278,10 +305,20 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
 
-    // Apply the targeted patches; validation rejects malformed output.
-    const updated = applyPatches(parsed.data, findings.patches);
+    // Apply targeted patches that validate; a malformed optional patch from
+    // the model should not fail the whole monitor run or block valid updates.
+    const applied = applyValidMonitorPatches(parsed.data, findings.patches);
+    const updated = applied.brief;
+    if (applied.patches.length === 0) {
+      markMonitorDone(job, now);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[worker] monitor no-op job=${job.id} brief=${briefId} malformed_patches=${applied.skipped}`,
+      );
+      return;
+    }
     const touchedFields = Array.from(
-      new Set(findings.patches.map((p) => p.field)),
+      new Set(applied.patches.map((p) => p.field)),
     );
 
     // Snapshot the pre-update brief so the change is revertable, then persist.
@@ -296,7 +333,7 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     markMonitorDone(job, now, JSON.stringify(updated));
     // eslint-disable-next-line no-console
     console.log(
-      `[worker] monitor update job=${job.id} brief=${briefId} patches=${findings.patches.length}`,
+      `[worker] monitor update job=${job.id} brief=${briefId} patches=${applied.patches.length} malformed_patches=${applied.skipped}`,
     );
 
     logBriefMonitored({
@@ -304,7 +341,7 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       jobId: job.id,
       actorUserId: job.user_id,
       preMonitorVersionId,
-      patchesApplied: findings.patches.length,
+      patchesApplied: applied.patches.length,
       touchedFields,
     });
 
