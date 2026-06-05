@@ -13,6 +13,7 @@ import { BRIEF_CHAT_SYSTEM_PROMPT } from "@/lib/prompt";
 import { applyPatches, type BriefPatch } from "@/lib/briefPatches";
 import { logChatPatchedBrief } from "@/lib/briefEvents";
 import { runChatViaHermes, selectChatPath } from "@/lib/hermes/chatAdapter";
+import { friendlyAnthropicError } from "@/lib/anthropicError";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -46,20 +47,6 @@ const updateBriefTool = {
     required: ["patches", "summary"],
   },
 } as const;
-
-function friendlyError(err: any): string {
-  const msg = String(err?.message ?? err ?? "");
-  if (/credit balance/i.test(msg) && /too low|insufficient/i.test(msg)) {
-    return "Chat is temporarily unavailable — the Anthropic account is out of credits. Top up at https://console.anthropic.com/billing and try again.";
-  }
-  if (err instanceof Anthropic.RateLimitError) {
-    return "Anthropic rate limit reached — please retry in a moment.";
-  }
-  if (err instanceof Anthropic.AuthenticationError) {
-    return "Server is misconfigured (invalid Anthropic API key).";
-  }
-  return msg || "Chat failed";
-}
 
 function loadBrief(briefId: string): BriefT | null {
   const row = db()
@@ -176,7 +163,7 @@ async function handleReadOnlyChat({
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: friendlyError(err) },
+      { error: friendlyAnthropicError(err, "Chat") },
       { status: 500 },
     );
   }
@@ -322,7 +309,7 @@ export async function POST(
         canvas_version: writer ? result.canvas_version : undefined,
       });
     } catch (err: any) {
-      return NextResponse.json({ error: friendlyError(err) }, { status: 500 });
+      return NextResponse.json({ error: friendlyAnthropicError(err, "Chat") }, { status: 500 });
     }
   }
 
@@ -459,7 +446,7 @@ export async function POST(
       brief: appliedPatches.length > 0 ? workingBrief : undefined,
     });
   } catch (err: any) {
-    const msg = friendlyError(err);
+    const msg = friendlyAnthropicError(err, "Chat");
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

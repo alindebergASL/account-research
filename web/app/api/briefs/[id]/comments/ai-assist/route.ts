@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { db, type BriefRow, type BriefCommentRow } from "@/lib/db";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { friendlyAnthropicError } from "@/lib/anthropicError";
 import {
   isAssistMode,
   runAssist,
@@ -16,20 +16,6 @@ function authError(e: unknown) {
     return NextResponse.json(e.body, { status: e.status });
   }
   return null;
-}
-
-function friendlyError(err: any): string {
-  const msg = String(err?.message ?? err ?? "");
-  if (/credit balance/i.test(msg) && /too low|insufficient/i.test(msg)) {
-    return "AI assist is temporarily unavailable — the Anthropic account is out of credits.";
-  }
-  if (err instanceof Anthropic.RateLimitError) {
-    return "Anthropic rate limit reached — please retry in a moment.";
-  }
-  if (err instanceof Anthropic.AuthenticationError) {
-    return "Server is misconfigured (invalid Anthropic API key).";
-  }
-  return msg || "AI assist failed";
 }
 
 export async function POST(
@@ -122,6 +108,9 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (err: any) {
-    return NextResponse.json({ error: friendlyError(err) }, { status: 500 });
+    return NextResponse.json(
+      { error: friendlyAnthropicError(err, "AI assist") },
+      { status: 500 },
+    );
   }
 }
