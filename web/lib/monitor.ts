@@ -28,11 +28,11 @@ export type MonitorScanInput = {
 
 export const MONITOR_SYSTEM_PROMPT = `You are a sales-research monitoring agent. You watch a single account for genuinely NEW developments and keep its research brief current.
 
-You will be given the current brief (as JSON) and the date of the last check. Use the web_search tool to look for material developments about this account that are NEW since the last check: news, funding, leadership changes, product launches, partnerships, regulatory actions, RFPs, earnings, layoffs, M&A, etc.
+You will be given a minimized monitoring context and the date of the last check. Use the web_search tool to look for material developments about this account that are NEW since the last check: news, funding, leadership changes, product launches, partnerships, regulatory actions, RFPs, earnings, layoffs, M&A, etc.
 
 Then call the tool \`record_monitor_findings\` EXACTLY ONCE:
-- If you find nothing materially new since the last check, return { has_updates: false, summary: "", patches: [] }. Do not invent updates. Stale rephrasings of facts already in the brief do NOT count.
-- If you find something new, return has_updates: true, a concise plain-text \`summary\` (1-4 sentences) describing what is new and why it matters, and \`patches\` that update the brief. Patches use op "append" to add items (e.g. append to \`recent_signals\`; append a \`card\` extension under \`extensions\` for a noteworthy development) and op "set" to revise an existing field (e.g. \`priority_summary\`, \`next_action\`) when the news changes it. Every new factual item must cite a source. Keep edits minimal and targeted — do not rewrite the whole brief.
+- If you find nothing materially new since the last check, return { has_updates: false, summary: "", patches: [] }. Do not invent updates. Stale rephrasings of facts already in the context do NOT count.
+- If you find something new, return has_updates: true, a concise plain-text \`summary\` (1-4 sentences) describing what is new and why it matters, and \`patches\` that update the brief. Patches use op "append" to add factual items (e.g. append to \`recent_signals\`; append a \`card\` extension under \`extensions\` for a noteworthy development) and op "set" only for minimal public-facing summary fields when the news changes them. Every new factual item must cite a source. Keep edits minimal and targeted — do not rewrite the whole brief.
 
 Only call web_search and record_monitor_findings. Do not produce other tools or free-form prose as your final answer.`;
 
@@ -69,6 +69,16 @@ function buildSystemPrompt(input: MonitorScanInput): string {
     input.lastMonitoredAt != null
       ? new Date(input.lastMonitoredAt).toISOString()
       : "never (this is the first check)";
+  const monitorContext = {
+    account_name: input.brief.account_name,
+    segment: input.brief.segment,
+    snapshot: input.brief.snapshot,
+    recent_signals: input.brief.recent_signals,
+    top_initiatives: input.brief.top_initiatives,
+    programs_procurement: input.brief.programs_procurement,
+    competitive_signals: input.brief.competitive_signals,
+    sources: input.brief.sources,
+  };
   return `${MONITOR_SYSTEM_PROMPT}
 
 ---
@@ -76,8 +86,8 @@ LAST CHECK: ${last}
 TODAY: ${new Date().toISOString()}
 
 ---
-CURRENT BRIEF (JSON):
-${JSON.stringify(input.brief, null, 2)}`;
+MONITOR CONTEXT (MINIMIZED JSON):
+${JSON.stringify(monitorContext, null, 2)}`;
 }
 
 // Minimal client shape the scan depends on — lets tests inject a stub without

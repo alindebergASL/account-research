@@ -148,7 +148,7 @@ async function main() {
             summary: "Acme raised a $50M Series C.",
             patches: [
               { op: "append", field: "recent_signals", value: { text: "Raised $50M Series C", source: "https://news.test/acme", confidence: "High" } },
-              { op: "set", field: "next_action", value: "Congratulate on the raise" },
+              { op: "set", field: "priority_summary", value: "Acme raised a Series C; monitor follow-up should focus on expansion signals." },
             ],
           },
         }],
@@ -161,7 +161,7 @@ async function main() {
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
   assert(after.recent_signals.some((s: any) => /Series C/.test(s.text)), "signal appended");
-  assert(after.next_action === "Congratulate on the raise", "next_action revised");
+  assert(/Series C/.test(after.priority_summary), "priority_summary revised");
   const ver = db().prepare("SELECT reason FROM brief_versions WHERE brief_id = ?").get(briefId) as any;
   assert(ver?.reason === "pre-monitor", "pre-monitor version snapshot taken");
   const ev = db().prepare("SELECT event_type, summary FROM brief_events WHERE brief_id = ? AND event_type = 'monitor_update'").get(briefId) as any;

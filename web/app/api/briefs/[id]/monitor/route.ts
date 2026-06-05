@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
-import { enqueueMonitorJob } from "@/lib/monitorScheduler";
+import { cancelActiveMonitorJobsForBrief, enqueueMonitorJob } from "@/lib/monitorScheduler";
 
 export const runtime = "nodejs";
 
@@ -65,6 +65,8 @@ export async function POST(
   let queuedJobId: string | null = null;
   if (enabled && !wasEnabled) {
     queuedJobId = enqueueMonitorJob(params.id, user.id);
+  } else if (!enabled) {
+    cancelActiveMonitorJobsForBrief(params.id);
   }
 
   return NextResponse.json({ ok: true, enabled, queued_job_id: queuedJobId });

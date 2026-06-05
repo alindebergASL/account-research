@@ -27,6 +27,7 @@ import {
   logBriefCreated,
   logBriefMonitored,
   logBriefRefreshed,
+  logBriefVersionSnapshot,
   logJobCompleted,
 } from "./briefEvents";
 import { applyPatches, type BriefPatch } from "./briefPatches";
@@ -37,6 +38,16 @@ import { sendBriefMonitorUpdateEmail } from "./email";
 import { maybeRunDailySchedule } from "./monitorScheduler";
 
 const POLL_INTERVAL_MS = 2000;
+const MONITOR_ALLOWED_PATCH_FIELDS = new Set([
+  "snapshot",
+  "priority_summary",
+  "recent_signals",
+  "top_initiatives",
+  "programs_procurement",
+  "competitive_signals",
+  "sources",
+  "extensions",
+]);
 
 declare global {
   // eslint-disable-next-line no-var
@@ -208,33 +219,126 @@ export function recoverStuckJobs() {
   }
 }
 
-// Mark a monitor job done, recording the last-monitored timestamp on the
-// brief. Used for both the no-op path and (with brief_json) the update path.
-function markMonitorDone(
-  job: ResearchJobRow,
-  now: number,
-  updatedBriefJson?: string,
-) {
+// Mark a monitor no-op done atomically only if it is still enabled/running.
+function markMonitorNoopDone(job: ResearchJobRow, now: number): boolean {
+  if (!job.target_brief_id) return false;
   const conn = db();
   const tx = conn.transaction(() => {
-    if (updatedBriefJson !== undefined && job.target_brief_id) {
-      conn
-        .prepare(
-          `UPDATE briefs SET brief_json = ?, last_monitored_at = ? WHERE id = ?`,
-        )
-        .run(updatedBriefJson, now, job.target_brief_id);
-    } else if (job.target_brief_id) {
-      conn
-        .prepare(`UPDATE briefs SET last_monitored_at = ? WHERE id = ?`)
-        .run(now, job.target_brief_id);
+    const state = conn
+      .prepare(
+        `SELECT j.status AS job_status, b.monitor_enabled AS monitor_enabled
+           FROM research_jobs j
+           JOIN briefs b ON b.id = j.target_brief_id
+          WHERE j.id = ? AND b.id = ?`,
+      )
+      .get(job.id, job.target_brief_id) as
+      | { job_status: string; monitor_enabled: number }
+      | undefined;
+    if (!state || state.job_status !== "running" || state.monitor_enabled !== 1) {
+      return false;
     }
     conn
+      .prepare(`UPDATE briefs SET last_monitored_at = ? WHERE id = ?`)
+      .run(now, job.target_brief_id);
+    conn
       .prepare(
-        `UPDATE research_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
+        `UPDATE research_jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running'`,
       )
       .run(now, job.id);
+    return true;
   });
-  tx();
+  return tx();
+}
+
+function commitMonitorUpdate(
+  job: ResearchJobRow,
+  now: number,
+  previousBriefJson: string,
+  updatedBriefJson: string,
+): { versionId: string; versionNo: number } | "stale" | null {
+  if (!job.target_brief_id) return null;
+  const conn = db();
+  const tx = conn.transaction(() => {
+    const state = conn
+      .prepare(
+        `SELECT j.status AS job_status, b.monitor_enabled AS monitor_enabled, b.brief_json AS brief_json
+           FROM research_jobs j
+           JOIN briefs b ON b.id = j.target_brief_id
+          WHERE j.id = ? AND b.id = ?`,
+      )
+      .get(job.id, job.target_brief_id) as
+      | { job_status: string; monitor_enabled: number; brief_json: string }
+      | undefined;
+    if (!state || state.job_status !== "running" || state.monitor_enabled !== 1) {
+      return null;
+    }
+    if (state.brief_json !== previousBriefJson) {
+      return "stale";
+    }
+    const versionId = newId();
+    const versionRow = conn
+      .prepare(`SELECT COALESCE(MAX(version_no), 0) + 1 AS n FROM brief_versions WHERE brief_id = ?`)
+      .get(job.target_brief_id) as { n: number } | undefined;
+    const versionNo = versionRow?.n ?? 1;
+    conn
+      .prepare(
+        `INSERT INTO brief_versions
+          (id, brief_id, version_no, brief_json, reason, triggered_by, refresh_job_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        versionId,
+        job.target_brief_id,
+        versionNo,
+        previousBriefJson,
+        "pre-monitor",
+        job.user_id,
+        job.id,
+        now,
+      );
+    conn
+      .prepare(`UPDATE briefs SET brief_json = ?, last_monitored_at = ? WHERE id = ?`)
+      .run(updatedBriefJson, now, job.target_brief_id);
+    conn
+      .prepare(
+        `UPDATE research_jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running'`,
+      )
+      .run(now, job.id);
+    return { versionId, versionNo };
+  });
+  return tx();
+}
+
+function markMonitorSkipped(job: ResearchJobRow, now: number) {
+  db()
+    .prepare(
+      `UPDATE research_jobs SET status = 'done', error = NULL, finished_at = ? WHERE id = ?`,
+    )
+    .run(now, job.id);
+}
+
+function safePatchFieldForLog(field: unknown): string {
+  return typeof field === "string" && MONITOR_ALLOWED_PATCH_FIELDS.has(field)
+    ? field
+    : "disallowed";
+}
+
+function monitorMayCommit(job: ResearchJobRow, briefId: string): boolean {
+  if (currentStatus(job.id) !== "running") {
+    // eslint-disable-next-line no-console
+    console.log(`[worker] monitor skip commit job=${job.id} (no longer running)`);
+    return false;
+  }
+  const row = db()
+    .prepare(`SELECT monitor_enabled FROM briefs WHERE id = ?`)
+    .get(briefId) as { monitor_enabled: number } | undefined;
+  if (!row || row.monitor_enabled !== 1) {
+    markMonitorSkipped(job, Date.now());
+    // eslint-disable-next-line no-console
+    console.log(`[worker] monitor skip commit disabled job=${job.id} brief=${briefId}`);
+    return false;
+  }
+  return true;
 }
 
 function applyValidMonitorPatches(
@@ -247,6 +351,9 @@ function applyValidMonitorPatches(
 
   for (const patch of patches) {
     try {
+      if (!MONITOR_ALLOWED_PATCH_FIELDS.has(patch.field)) {
+        throw new Error("monitor field not allowed");
+      }
       current = applyPatches(current, [patch]);
       applied.push(patch);
     } catch (err: any) {
@@ -256,7 +363,7 @@ function applyValidMonitorPatches(
       // Do not log patch values; they can contain model/user content.
       // eslint-disable-next-line no-console
       console.warn(
-        `[worker] monitor skipped malformed patch field=${String(patch?.field ?? "unknown").slice(0, 80)} err=${String(err?.message ?? err).slice(0, 300)}`,
+        `[worker] monitor skipped malformed patch field=${safePatchFieldForLog(patch?.field)} err=patch_validation_failed`,
       );
     }
   }
@@ -274,32 +381,52 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     return;
   }
   const briefId = job.target_brief_id;
-  const row = db()
-    .prepare(`SELECT brief_json, last_monitored_at FROM briefs WHERE id = ?`)
-    .get(briefId) as
-    | { brief_json: string; last_monitored_at: number | null }
-    | undefined;
-  if (!row) {
-    markJobFailed(job.id, "Target brief not found");
-    return;
-  }
-  const parsed = BriefSchema.safeParse(JSON.parse(row.brief_json));
-  if (!parsed.success) {
-    markJobFailed(job.id, "Stored target brief failed validation");
-    return;
-  }
 
   try {
+    const row = db()
+      .prepare(`SELECT brief_json, last_monitored_at, monitor_enabled FROM briefs WHERE id = ?`)
+      .get(briefId) as
+      | { brief_json: string; last_monitored_at: number | null; monitor_enabled: number }
+      | undefined;
+    if (!row) {
+      markJobFailed(job.id, "Target brief not found");
+      return;
+    }
+    if (row.monitor_enabled !== 1) {
+      markMonitorSkipped(job, Date.now());
+      // eslint-disable-next-line no-console
+      console.log(`[worker] monitor skipped disabled job=${job.id} brief=${briefId}`);
+      return;
+    }
+
+    let rawBrief: unknown;
+    try {
+      rawBrief = JSON.parse(row.brief_json);
+    } catch {
+      markJobFailed(job.id, "Stored target brief JSON is corrupt");
+      return;
+    }
+    const parsed = BriefSchema.safeParse(rawBrief);
+    if (!parsed.success) {
+      markJobFailed(job.id, "Stored target brief failed validation");
+      return;
+    }
+
     const findings = await runMonitorScan({
       brief: parsed.data,
       lastMonitoredAt: row.last_monitored_at,
     });
     const now = Date.now();
+    if (!monitorMayCommit(job, briefId)) return;
 
     if (!findings.has_updates || findings.patches.length === 0) {
       // Nothing materially new — touch last_monitored_at only. Change nothing
       // else: no version, no event, no journal, no email.
-      markMonitorDone(job, now);
+      if (!markMonitorNoopDone(job, now)) {
+        // eslint-disable-next-line no-console
+        console.log(`[worker] monitor no-op skipped job=${job.id} brief=${briefId}`);
+        return;
+      }
       // eslint-disable-next-line no-console
       console.log(`[worker] monitor no-op job=${job.id} brief=${briefId}`);
       return;
@@ -310,7 +437,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     const applied = applyValidMonitorPatches(parsed.data, findings.patches);
     const updated = applied.brief;
     if (applied.patches.length === 0) {
-      markMonitorDone(job, now);
+      if (!markMonitorNoopDone(job, now)) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[worker] monitor no-op skipped job=${job.id} brief=${briefId} malformed_patches=${applied.skipped}`,
+        );
+        return;
+      }
       // eslint-disable-next-line no-console
       console.log(
         `[worker] monitor no-op job=${job.id} brief=${briefId} malformed_patches=${applied.skipped}`,
@@ -321,16 +454,30 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       new Set(applied.patches.map((p) => p.field)),
     );
 
-    // Snapshot the pre-update brief so the change is revertable, then persist.
-    const preMonitorVersionId = snapshotBriefVersion({
+    // Snapshot the pre-update brief and persist the update in one conditional
+    // transaction so a late disable/cancel cannot be overwritten as done.
+    const commit = commitMonitorUpdate(job, now, row.brief_json, JSON.stringify(updated));
+    if (commit === "stale") {
+      markJobFailed(job.id, "Brief changed during scan; monitor update skipped");
+      // eslint-disable-next-line no-console
+      console.log(`[worker] monitor stale skipped job=${job.id} brief=${briefId}`);
+      return;
+    }
+    if (!commit) {
+      // eslint-disable-next-line no-console
+      console.log(`[worker] monitor update skipped job=${job.id} brief=${briefId}`);
+      return;
+    }
+    const committed = commit as { versionId: string; versionNo: number };
+    logBriefVersionSnapshot({
       briefId,
-      briefJson: row.brief_json,
+      versionId: committed.versionId,
+      versionNo: committed.versionNo,
       reason: "pre-monitor",
-      triggeredBy: job.user_id,
       refreshJobId: job.id,
+      actorUserId: job.user_id,
       actorType: "worker",
     });
-    markMonitorDone(job, now, JSON.stringify(updated));
     // eslint-disable-next-line no-console
     console.log(
       `[worker] monitor update job=${job.id} brief=${briefId} patches=${applied.patches.length} malformed_patches=${applied.skipped}`,
@@ -340,7 +487,7 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       briefId,
       jobId: job.id,
       actorUserId: job.user_id,
-      preMonitorVersionId,
+      preMonitorVersionId: committed.versionId,
       patchesApplied: applied.patches.length,
       touchedFields,
     });
@@ -354,7 +501,10 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     });
 
     // Email owner + shared users (notification prefs respected in the query).
-    if (isEmailConfigured()) {
+    const emailRow = db()
+      .prepare(`SELECT monitor_enabled FROM briefs WHERE id = ?`)
+      .get(briefId) as { monitor_enabled: number } | undefined;
+    if (isEmailConfigured() && emailRow?.monitor_enabled === 1) {
       const recipients = listBriefEmailRecipients(briefId);
       for (const r of recipients) {
         await sendBriefMonitorUpdateEmail({
@@ -367,10 +517,11 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       }
     }
   } catch (err: any) {
-    const msg = String(err?.message ?? err ?? "unknown error");
+    // Do not persist or print raw provider/model/request text for automated
+    // monitor failures; those strings can include model-controlled content.
     // eslint-disable-next-line no-console
-    console.error(`[worker] monitor failed job=${job.id} err=${msg.slice(0, 500)}`);
-    markJobFailed(job.id, msg);
+    console.error(`[worker] monitor failed job=${job.id} err=monitor_failed`);
+    markJobFailed(job.id, "Monitor job failed");
   }
 }
 
