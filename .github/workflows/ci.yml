@@ -51,11 +51,12 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
-    # NON-BLOCKING: `next lint` is not initialized on main (interactive setup
-    # prompt; eslint-config-next has a peer-dep conflict with the pinned
-    # eslint@8). Owner can flip continue-on-error to false after ESLint is
-    # configured. See PR description for details.
-    continue-on-error: true
+    # BLOCKING: ESLint is initialized via web/.eslintrc.json
+    # (extends `next/core-web-vitals`) with eslint@^8.57 and
+    # eslint-config-next@^14.2.35 pinned. `npm run lint` currently reports
+    # 0 errors (1 pre-existing warning, non-fatal). The ESLint v8 -> v9
+    # upgrade is deferred to a dedicated PR (dependabot groups all eslint*
+    # deps into a single bump).
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,9 +69,7 @@ jobs:
         run: npm ci
       - name: Lint
         working-directory: web
-        # `< /dev/null` so the interactive ESLint init prompt fails fast in
-        # CI rather than hanging the job.
-        run: npm run lint < /dev/null
+        run: npm run lint
 
   test:
     name: test
