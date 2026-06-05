@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
-    "@next/env": "14.2.35",
+    "@next/env": "16.2.7",
     "better-sqlite3": "^12.9.0",
     "framer-motion": "^11.11.0",
     "lucide-react": "^0.460.0",
