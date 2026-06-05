@@ -323,6 +323,167 @@ function safePatchFieldForLog(field: unknown): string {
     : "disallowed";
 }
 
+const MONITOR_TRACKING_QUERY_PREFIXES = ["utm_"];
+const MONITOR_TRACKING_QUERY_PARAMS = new Set([
+  "fbclid",
+  "gclid",
+  "igshid",
+  "mc_cid",
+  "mc_eid",
+  "msclkid",
+  "ref",
+  "ref_src",
+]);
+
+function normalizeMonitorUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw.trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    const path = u.pathname.replace(/\/+$/, "");
+    const params = Array.from(u.searchParams.entries())
+      .filter(([key]) => {
+        const k = key.toLowerCase();
+        return !MONITOR_TRACKING_QUERY_PARAMS.has(k)
+          && !MONITOR_TRACKING_QUERY_PREFIXES.some((prefix) => k.startsWith(prefix));
+      })
+      .sort(([a], [b]) => a.localeCompare(b));
+    const query = params.length > 0
+      ? `?${params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}`
+      : "";
+    return `${host}${path || "/"}${query}`;
+  } catch {
+    return null;
+  }
+}
+
+function urlsFromString(value: string): string[] {
+  const urls = value.match(/https?:\/\/[^\s)\]}>"']+/gi) ?? [];
+  const direct = normalizeMonitorUrl(value);
+  return [...(direct ? [direct] : []), ...urls.map(normalizeMonitorUrl).filter((u): u is string => !!u)];
+}
+
+function collectMonitorUrls(value: unknown, out = new Set<string>()): Set<string> {
+  if (typeof value === "string") {
+    for (const u of urlsFromString(value)) out.add(u);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectMonitorUrls(item, out);
+    return out;
+  }
+  if (value && typeof value === "object") {
+    for (const v of Object.values(value as Record<string, unknown>)) collectMonitorUrls(v, out);
+  }
+  return out;
+}
+
+const MONITOR_TEXT_STOPWORDS = new Set([
+  "about", "across", "after", "again", "also", "another", "article", "court", "daily",
+  "from", "found", "into", "lead", "local", "monitor", "news", "official", "public",
+  "said", "says", "site", "story", "that", "their", "there", "this", "update", "with",
+  "work", "will", "would", "yesterday",
+]);
+const MONITOR_EVENT_TOKENS = new Set([
+  "appointed",
+  "approved",
+  "awarded",
+  "delayed",
+  "hired",
+  "launched",
+  "named",
+  "resigned",
+  "selected",
+]);
+
+function normalizeMonitorText(raw: string): string[] {
+  const expanded = raw
+    .toLowerCase()
+    .replace(/chief\s+information\s+officer/g, "cio")
+    .replace(/chief\s+technology\s+officer/g, "cto")
+    .replace(/\bhired\b/g, "appointed")
+    .replace(/\bnamed\b/g, "appointed");
+  return Array.from(
+    new Set(
+      expanded
+        .replace(/[^a-z0-9]+/g, " ")
+        .split(/\s+/)
+        .filter((token) => token.length >= 3 && !MONITOR_TEXT_STOPWORDS.has(token)),
+    ),
+  );
+}
+
+function salientMonitorText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(salientMonitorText).join(" ");
+  if (!value || typeof value !== "object") return "";
+  const obj = value as Record<string, unknown>;
+  return [obj.text, obj.title, obj.detail, obj.body, obj.heading, obj.why_included]
+    .map(salientMonitorText)
+    .filter(Boolean)
+    .join(" ");
+}
+
+function collectMonitorTexts(value: unknown, out: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) collectMonitorTexts(item, out);
+    return out;
+  }
+  if (value && typeof value === "object") {
+    const text = salientMonitorText(value);
+    if (text) out.push(text);
+    for (const v of Object.values(value as Record<string, unknown>)) {
+      if (Array.isArray(v)) collectMonitorTexts(v, out);
+    }
+  }
+  return out;
+}
+
+function monitorTextsAreDuplicates(a: string, b: string): boolean {
+  const aTokens = normalizeMonitorText(a);
+  const bTokens = normalizeMonitorText(b);
+  if (aTokens.length < 4 || bTokens.length < 4) return false;
+  const bSet = new Set(bTokens);
+  const intersection = aTokens.filter((t) => bSet.has(t)).length;
+  const aEvents = aTokens.filter((t) => MONITOR_EVENT_TOKENS.has(t));
+  const bEvents = bTokens.filter((t) => MONITOR_EVENT_TOKENS.has(t));
+  if (aEvents.length > 0 || bEvents.length > 0) {
+    const bEventSet = new Set(bEvents);
+    if (!aEvents.some((t) => bEventSet.has(t))) return false;
+  }
+  return intersection >= 5 && intersection / Math.min(aTokens.length, bTokens.length) >= 0.85;
+}
+
+function monitorSourceSupportsFinding(sourceText: string, findingTexts: string[]): boolean {
+  const sourceTokens = normalizeMonitorText(sourceText);
+  if (sourceTokens.length < 3) return false;
+  const sourceSet = new Set(sourceTokens);
+  return findingTexts.some((findingText) => {
+    const findingTokens = normalizeMonitorText(findingText);
+    if (findingTokens.length < 3) return false;
+    const intersection = findingTokens.filter((t) => sourceSet.has(t)).length;
+    return intersection >= 3 && intersection / Math.min(sourceTokens.length, findingTokens.length) >= 0.6;
+  });
+}
+
+function isDuplicateAcceptedRecentSignal(existingSignals: unknown[], patch: BriefPatch): boolean {
+  if (patch.op !== "append" || patch.field !== "recent_signals") return false;
+  const patchText = salientMonitorText(patch.value);
+  if (!patchText) return false;
+  return collectMonitorTexts(existingSignals).some((existing) => monitorTextsAreDuplicates(patchText, existing));
+}
+
+function isDuplicateMonitorAppend(current: Brief, patch: BriefPatch): boolean {
+  if (patch.op !== "append") return false;
+
+  const existingUrls = collectMonitorUrls(current);
+  const hasKnownUrl = Array.from(collectMonitorUrls(patch.value)).some((u) => existingUrls.has(u));
+  if (patch.field === "sources") return hasKnownUrl;
+
+  if (patch.field !== "recent_signals") return false;
+  return isDuplicateAcceptedRecentSignal(current.recent_signals, patch);
+}
+
 function monitorMayCommit(job: ResearchJobRow, briefId: string): boolean {
   if (currentStatus(job.id) !== "running") {
     // eslint-disable-next-line no-console
@@ -344,17 +505,46 @@ function monitorMayCommit(job: ResearchJobRow, briefId: string): boolean {
 function applyValidMonitorPatches(
   base: Brief,
   patches: BriefPatch[],
-): { brief: Brief; patches: BriefPatch[]; skipped: number } {
+): { brief: Brief; patches: BriefPatch[]; skipped: number; duplicates: number } {
   let current = base;
   const applied: BriefPatch[] = [];
   let skipped = 0;
+  let duplicates = 0;
+  const duplicateFindingUrls = new Set<string>();
+  const duplicateFindingTexts: string[] = [];
+  const appliedFindingUrls = new Set<string>();
+  const appliedFindingTexts: string[] = [];
+  const appliedSourceUrls = new Set<string>();
+  const deferredSourcePatches: BriefPatch[] = [];
+  for (const patch of patches) {
+    if (patch && patch.field !== "sources" && isDuplicateMonitorAppend(base, patch)) {
+      for (const u of collectMonitorUrls(patch.value)) duplicateFindingUrls.add(u);
+      const text = salientMonitorText(patch.value);
+      if (text) duplicateFindingTexts.push(text);
+    }
+  }
 
   for (const patch of patches) {
     try {
       if (!MONITOR_ALLOWED_PATCH_FIELDS.has(patch.field)) {
         throw new Error("monitor field not allowed");
       }
+      if (patch.field === "sources") {
+        deferredSourcePatches.push(patch);
+        continue;
+      }
+      const patchUrls = collectMonitorUrls(patch.value);
+      if (isDuplicateMonitorAppend(current, patch)) {
+        duplicates += 1;
+        for (const u of patchUrls) duplicateFindingUrls.add(u);
+        const text = salientMonitorText(patch.value);
+        if (text) duplicateFindingTexts.push(text);
+        continue;
+      }
       current = applyPatches(current, [patch]);
+      for (const u of patchUrls) appliedFindingUrls.add(u);
+      const text = salientMonitorText(patch.value);
+      if (text) appliedFindingTexts.push(text);
       applied.push(patch);
     } catch (err: any) {
       skipped += 1;
@@ -368,7 +558,37 @@ function applyValidMonitorPatches(
     }
   }
 
-  return { brief: current, patches: applied, skipped };
+  for (const patch of deferredSourcePatches) {
+    try {
+      const patchUrls = collectMonitorUrls(patch.value);
+      const sourceText = salientMonitorText(patch.value);
+      const supportsAcceptedFinding = Array.from(patchUrls).some((u) => appliedFindingUrls.has(u))
+        || monitorSourceSupportsFinding(sourceText, appliedFindingTexts);
+      const supportsDuplicateFinding = !supportsAcceptedFinding
+        && (Array.from(patchUrls).some((u) => duplicateFindingUrls.has(u))
+          || monitorSourceSupportsFinding(sourceText, duplicateFindingTexts));
+      const duplicateAppend = isDuplicateMonitorAppend(base, patch)
+        || Array.from(patchUrls).some((u) => appliedSourceUrls.has(u));
+      if (supportsDuplicateFinding || duplicateAppend) {
+        duplicates += 1;
+        continue;
+      }
+      current = applyPatches(current, [patch]);
+      for (const u of patchUrls) appliedSourceUrls.add(u);
+      applied.push(patch);
+    } catch (err: any) {
+      skipped += 1;
+      // A single malformed model-supplied patch should not fail the whole
+      // monitor run. Keep any valid targeted updates and ignore the bad patch.
+      // Do not log patch values; they can contain model/user content.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[worker] monitor skipped malformed patch field=${safePatchFieldForLog(patch?.field)} err=patch_validation_failed`,
+      );
+    }
+  }
+
+  return { brief: current, patches: applied, skipped, duplicates };
 }
 
 export async function executeMonitorJob(job: ResearchJobRow) {
