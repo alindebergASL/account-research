@@ -33,14 +33,17 @@ export default function Header() {
       .then((r) => (r.ok ? r.json() : { user: null }))
       .then((d) => {
         setMe(d.user);
+        const from = pathname || "/";
+        if (!d.user) {
+          router.replace(`/login?from=${encodeURIComponent(from)}`);
+          return;
+        }
         if (
-          d.user?.must_change_password &&
+          d.user.must_change_password &&
           pathname !== "/change-password" &&
           pathname !== "/login"
         ) {
-          router.replace(
-            `/change-password?from=${encodeURIComponent(pathname || "/")}`,
-          );
+          router.replace(`/change-password?from=${encodeURIComponent(from)}`);
         }
       })
       .catch(() => setMe(null));
