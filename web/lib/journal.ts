@@ -1,4 +1,35 @@
 import { db, type JournalEntryRow } from "@/lib/db";
+import { newId } from "@/lib/password";
+
+// Insert a journal entry and return its id. Shared by the journal POST route
+// and background jobs (e.g. the daily monitor) that post an `assistant` entry.
+// `userId` is the author for 'user' rows and the triggering user for
+// 'assistant' rows (nullable — assistant entries tolerate a missing user).
+export function insertJournalEntry(args: {
+  briefId: string;
+  userId: string | null;
+  authorType: "user" | "assistant";
+  body: string;
+  replyTo?: string | null;
+}): string {
+  const id = newId();
+  db()
+    .prepare(
+      `INSERT INTO journal_entries
+         (id, brief_id, user_id, author_type, body, reply_to, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      args.briefId,
+      args.userId,
+      args.authorType,
+      args.body,
+      args.replyTo ?? null,
+      Date.now(),
+    );
+  return id;
+}
 
 // Row shape returned from the journal list query. LEFT JOINs users because
 // assistant rows (and rows whose author was later deleted) have a null

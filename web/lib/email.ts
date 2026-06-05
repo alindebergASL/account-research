@@ -200,6 +200,37 @@ export async function sendJobFailedEmail(
   });
 }
 
+// Sent by the daily monitor when it finds and applies a genuine update to a
+// brief. `summary` is the model's plain-text description of what changed.
+export async function sendBriefMonitorUpdateEmail(args: {
+  to: string;
+  recipientName: string | null;
+  accountName: string;
+  briefId: string;
+  summary: string;
+}): Promise<EmailSendResult> {
+  const base = appBaseUrl();
+  const link = `${base}/brief/${args.briefId}`;
+  const name = args.recipientName || args.to;
+  return send({
+    to: args.to,
+    scope: "monitor",
+    id: args.briefId,
+    subject: `Account update: ${args.accountName}`,
+    text:
+      `Hi ${name},\n\n` +
+      `The daily monitor found a new update for ${args.accountName}:\n\n` +
+      `${args.summary}\n\n` +
+      `${link}\n\n` +
+      `— AccountBriefBuilder\n`,
+    html: `<p>Hi ${escapeHtml(name)},</p>
+<p>The daily monitor found a new update for <strong>${escapeHtml(args.accountName)}</strong>:</p>
+<blockquote>${escapeHtml(args.summary)}</blockquote>
+<p><a href="${link}">Open brief</a></p>
+<p>— AccountBriefBuilder</p>`,
+  });
+}
+
 export async function sendShareLinkEmail(args: {
   recipient: string;
   sharerName: string;

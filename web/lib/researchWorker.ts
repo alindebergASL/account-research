@@ -25,9 +25,16 @@ import { mergeBriefs } from "./briefMerge";
 import { snapshotBriefVersion } from "./briefVersions";
 import {
   logBriefCreated,
+  logBriefMonitored,
   logBriefRefreshed,
   logJobCompleted,
 } from "./briefEvents";
+import { applyPatches } from "./briefPatches";
+import { runMonitorScan } from "./monitor";
+import { insertJournalEntry } from "./journal";
+import { listBriefEmailRecipients } from "./briefRecipients";
+import { sendBriefMonitorUpdateEmail } from "./email";
+import { maybeRunDailySchedule } from "./monitorScheduler";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -201,7 +208,139 @@ export function recoverStuckJobs() {
   }
 }
 
+// Mark a monitor job done, recording the last-monitored timestamp on the
+// brief. Used for both the no-op path and (with brief_json) the update path.
+function markMonitorDone(
+  job: ResearchJobRow,
+  now: number,
+  updatedBriefJson?: string,
+) {
+  const conn = db();
+  const tx = conn.transaction(() => {
+    if (updatedBriefJson !== undefined && job.target_brief_id) {
+      conn
+        .prepare(
+          `UPDATE briefs SET brief_json = ?, last_monitored_at = ? WHERE id = ?`,
+        )
+        .run(updatedBriefJson, now, job.target_brief_id);
+    } else if (job.target_brief_id) {
+      conn
+        .prepare(`UPDATE briefs SET last_monitored_at = ? WHERE id = ?`)
+        .run(now, job.target_brief_id);
+    }
+    conn
+      .prepare(
+        `UPDATE research_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
+      )
+      .run(now, job.id);
+  });
+  tx();
+}
+
+export async function executeMonitorJob(job: ResearchJobRow) {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[worker] monitor start job=${job.id} brief=${job.target_brief_id} account=${job.account_name}`,
+  );
+  if (!job.target_brief_id) {
+    markJobFailed(job.id, "Monitor job missing target_brief_id");
+    return;
+  }
+  const briefId = job.target_brief_id;
+  const row = db()
+    .prepare(`SELECT brief_json, last_monitored_at FROM briefs WHERE id = ?`)
+    .get(briefId) as
+    | { brief_json: string; last_monitored_at: number | null }
+    | undefined;
+  if (!row) {
+    markJobFailed(job.id, "Target brief not found");
+    return;
+  }
+  const parsed = BriefSchema.safeParse(JSON.parse(row.brief_json));
+  if (!parsed.success) {
+    markJobFailed(job.id, "Stored target brief failed validation");
+    return;
+  }
+
+  try {
+    const findings = await runMonitorScan({
+      brief: parsed.data,
+      lastMonitoredAt: row.last_monitored_at,
+    });
+    const now = Date.now();
+
+    if (!findings.has_updates || findings.patches.length === 0) {
+      // Nothing materially new — touch last_monitored_at only. Change nothing
+      // else: no version, no event, no journal, no email.
+      markMonitorDone(job, now);
+      // eslint-disable-next-line no-console
+      console.log(`[worker] monitor no-op job=${job.id} brief=${briefId}`);
+      return;
+    }
+
+    // Apply the targeted patches; validation rejects malformed output.
+    const updated = applyPatches(parsed.data, findings.patches);
+    const touchedFields = Array.from(
+      new Set(findings.patches.map((p) => p.field)),
+    );
+
+    // Snapshot the pre-update brief so the change is revertable, then persist.
+    const preMonitorVersionId = snapshotBriefVersion({
+      briefId,
+      briefJson: row.brief_json,
+      reason: "pre-monitor",
+      triggeredBy: job.user_id,
+      refreshJobId: job.id,
+      actorType: "worker",
+    });
+    markMonitorDone(job, now, JSON.stringify(updated));
+    // eslint-disable-next-line no-console
+    console.log(
+      `[worker] monitor update job=${job.id} brief=${briefId} patches=${findings.patches.length}`,
+    );
+
+    logBriefMonitored({
+      briefId,
+      jobId: job.id,
+      actorUserId: job.user_id,
+      preMonitorVersionId,
+      patchesApplied: findings.patches.length,
+      touchedFields,
+    });
+
+    // Post the "what changed" note into the Journal as an assistant entry.
+    insertJournalEntry({
+      briefId,
+      userId: job.user_id,
+      authorType: "assistant",
+      body: findings.summary,
+    });
+
+    // Email owner + shared users (notification prefs respected in the query).
+    if (isEmailConfigured()) {
+      const recipients = listBriefEmailRecipients(briefId);
+      for (const r of recipients) {
+        await sendBriefMonitorUpdateEmail({
+          to: r.email,
+          recipientName: r.display_name,
+          accountName: parsed.data.account_name,
+          briefId,
+          summary: findings.summary,
+        });
+      }
+    }
+  } catch (err: any) {
+    const msg = String(err?.message ?? err ?? "unknown error");
+    // eslint-disable-next-line no-console
+    console.error(`[worker] monitor failed job=${job.id} err=${msg.slice(0, 500)}`);
+    markJobFailed(job.id, msg);
+  }
+}
+
 async function executeResearchJob(job: ResearchJobRow) {
+  if (job.intent === "monitor") {
+    return executeMonitorJob(job);
+  }
   // eslint-disable-next-line no-console
   console.log(
     `[worker] start job=${job.id} user=${job.user_id} account=${job.account_name} mode=${job.mode}`,
@@ -346,6 +485,19 @@ export async function startWorker(): Promise<never> {
   // Loop forever. Any throw inside executeResearchJob is caught there;
   // the only way out of this loop is process exit.
   for (;;) {
+    // Daily-monitor scheduler tick. Cheap and self-throttling: enqueues the
+    // 2 AM batch at most once per local day, then short-circuits.
+    try {
+      const enqueued = maybeRunDailySchedule();
+      if (enqueued > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`[worker] daily monitor enqueued count=${enqueued}`);
+      }
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error(`[worker] monitor schedule threw err=${String(e?.message ?? e).slice(0, 500)}`);
+    }
+
     let job: ResearchJobRow | null = null;
     try {
       job = pickNextQueued();

@@ -24,6 +24,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const [access, setAccess] = useState<Access | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   const [versionsCount, setVersionsCount] = useState<number>(0);
+  const [monitorEnabled, setMonitorEnabled] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"brief" | "canvas" | "journal">(
     "brief",
@@ -95,6 +96,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
         setVersionsCount(
           typeof data.versions_count === "number" ? data.versions_count : 0,
         );
+        setMonitorEnabled(data.monitor_enabled === true);
         setCanvasPreview(data.canvas_preview === true);
       })
       .catch((e: any) => {
@@ -249,6 +251,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
               canWrite={access.can_write}
               isOwner={access.is_owner}
               canManage={access.can_manage}
+              monitorEnabled={monitorEnabled}
               lastRefreshedAt={lastRefreshedAt}
               versionsCount={versionsCount}
             />

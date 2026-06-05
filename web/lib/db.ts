@@ -493,6 +493,34 @@ const MIGRATIONS: Migration[] = [
           ON journal_entries(brief_id, created_at);
       `),
   },
+  {
+    id: "017_brief_monitor",
+    // Per-brief daily monitor. `monitor_enabled` (default off) gates the 2 AM
+    // scan; `last_monitored_at` records the last check (updated whether or not
+    // anything changed). `monitor_schedule` is a singleton row the worker uses
+    // to fire the daily enqueue exactly once per local calendar day. ALTERs use
+    // the column-exists guard so a mid-flight retry is safe (SQLite can't roll
+    // back ALTER cleanly).
+    up: (c) => {
+      const cols = c
+        .prepare("PRAGMA table_info(briefs)")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "monitor_enabled")) {
+        c.exec(
+          "ALTER TABLE briefs ADD COLUMN monitor_enabled INTEGER NOT NULL DEFAULT 0",
+        );
+      }
+      if (!cols.some((r) => r.name === "last_monitored_at")) {
+        c.exec("ALTER TABLE briefs ADD COLUMN last_monitored_at INTEGER");
+      }
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS monitor_schedule (
+          id            TEXT PRIMARY KEY,
+          last_run_date TEXT
+        );
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -709,6 +737,8 @@ export type BriefRow = {
   generated_at: string;
   created_at: number;
   brief_json: string;
+  monitor_enabled: 0 | 1;
+  last_monitored_at: number | null;
 };
 
 export type BriefSummary = {
@@ -759,7 +789,7 @@ export type ResearchJobRow = {
   usage_json: string | null;
   cost_usd_cents: number | null;
   retry_of_job_id: string | null;
-  intent: "create" | "refresh";
+  intent: "create" | "refresh" | "monitor";
   target_brief_id: string | null;
 };
 
