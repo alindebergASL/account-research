@@ -632,6 +632,176 @@ test("notify: sendMail throws -> POST still returns the comment", async () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Public share-view comments (read-only). Token is the auth; the share
+// surface must never accept POST/PATCH/DELETE and must never leak
+// user_id or email in the comment DTO.
+// ---------------------------------------------------------------------------
+
+const shareCommentsRoute = require("../web/app/api/share/[token]/comments/route") as typeof import("../web/app/api/share/[token]/comments/route");
+
+function seedShareLink(opts: {
+  id: string;
+  briefId: string;
+  token: string;
+  createdBy: string;
+  expiresAt?: number | null;
+  revokedAt?: number | null;
+}) {
+  db()
+    .prepare(
+      `INSERT INTO brief_share_links
+         (id, brief_id, token, created_by, created_at, expires_at, revoked_at, last_accessed_at, access_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
+    )
+    .run(
+      opts.id,
+      opts.briefId,
+      opts.token,
+      opts.createdBy,
+      Date.now(),
+      opts.expiresAt ?? null,
+      opts.revokedAt ?? null,
+    );
+}
+
+function makePublicReq(): any {
+  // The share-view GET handler doesn't read cookies or body, but the
+  // shared helper expects a NextRequest-ish object.
+  return { cookies: { get: () => undefined } };
+}
+
+seedShareLink({
+  id: "link-live",
+  briefId: "brief-1",
+  token: "tok-live",
+  createdBy: "owner-1",
+  expiresAt: null,
+});
+seedShareLink({
+  id: "link-expired",
+  briefId: "brief-1",
+  token: "tok-expired",
+  createdBy: "owner-1",
+  expiresAt: Date.now() - 60_000,
+});
+seedShareLink({
+  id: "link-revoked",
+  briefId: "brief-1",
+  token: "tok-revoked",
+  createdBy: "owner-1",
+  expiresAt: null,
+  revokedAt: Date.now() - 1000,
+});
+
+test("share-view: GET with valid token matches authenticated GET (body, ai_assisted, display_name)", async () => {
+  const authedRes = await commentsRoute.GET(
+    makeReq({ sessionId: ownerSession }),
+    { params: { id: "brief-1" } },
+  );
+  const authedList = (await jsonOf(authedRes)).comments as any[];
+
+  const publicRes = await shareCommentsRoute.GET(makePublicReq(), {
+    params: { token: "tok-live" },
+  });
+  assert.equal(publicRes.status, 200);
+  const publicList = (await jsonOf(publicRes)).comments as any[];
+
+  assert.equal(publicList.length, authedList.length);
+  for (let i = 0; i < authedList.length; i++) {
+    const a = authedList[i];
+    const p = publicList[i];
+    assert.equal(p.id, a.id);
+    assert.equal(p.parent_id, a.parent_id);
+    assert.equal(p.body, a.body);
+    assert.equal(p.ai_assisted, a.ai_assisted);
+    assert.equal(p.created_at, a.created_at);
+    if (p.deleted_at !== null) {
+      assert.equal(p.author_display_name, null);
+    } else {
+      assert.equal(p.author_display_name, a.author.display_name);
+    }
+  }
+});
+
+test("share-view: soft-deleted comments are blanked but thread structure preserved", async () => {
+  const parentRes = await commentsRoute.POST(
+    makeReq({ sessionId: ownerSession, body: { body: "Public-view parent" } }),
+    { params: { id: "brief-1" } },
+  );
+  const parent = (await jsonOf(parentRes)).comment;
+  const childRes = await commentsRoute.POST(
+    makeReq({
+      sessionId: readerSession,
+      body: { body: "Public-view child", parent_id: parent.id },
+    }),
+    { params: { id: "brief-1" } },
+  );
+  const child = (await jsonOf(childRes)).comment;
+  await commentRoute.DELETE(makeReq({ sessionId: ownerSession }), {
+    params: { id: "brief-1", commentId: parent.id },
+  });
+
+  const publicRes = await shareCommentsRoute.GET(makePublicReq(), {
+    params: { token: "tok-live" },
+  });
+  const list = (await jsonOf(publicRes)).comments as any[];
+  const p = list.find((c) => c.id === parent.id);
+  const ch = list.find((c) => c.id === child.id);
+  assert.ok(p);
+  assert.equal(p.body, null);
+  assert.ok(p.deleted_at !== null);
+  assert.equal(p.author_display_name, null);
+  assert.ok(ch);
+  assert.equal(ch.body, "Public-view child");
+  assert.equal(ch.parent_id, parent.id);
+});
+
+test("share-view: invalid token -> 404", async () => {
+  const res = await shareCommentsRoute.GET(makePublicReq(), {
+    params: { token: "does-not-exist" },
+  });
+  assert.equal(res.status, 404);
+});
+
+test("share-view: expired token -> 404", async () => {
+  const res = await shareCommentsRoute.GET(makePublicReq(), {
+    params: { token: "tok-expired" },
+  });
+  assert.equal(res.status, 404);
+});
+
+test("share-view: revoked token -> 404", async () => {
+  const res = await shareCommentsRoute.GET(makePublicReq(), {
+    params: { token: "tok-revoked" },
+  });
+  assert.equal(res.status, 404);
+});
+
+test("share-view: route module exports GET only (no POST/PATCH/DELETE handlers)", () => {
+  // Next.js treats an absent named export as "method not allowed" — this
+  // is how we keep the public share surface strictly read-only without
+  // an explicit 405 handler. Test the contract at the module level.
+  assert.equal(typeof shareCommentsRoute.GET, "function");
+  assert.equal((shareCommentsRoute as any).POST, undefined);
+  assert.equal((shareCommentsRoute as any).PATCH, undefined);
+  assert.equal((shareCommentsRoute as any).DELETE, undefined);
+  assert.equal((shareCommentsRoute as any).PUT, undefined);
+});
+
+test("share-view: response does NOT include user_id / email / nested author identity", async () => {
+  const res = await shareCommentsRoute.GET(makePublicReq(), {
+    params: { token: "tok-live" },
+  });
+  const raw = JSON.stringify(await jsonOf(res));
+  assert.equal(raw.includes("\"user_id\""), false, "user_id leaked");
+  assert.equal(raw.includes("\"user_email\""), false, "user_email leaked");
+  assert.equal(raw.includes("\"email\""), false, "email field leaked");
+  // PublicCommentDto has no nested `author` object at all; ensure we
+  // didn't accidentally fall back to the authenticated shape.
+  assert.equal(raw.includes("\"author\":{"), false, "nested author object leaked");
+});
+
 test("notify: shared user posts top-level -> only owner is notified", async () => {
   const { sent } = installMailerStub();
   try {
