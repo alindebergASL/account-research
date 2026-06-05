@@ -463,6 +463,36 @@ const MIGRATIONS: Migration[] = [
           ON brief_comments(parent_id);
       `),
   },
+  {
+    id: "016_journal_entries",
+    // Per-brief journal: a flat, chronological feed where anyone with access
+    // to the brief can log updates, ask questions, and chat with the system.
+    // Distinct from `brief_comments` (human-only threaded discussion) and from
+    // `brief_chats` (the AI-edit chat). `author_type` distinguishes 'user'
+    // rows from 'assistant' rows that the AI posts in reply. `user_id` is
+    // nullable: assistant rows store the triggering user but tolerate ON DELETE
+    // SET NULL so a deleted user never orphans the FK. Soft-delete via
+    // `deleted_at` preserves feed ordering. `reply_to` links an assistant row
+    // to the user entry it answered.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_entries (
+          id           TEXT PRIMARY KEY,
+          brief_id     TEXT NOT NULL,
+          user_id      TEXT,
+          author_type  TEXT NOT NULL DEFAULT 'user',
+          body         TEXT NOT NULL,
+          reply_to     TEXT,
+          created_at   INTEGER NOT NULL,
+          edited_at    INTEGER,
+          deleted_at   INTEGER,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_brief_created
+          ON journal_entries(brief_id, created_at);
+      `),
+  },
 ];
 
 export type BriefCommentRow = {
@@ -472,6 +502,18 @@ export type BriefCommentRow = {
   parent_id: string | null;
   body: string;
   ai_assisted: 0 | 1;
+  created_at: number;
+  edited_at: number | null;
+  deleted_at: number | null;
+};
+
+export type JournalEntryRow = {
+  id: string;
+  brief_id: string;
+  user_id: string | null;
+  author_type: "user" | "assistant";
+  body: string;
+  reply_to: string | null;
   created_at: number;
   edited_at: number | null;
   deleted_at: number | null;

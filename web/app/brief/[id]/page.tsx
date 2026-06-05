@@ -9,6 +9,7 @@ import ReadOnlyCanvasView from "@/components/canvas/ReadOnlyCanvasView";
 import { buildReadOnlyCanvasFromBrief } from "@/lib/canvas/fromBrief";
 import type { Canvas } from "@/lib/canvas/schema";
 import CommentsSection from "./CommentsSection";
+import JournalSection from "./JournalSection";
 
 type Access = {
   is_owner: boolean;
@@ -24,7 +25,9 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   const [versionsCount, setVersionsCount] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"brief" | "canvas">("brief");
+  const [viewMode, setViewMode] = useState<"brief" | "canvas" | "journal">(
+    "brief",
+  );
   const [persistedCanvas, setPersistedCanvas] = useState<Canvas | null>(null);
   const [canvasStateVersion, setCanvasStateVersion] = useState<number>(0);
   // Server-derived capability: true only when CANVAS_PREVIEW_ENABLED=1
@@ -171,26 +174,26 @@ export default function BriefPage({ params }: { params: { id: string } }) {
           )}
         </div>
       )}
-      {canvasPreview && (
-        <div className="max-w-7xl mx-auto px-6 mt-4">
-          <div
-            role="tablist"
-            aria-label="View mode"
-            className="inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm"
+      <div className="max-w-7xl mx-auto px-6 mt-4">
+        <div
+          role="tablist"
+          aria-label="View mode"
+          className="inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === "brief"}
+            onClick={() => setViewMode("brief")}
+            className={`px-3 py-1.5 rounded-md transition-colors ${
+              viewMode === "brief"
+                ? "bg-ink text-white"
+                : "text-muted hover:text-ink"
+            }`}
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={viewMode === "brief"}
-              onClick={() => setViewMode("brief")}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                viewMode === "brief"
-                  ? "bg-ink text-white"
-                  : "text-muted hover:text-ink"
-              }`}
-            >
-              Brief view
-            </button>
+            Brief view
+          </button>
+          {canvasPreview && (
             <button
               type="button"
               role="tab"
@@ -204,30 +207,60 @@ export default function BriefPage({ params }: { params: { id: string } }) {
             >
               Canvas view
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === "journal"}
+            onClick={() => setViewMode("journal")}
+            className={`px-3 py-1.5 rounded-md transition-colors ${
+              viewMode === "journal"
+                ? "bg-ink text-white"
+                : "text-muted hover:text-ink"
+            }`}
+          >
+            Journal
+          </button>
         </div>
-      )}
-      {canvasPreview && viewMode === "canvas" && canvas ? (
-        <ReadOnlyCanvasView key={canvasStateVersion} canvas={canvas} />
+      </div>
+      {viewMode === "journal" ? (
+        me ? (
+          <JournalSection
+            briefId={params.id}
+            currentUserId={me.id}
+            isAdmin={me.role === "admin"}
+            canManage={access.can_manage}
+          />
+        ) : (
+          <div className="max-w-7xl mx-auto px-6 mt-8 text-sm text-muted">
+            Sign in to view the journal.
+          </div>
+        )
       ) : (
-        <BriefCanvas
-          brief={brief}
-          currentBriefId={params.id}
-          onBriefUpdate={setBrief}
-          onHermesCanvasEvent={refreshCanvasState}
-          canWrite={access.can_write}
-          isOwner={access.is_owner}
-          canManage={access.can_manage}
-          lastRefreshedAt={lastRefreshedAt}
-          versionsCount={versionsCount}
-        />
-      )}
-      {me && (
-        <CommentsSection
-          briefId={params.id}
-          currentUserId={me.id}
-          isAdmin={me.role === "admin"}
-        />
+        <>
+          {canvasPreview && viewMode === "canvas" && canvas ? (
+            <ReadOnlyCanvasView key={canvasStateVersion} canvas={canvas} />
+          ) : (
+            <BriefCanvas
+              brief={brief}
+              currentBriefId={params.id}
+              onBriefUpdate={setBrief}
+              onHermesCanvasEvent={refreshCanvasState}
+              canWrite={access.can_write}
+              isOwner={access.is_owner}
+              canManage={access.can_manage}
+              lastRefreshedAt={lastRefreshedAt}
+              versionsCount={versionsCount}
+            />
+          )}
+          {me && (
+            <CommentsSection
+              briefId={params.id}
+              currentUserId={me.id}
+              isAdmin={me.role === "admin"}
+            />
+          )}
+        </>
       )}
     </main>
   );

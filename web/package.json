@@ -13,7 +13,8 @@
     "lint": "next lint",
     "verify:hermes-chat-adapter": "tsx scripts/verify-hermes-chat-adapter.ts",
     "verify:hermes-runtime-service": "tsx scripts/verify-hermes-runtime-service.ts",
-    "hermes-runtime": "tsx scripts/hermes-runtime-service.ts"
+    "hermes-runtime": "tsx scripts/hermes-runtime-service.ts",
+    "verify:journal": "tsx scripts/verify-journal.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
