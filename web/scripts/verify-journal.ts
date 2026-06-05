@@ -72,7 +72,7 @@ async function main() {
   const rows = listEntryRowsForBrief(briefId);
   assert(rows.length === 3, `expected 3 rows, got ${rows.length}`);
 
-  const dtos = rows.map(rowToJournalDto);
+  const dtos = rows.map((r) => rowToJournalDto(r));
   const userDto = dtos.find((d) => d.id === userEntryId)!;
   const aiDto = dtos.find((d) => d.id === assistantEntryId)!;
   const delDto = dtos.find((d) => d.id === deletedEntryId)!;

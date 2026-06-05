@@ -1,5 +1,9 @@
 import { db, type JournalEntryRow } from "@/lib/db";
 import { newId } from "@/lib/password";
+import {
+  listDocumentsForEntries,
+  type JournalDocumentDto,
+} from "@/lib/journalDocuments";
 
 // Insert a journal entry and return its id. Shared by the journal POST route
 // and background jobs (e.g. the daily monitor) that post an `assistant` entry.
@@ -56,6 +60,7 @@ export type JournalEntryDto = {
   edited_at: number | null;
   deleted_at: number | null;
   author: { id: string; display_name: string | null; email: string } | null;
+  documents: JournalDocumentDto[];
 };
 
 export function listEntryRowsForBrief(briefId: string): JournalListRow[] {
@@ -87,9 +92,12 @@ export function listRecentEntryRowsForBrief(
   return rows.reverse();
 }
 
-export function rowToJournalDto(r: JournalListRow): JournalEntryDto {
+export function rowToJournalDto(
+  r: JournalListRow,
+  documents: JournalDocumentDto[] = [],
+): JournalEntryDto {
   const deleted = r.deleted_at !== null;
-  const base = {
+  const base: Omit<JournalEntryDto, "author"> = {
     id: r.id,
     author_type: r.author_type,
     body: deleted ? null : r.body,
@@ -97,6 +105,7 @@ export function rowToJournalDto(r: JournalListRow): JournalEntryDto {
     created_at: r.created_at,
     edited_at: r.edited_at,
     deleted_at: r.deleted_at,
+    documents: deleted ? [] : documents,
   };
   if (deleted) {
     return { ...base, author: null };

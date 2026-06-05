@@ -521,6 +521,34 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "018_journal_documents",
+    // Documents uploaded into the per-brief journal. Store only bounded
+    // extracted text plus metadata in SQLite so chat/brief-update prompts can
+    // use the document without retaining arbitrary binary blobs in the DB.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_documents (
+          id               TEXT PRIMARY KEY,
+          brief_id         TEXT NOT NULL,
+          journal_entry_id TEXT NOT NULL,
+          user_id          TEXT,
+          filename         TEXT NOT NULL,
+          mime_type        TEXT NOT NULL,
+          byte_size        INTEGER NOT NULL,
+          content_hash     TEXT NOT NULL,
+          content_text     TEXT NOT NULL,
+          created_at       INTEGER NOT NULL,
+          FOREIGN KEY (brief_id)         REFERENCES briefs(id)          ON DELETE CASCADE,
+          FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id)          REFERENCES users(id)           ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_documents_brief_created
+          ON journal_documents(brief_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_journal_documents_entry
+          ON journal_documents(journal_entry_id);
+      `),
+  },
 ];
 
 export type BriefCommentRow = {
@@ -545,6 +573,19 @@ export type JournalEntryRow = {
   created_at: number;
   edited_at: number | null;
   deleted_at: number | null;
+};
+
+export type JournalDocumentRow = {
+  id: string;
+  brief_id: string;
+  journal_entry_id: string;
+  user_id: string | null;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  content_hash: string;
+  content_text: string;
+  created_at: number;
 };
 
 // Row types for the Hermes substrate. Kept here next to the rest of the

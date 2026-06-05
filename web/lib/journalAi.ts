@@ -10,6 +10,10 @@
 //   - MAX_OUTPUT_TOKENS: model output ceiling.
 
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  formatDocumentContextForPrompt,
+  type JournalDocumentRow,
+} from "@/lib/journalDocuments";
 
 export const BRIEF_INPUT_CHAR_CAP = 4000;
 export const JOURNAL_CONTEXT_MAX = 12;
@@ -27,6 +31,7 @@ export type JournalReplyInput = {
   // Prior entries in chronological order. The latest user entry (the one being
   // answered) should be included as the final element.
   entries: JournalContextEntry[];
+  documents?: JournalDocumentRow[];
 };
 
 export const JOURNAL_SYSTEM_PROMPT = `You are the assistant participating in the journal of a sales account research brief.
@@ -82,7 +87,11 @@ ${briefStr}
 
 ---
 JOURNAL CONTEXT (oldest to newest):
-${journalStr}`;
+${journalStr}
+
+---
+UPLOADED JOURNAL DOCUMENTS:
+${formatDocumentContextForPrompt(input.documents ?? [])}`;
   const user = "Reply to the most recent journal entry.";
   return { system, user };
 }

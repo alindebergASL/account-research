@@ -9,11 +9,15 @@ import {
   requireUser,
 } from "@/lib/auth";
 import { Brief, type Brief as BriefT } from "@/lib/schema";
-import { BRIEF_CHAT_SYSTEM_PROMPT } from "@/lib/prompt";
 import { applyPatches, type BriefPatch } from "@/lib/briefPatches";
 import { logChatPatchedBrief } from "@/lib/briefEvents";
 import { runChatViaHermes, selectChatPath } from "@/lib/hermes/chatAdapter";
 import { friendlyAnthropicError } from "@/lib/anthropicError";
+import {
+  buildBriefChatDocumentContext,
+  buildBriefChatSystemPrompt,
+} from "@/lib/briefChatContext";
+import { listRecentDocumentsForBrief } from "@/lib/journalDocuments";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -131,12 +135,11 @@ async function handleReadOnlyChat({
   userMessage: string;
 }): Promise<Response> {
   const history = loadHistory(briefId);
+  const documents = listRecentDocumentsForBrief(briefId);
   const client = new Anthropic();
   const system =
-    BRIEF_CHAT_SYSTEM_PROMPT.replace(
-      "{{BRIEF_JSON}}",
-      JSON.stringify(brief, null, 2),
-    ) + READ_ONLY_VIEWER_ADDENDUM;
+    buildBriefChatSystemPrompt({ brief, documents, canWrite: false }) +
+    READ_ONLY_VIEWER_ADDENDUM;
   const messages = buildMessages(history, userMessage);
   try {
     const response = await client.messages.create({
@@ -266,13 +269,18 @@ export async function POST(
 
   if (chatPath === "hermes") {
     const history = loadHistory(params.id);
+    const documents = listRecentDocumentsForBrief(params.id);
+    const messageWithDocuments =
+      documents.length > 0
+        ? `${userMessage}\n\n${buildBriefChatDocumentContext({ documents, canWrite: writer })}`
+        : userMessage;
     try {
       const result = await runChatViaHermes({
         brief_id: params.id,
         user_id: user.id,
         brief,
         history: history.map((h) => ({ role: h.role, content: h.content })),
-        message: userMessage,
+        message: messageWithDocuments,
         can_write: writer,
       });
 
@@ -325,11 +333,13 @@ export async function POST(
   }
 
   const history = loadHistory(params.id);
+  const documents = listRecentDocumentsForBrief(params.id);
   const client = new Anthropic();
-  const system = BRIEF_CHAT_SYSTEM_PROMPT.replace(
-    "{{BRIEF_JSON}}",
-    JSON.stringify(brief, null, 2),
-  );
+  const system = buildBriefChatSystemPrompt({
+    brief,
+    documents,
+    canWrite: true,
+  });
 
   let messages = buildMessages(history, userMessage);
   let workingBrief = brief;
