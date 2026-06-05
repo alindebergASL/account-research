@@ -231,6 +231,30 @@ export function logBriefRefreshed(p: {
   });
 }
 
+export function logBriefMonitored(p: {
+  briefId: string;
+  jobId: string;
+  actorUserId: string | null;
+  preMonitorVersionId: string;
+  patchesApplied: number;
+  touchedFields: string[];
+}) {
+  createBriefEvent({
+    brief_id: p.briefId,
+    job_id: p.jobId,
+    actor_user_id: p.actorUserId,
+    actor_type: "worker",
+    event_type: "monitor_update",
+    title: "Daily monitor updated brief",
+    summary: `${p.patchesApplied} change(s) to: ${p.touchedFields.join(", ") || "(none)"}`,
+    metadata: {
+      pre_monitor_version_id: p.preMonitorVersionId,
+      patches_applied: p.patchesApplied,
+      touched_fields: p.touchedFields,
+    },
+  });
+}
+
 export function logBriefVersionSnapshot(p: {
   briefId: string;
   versionId: string;

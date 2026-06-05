@@ -48,6 +48,7 @@ import BriefSwitcher from "./BriefSwitcher";
 import BriefChat from "./BriefChat";
 import ShareDialog from "./ShareDialog";
 import { Share2 } from "lucide-react";
+import { Radar } from "lucide-react";
 import {
   AddedInChatChip,
   ExtensionDetail,
@@ -83,6 +84,7 @@ export default function BriefCanvas({
   canWrite = true,
   isOwner = true,
   canManage = true,
+  monitorEnabled = false,
   mode = "private",
   publicToken,
   lastRefreshedAt = null,
@@ -95,6 +97,7 @@ export default function BriefCanvas({
   canWrite?: boolean;
   isOwner?: boolean;
   canManage?: boolean;
+  monitorEnabled?: boolean;
   // 'public' renders the brief for an unauthenticated outsider via a
   // share token: no header chrome, no chat, no share/edit affordances,
   // and the strategy tile (next_action) is hidden.
@@ -107,7 +110,42 @@ export default function BriefCanvas({
   const [showShare, setShowShare] = useState(false);
   const [showRefresh, setShowRefresh] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
+  const [monitor, setMonitor] = useState(monitorEnabled);
+  const [monitorBusy, setMonitorBusy] = useState(false);
+  const [monitorHint, setMonitorHint] = useState<string | null>(null);
   const isPublic = mode === "public";
+
+  async function toggleMonitor() {
+    if (!currentBriefId || monitorBusy) return;
+    const next = !monitor;
+    setMonitorBusy(true);
+    setMonitor(next); // optimistic
+    try {
+      const r = await fetch(`/api/briefs/${currentBriefId}/monitor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      setMonitor(data.enabled === true);
+      setMonitorHint(
+        data.enabled
+          ? data.queued_job_id
+            ? "Daily monitoring on — first check queued."
+            : "Daily monitoring on."
+          : "Daily monitoring off.",
+      );
+    } catch {
+      setMonitor(!next); // revert
+      setMonitorHint("Couldn’t change monitoring. Try again.");
+    } finally {
+      setMonitorBusy(false);
+    }
+  }
   const extensions = brief.extensions ?? [];
   const activeExtension =
     drill?.kind === "extension"
@@ -128,6 +166,10 @@ export default function BriefCanvas({
           onShareClick={() => setShowShare(true)}
           onRefreshClick={() => setShowRefresh(true)}
           onVersionsClick={() => setShowVersions(true)}
+          monitorEnabled={monitor}
+          monitorBusy={monitorBusy}
+          monitorHint={monitorHint}
+          onToggleMonitor={toggleMonitor}
           lastRefreshedAt={lastRefreshedAt}
           versionsCount={versionsCount}
         />
@@ -696,6 +738,10 @@ function Header({
   onShareClick,
   onRefreshClick,
   onVersionsClick,
+  monitorEnabled,
+  monitorBusy,
+  monitorHint,
+  onToggleMonitor,
   lastRefreshedAt,
   versionsCount,
 }: {
@@ -707,6 +753,10 @@ function Header({
   onShareClick: () => void;
   onRefreshClick: () => void;
   onVersionsClick: () => void;
+  monitorEnabled: boolean;
+  monitorBusy: boolean;
+  monitorHint: string | null;
+  onToggleMonitor: () => void;
   lastRefreshedAt: number | null;
   versionsCount: number;
 }) {
@@ -744,6 +794,29 @@ function Header({
               </button>
             </>
           )}
+          {currentBriefId && canWrite && (
+            <button
+              type="button"
+              onClick={onToggleMonitor}
+              disabled={monitorBusy}
+              aria-pressed={monitorEnabled}
+              title={
+                monitorEnabled
+                  ? "Daily monitoring is on — turn off"
+                  : "Turn on daily monitoring (checks for new news each day)"
+              }
+              className={`inline-flex items-center gap-1.5 text-sm transition-colors px-3 py-1.5 rounded-lg border disabled:opacity-50 ${
+                monitorEnabled
+                  ? "text-accent bg-white border-[var(--line)]"
+                  : "text-muted hover:text-ink border-transparent hover:bg-white hover:border-[var(--line)]"
+              }`}
+            >
+              <Radar className="size-4" />
+              <span className="hidden sm:inline">
+                {monitorEnabled ? "Monitoring on" : "Monitor"}
+              </span>
+            </button>
+          )}
           {currentBriefId && canWrite && isOwner && (
             <button
               type="button"
@@ -780,6 +853,9 @@ function Header({
           </>
         )}
       </div>
+      {monitorHint && (
+        <div className="mt-2 text-xs text-muted">{monitorHint}</div>
+      )}
     </motion.div>
   );
 }

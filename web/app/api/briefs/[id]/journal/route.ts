@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, type BriefRow } from "@/lib/db";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
-import { newId } from "@/lib/password";
 import {
+  insertJournalEntry,
   listEntryRowsForBrief,
   rowToJournalDto,
   type JournalEntryDto,
@@ -36,32 +36,6 @@ function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
     )
     .get(entryId, briefId) as JournalListRow;
   return rowToJournalDto(row);
-}
-
-function insertEntry(args: {
-  briefId: string;
-  userId: string | null;
-  authorType: "user" | "assistant";
-  body: string;
-  replyTo: string | null;
-}): string {
-  const id = newId();
-  db()
-    .prepare(
-      `INSERT INTO journal_entries
-         (id, brief_id, user_id, author_type, body, reply_to, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      id,
-      args.briefId,
-      args.userId,
-      args.authorType,
-      args.body,
-      args.replyTo,
-      Date.now(),
-    );
-  return id;
 }
 
 export async function GET(
@@ -120,7 +94,7 @@ export async function POST(
   }
   const askAi = body.ask_ai === true;
 
-  const userEntryId = insertEntry({
+  const userEntryId = insertJournalEntry({
     briefId: params.id,
     userId: user.id,
     authorType: "user",
@@ -178,7 +152,7 @@ export async function POST(
       brief_json: briefJson,
       entries: contextEntries,
     });
-    const aiEntryId = insertEntry({
+    const aiEntryId = insertJournalEntry({
       briefId: params.id,
       userId: user.id,
       authorType: "assistant",

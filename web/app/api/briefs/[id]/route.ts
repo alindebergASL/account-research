@@ -91,6 +91,8 @@ export async function GET(
     shared_by_email: sharedByEmail,
     last_refreshed_at: lastRefreshedAt,
     versions_count: versionsCount,
+    monitor_enabled: row.monitor_enabled === 1,
+    last_monitored_at: row.last_monitored_at ?? null,
     // Server-derived: only true when CANVAS_PREVIEW_ENABLED=1 AND
     // user.role === "admin". Used by the client to decide whether to
     // render the Brief view / Canvas view toggle. Read-only and
