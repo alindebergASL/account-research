@@ -323,6 +323,30 @@ function safePatchFieldForLog(field: unknown): string {
     : "disallowed";
 }
 
+function monitorFieldLabel(field: string): string {
+  return field.replace(/_/g, " ");
+}
+
+function formatMonitorJournalBody(args: {
+  summary: string;
+  touchedFields: string[];
+  patchesApplied: number;
+  versionNo: number;
+}): string {
+  const changed = args.touchedFields.length > 0
+    ? args.touchedFields.map(monitorFieldLabel).join(", ")
+    : "brief";
+  return [
+    "Daily monitor update",
+    "",
+    args.summary,
+    "",
+    `Changed sections: ${changed}`,
+    `Applied changes: ${args.patchesApplied}`,
+    `Previous brief snapshot: v${args.versionNo}`,
+  ].join("\n");
+}
+
 const MONITOR_TRACKING_QUERY_PREFIXES = ["utm_"];
 const MONITOR_TRACKING_QUERY_PARAMS = new Set([
   "fbclid",
@@ -717,7 +741,12 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       briefId,
       userId: job.user_id,
       authorType: "assistant",
-      body: findings.summary,
+      body: formatMonitorJournalBody({
+        summary: findings.summary,
+        touchedFields,
+        patchesApplied: applied.patches.length,
+        versionNo: committed.versionNo,
+      }),
     });
 
     // Email owner + shared users (notification prefs respected in the query).
