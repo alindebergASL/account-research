@@ -17,6 +17,7 @@ import {
 } from "@/lib/journalAi";
 import { friendlyAnthropicError } from "@/lib/anthropicError";
 import {
+  listDocumentsForBriefByIds,
   listDocumentsForEntries,
   listRecentDocumentsForBrief,
 } from "@/lib/journalDocuments";
@@ -25,6 +26,26 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_BODY_CHARS = 4000;
+const MAX_SCOPED_DOCUMENTS = 5;
+const MAX_SCOPED_DOCUMENT_ID_CHARS = 128;
+
+function parseScopedDocumentIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("source_document_ids must be an array");
+  }
+  if (!value.every((id) => typeof id === "string")) {
+    throw new Error("source_document_ids must contain document ids");
+  }
+  const ids = Array.from(new Set(value.map((id) => id.trim()))).filter(Boolean);
+  if (ids.length > MAX_SCOPED_DOCUMENTS) {
+    throw new Error(`source_document_ids may include at most ${MAX_SCOPED_DOCUMENTS} documents`);
+  }
+  if (ids.some((id) => id.length > MAX_SCOPED_DOCUMENT_ID_CHARS)) {
+    throw new Error("source_document_ids contains an invalid document id");
+  }
+  return ids;
+}
 
 function authError(e: unknown) {
   if (e instanceof HttpError) {
@@ -87,7 +108,7 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let body: { body?: unknown; ask_ai?: unknown };
+  let body: { body?: unknown; ask_ai?: unknown; source_document_ids?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -104,6 +125,24 @@ export async function POST(
     );
   }
   const askAi = body.ask_ai === true;
+  let scopedDocumentIds: string[] = [];
+  try {
+    scopedDocumentIds = askAi ? parseScopedDocumentIds(body.source_document_ids) : [];
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Invalid source document scope" },
+      { status: 400 },
+    );
+  }
+  if (scopedDocumentIds.length > 0) {
+    const scopedDocuments = listDocumentsForBriefByIds(params.id, scopedDocumentIds);
+    if (scopedDocuments.length !== scopedDocumentIds.length) {
+      return NextResponse.json(
+        { error: "Selected source document was not found" },
+        { status: 400 },
+      );
+    }
+  }
 
   const userEntryId = insertJournalEntry({
     briefId: params.id,
@@ -158,7 +197,9 @@ export async function POST(
       created_at: r.created_at,
     }));
 
-  const documents = listRecentDocumentsForBrief(params.id);
+  const documents = scopedDocumentIds.length > 0
+    ? listDocumentsForBriefByIds(params.id, scopedDocumentIds)
+    : listRecentDocumentsForBrief(params.id);
 
   try {
     const result = await runJournalReply({

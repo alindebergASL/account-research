@@ -40,6 +40,15 @@ type Entry = {
   documents?: JournalDocument[];
 };
 
+type JournalWorkspace = "timeline" | "sources" | "intelligence";
+
+type JournalSource = JournalDocument & {
+  entryId: string;
+  entryAuthor: string;
+  entryBody: string | null;
+  entryCreatedAt: number;
+};
+
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 function relativeTime(ts: number): string {
@@ -74,6 +83,14 @@ function summarizeDocumentPrompt(filename: string): string {
 
 function briefUpdatePrompt(filename: string): string {
   return `Review the uploaded document "${filename}" and tell me what should be added or changed in the account brief. Be specific about fields or sections, and cite the uploaded document by filename.`;
+}
+
+function compareWithBriefPrompt(filename: string): string {
+  return `Compare the uploaded document "${filename}" with the current account brief. Identify supported updates, contradictions, stale assumptions, and open questions. Cite the document by filename and do not claim you edited the brief.`;
+}
+
+function askAboutSourcePrompt(filename: string): string {
+  return `Answer questions using the uploaded document "${filename}" as the primary source. Start with a concise summary of what this source is useful for, then list the highest-value questions the account team should ask next. Cite the document by filename.`;
 }
 
 type IntelligenceAction = {
@@ -146,6 +163,21 @@ function displayEntryBody(entry: Entry): string | null {
   return entry.body.slice(0, legendStart).trimEnd();
 }
 
+function collectJournalSources(entries: Entry[] | null): JournalSource[] {
+  if (!entries) return [];
+  return entries
+    .flatMap((entry) =>
+      (entry.documents ?? []).map((doc) => ({
+        ...doc,
+        entryId: entry.id,
+        entryAuthor: authorName(entry),
+        entryBody: displayEntryBody(entry),
+        entryCreatedAt: entry.created_at,
+      })),
+    )
+    .sort((a, b) => b.created_at - a.created_at);
+}
+
 function renderCitationChips(entry: Entry) {
   const labels = extractCitationLabels(entry);
   if (labels.length === 0) return null;
@@ -176,6 +208,8 @@ export default function JournalSection({
   canManage: boolean;
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<JournalWorkspace>("timeline");
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -184,6 +218,7 @@ export default function JournalSection({
   const [posting, setPosting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [scopedDocumentIds, setScopedDocumentIds] = useState<string[]>([]);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -213,7 +248,7 @@ export default function JournalSection({
     load();
   }, [load]);
 
-  function prepareAssistantPrompt(text: string) {
+  function prepareAssistantPrompt(text: string, sourceDocumentIds: string[] = []) {
     if (
       composeText.trim() &&
       composeText !== text &&
@@ -222,11 +257,16 @@ export default function JournalSection({
       return;
     }
     setAskAi(true);
+    setScopedDocumentIds(sourceDocumentIds);
     setComposeText(text);
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
 
-  async function postJournalEntry(text: string, askAssistant: boolean) {
+  async function postJournalEntry(
+    text: string,
+    askAssistant: boolean,
+    sourceDocumentIds = scopedDocumentIds,
+  ) {
     const trimmed = text.trim();
     if (!trimmed || posting) return false;
     setPosting(true);
@@ -235,7 +275,13 @@ export default function JournalSection({
       const r = await fetch(`/api/briefs/${briefId}/journal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: trimmed, ask_ai: askAssistant }),
+        body: JSON.stringify({
+          body: trimmed,
+          ask_ai: askAssistant,
+          ...(askAssistant && sourceDocumentIds.length > 0
+            ? { source_document_ids: sourceDocumentIds }
+            : {}),
+        }),
       });
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
@@ -243,8 +289,10 @@ export default function JournalSection({
       }
       const data = await r.json();
       setComposeText("");
+      setScopedDocumentIds([]);
       if (data.ai_error) setAiError(data.ai_error);
       await load();
+      if (askAssistant) setActiveWorkspace("timeline");
       return !data.ai_error;
     } catch (e: any) {
       setError(e?.message || "Failed to post entry");
@@ -255,7 +303,7 @@ export default function JournalSection({
   }
 
   async function submit() {
-    await postJournalEntry(composeText, askAi);
+    await postJournalEntry(composeText, askAi, scopedDocumentIds);
   }
 
   async function runIntelligenceAction(prompt: string) {
@@ -266,7 +314,8 @@ export default function JournalSection({
       return;
     }
     setAskAi(true);
-    await postJournalEntry(prompt, true);
+    setScopedDocumentIds([]);
+    await postJournalEntry(prompt, true, []);
   }
 
   async function uploadDocument({ summarizeAfterUpload = false } = {}) {
@@ -290,6 +339,7 @@ export default function JournalSection({
       const data = await r.json();
       setSelectedFile(null);
       setComposeText("");
+      setScopedDocumentIds([]);
       const filename = data?.document?.filename || uploadedFileName;
       setUploadNotice(
         summarizeAfterUpload
@@ -297,7 +347,12 @@ export default function JournalSection({
           : `Uploaded ${filename}. Its extracted text is now available to the journal assistant and brief chat.`,
       );
       if (summarizeAfterUpload) {
-        const assistantPosted = await postJournalEntry(summarizeDocumentPrompt(filename), true);
+        const uploadedDocumentId = typeof data?.document?.id === "string" ? data.document.id : null;
+        const assistantPosted = await postJournalEntry(
+          summarizeDocumentPrompt(filename),
+          true,
+          uploadedDocumentId ? [uploadedDocumentId] : [],
+        );
         if (assistantPosted) {
           setUploadNotice(`Uploaded ${filename}. The journal assistant reply was added below.`);
         } else {
@@ -348,6 +403,72 @@ export default function JournalSection({
     } catch (e: any) {
       setError(e?.message || "Failed to delete entry");
     }
+  }
+
+  function renderSourceCard(source: JournalSource) {
+    return (
+      <div
+        key={`${source.entryId}-${source.id}`}
+        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">
+                <FileText className="size-3" /> Source
+              </span>
+              <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
+                Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
+              </span>
+            </div>
+            <h3 className="mt-2 truncate text-sm font-semibold text-ink">
+              {source.filename}
+            </h3>
+            <p className="mt-1 text-xs text-muted">
+              {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id])}
+              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+            >
+              <Sparkles className="size-3" /> Summarize
+            </button>
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id])}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Brief updates
+            </button>
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id])}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Compare with brief
+            </button>
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id])}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Ask about this
+            </button>
+          </div>
+        </div>
+        <p className="mt-3 line-clamp-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
+          {source.content_preview || "No text preview extracted."}
+        </p>
+        {source.entryBody && (
+          <p className="mt-2 line-clamp-2 text-xs text-muted">
+            Attached to journal note: {source.entryBody}
+          </p>
+        )}
+      </div>
+    );
   }
 
   function renderEntry(e: Entry) {
@@ -473,14 +594,14 @@ export default function JournalSection({
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename))}
+                        onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename), [doc.id])}
                         className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50"
                       >
                         <Sparkles className="size-3" /> Summarize with AI
                       </button>
                       <button
                         type="button"
-                        onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename))}
+                        onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename), [doc.id])}
                         className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                       >
                         Find brief updates
@@ -498,6 +619,32 @@ export default function JournalSection({
       </div>
     );
   }
+
+  const sources = collectJournalSources(entries);
+  const workspaceTabs: Array<{
+    id: JournalWorkspace;
+    label: string;
+    description: string;
+    count?: number;
+  }> = [
+    {
+      id: "timeline",
+      label: "Timeline",
+      description: "Canonical account history",
+      count: entries?.length,
+    },
+    {
+      id: "sources",
+      label: "Sources",
+      description: "Uploaded evidence library",
+      count: sources.length,
+    },
+    {
+      id: "intelligence",
+      label: "Intelligence",
+      description: "Advisory AI actions",
+    },
+  ];
 
   return (
     <section className="max-w-7xl mx-auto px-6 mt-6 pb-24">
@@ -524,57 +671,122 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="mb-4 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
-              <Sparkles className="size-3.5" /> Journal Intelligence
-            </div>
-            <h3 className="mt-3 text-base font-semibold text-ink">
-              Turn notes and evidence into account motion
-            </h3>
-            <p className="mt-1 max-w-2xl text-sm text-muted">
-              Generate advisory digests, action items, brief-update candidates,
-              follow-ups, and open questions. Replies stay in the journal and cite
-              source labels such as [J1] and [D1] when the model uses notes or
-              uploaded documents.
-            </p>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {INTELLIGENCE_ACTIONS.map((action) => (
-              <button
-                key={action.label}
-                type="button"
-                onClick={() => runIntelligenceAction(action.prompt)}
-                disabled={posting || loading || !entries}
-                className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                  action.primary
-                    ? "border-violet-300 bg-violet-600 text-white shadow-sm hover:bg-violet-700"
-                    : "border-slate-200 bg-white text-ink hover:border-violet-200 hover:bg-violet-50"
-                }`}
-              >
-                <span className="block font-medium">{action.label}</span>
-                <span
-                  className={`mt-0.5 block text-xs ${
-                    action.primary ? "text-violet-100" : "text-muted"
-                  }`}
-                >
-                  {action.description}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-3">
+        {workspaceTabs.map((tab) => {
+          const active = activeWorkspace === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveWorkspace(tab.id)}
+              aria-pressed={active}
+              className={`rounded-xl px-3 py-2 text-left transition ${
+                active
+                  ? "bg-ink text-white shadow-sm"
+                  : "text-ink hover:bg-slate-50"
+              }`}
+            >
+              <span className="flex items-center justify-between gap-2 text-sm font-semibold">
+                {tab.label}
+                {tab.count !== undefined && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      active ? "bg-white/15 text-white" : "bg-slate-100 text-muted"
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </span>
+              <span className={`mt-0.5 block text-xs ${active ? "text-white/75" : "text-muted"}`}>
+                {tab.description}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {entries && entries.length === 0 && (
+      {activeWorkspace === "intelligence" && (
+        <div className="mb-4 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
+                <Sparkles className="size-3.5" /> Journal Intelligence
+              </div>
+              <h3 className="mt-3 text-base font-semibold text-ink">
+                Turn notes and evidence into account motion
+              </h3>
+              <p className="mt-1 max-w-2xl text-sm text-muted">
+                Generate advisory digests, action items, brief-update candidates,
+                follow-ups, and open questions. Replies stay in the journal and cite
+                source labels such as [J1] and [D1] when the model uses notes or
+                uploaded documents.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {INTELLIGENCE_ACTIONS.map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={() => runIntelligenceAction(action.prompt)}
+                  disabled={posting || loading || !entries}
+                  className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    action.primary
+                      ? "border-violet-300 bg-violet-600 text-white shadow-sm hover:bg-violet-700"
+                      : "border-slate-200 bg-white text-ink hover:border-violet-200 hover:bg-violet-50"
+                  }`}
+                >
+                  <span className="block font-medium">{action.label}</span>
+                  <span
+                    className={`mt-0.5 block text-xs ${
+                      action.primary ? "text-violet-100" : "text-muted"
+                    }`}
+                  >
+                    {action.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeWorkspace === "sources" && (
+        <div className="mb-4 space-y-3">
+          <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
+              <FileText className="size-3.5" /> Source Library
+            </div>
+            <h3 className="mt-3 text-base font-semibold text-ink">
+              Review uploaded evidence before asking AI to synthesize it
+            </h3>
+            <p className="mt-1 max-w-3xl text-sm text-muted">
+              Sources are pulled from journal document uploads. Use source-scoped
+              prompts to summarize, compare against the brief, or find supported
+              brief update candidates without directly editing the brief.
+            </p>
+          </div>
+          {sources.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
+              No uploaded sources yet. Choose a document in the composer below to
+              make extracted evidence available to the Journal assistant.
+            </div>
+          ) : (
+            <div className="grid gap-3 xl:grid-cols-2">
+              {sources.map((source) => renderSourceCard(source))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeWorkspace === "timeline" && entries && entries.length === 0 && (
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
           No journal entries yet. Add a note, upload a document, or switch to
           “Ask assistant” to ask a question grounded in this brief.
         </div>
       )}
 
-      {entries && entries.map((e) => renderEntry(e))}
+      {activeWorkspace === "timeline" && entries && entries.map((e) => renderEntry(e))}
 
       {aiError && (
         <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -599,7 +811,10 @@ export default function JournalSection({
             <button
               type="button"
               aria-pressed={!askAi}
-              onClick={() => setAskAi(false)}
+              onClick={() => {
+                setAskAi(false);
+                setScopedDocumentIds([]);
+              }}
               className={`rounded-md px-3 py-1.5 transition-colors ${
                 !askAi ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
@@ -635,6 +850,21 @@ export default function JournalSection({
           rows={3}
           className="w-full rounded-lg border border-[var(--line)] p-2 text-sm"
         />
+        {askAi && scopedDocumentIds.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            <FileText className="size-3.5" />
+            <span>
+              AI context scoped to {scopedDocumentIds.length} selected source{scopedDocumentIds.length === 1 ? "" : "s"}.
+            </span>
+            <button
+              type="button"
+              onClick={() => setScopedDocumentIds([])}
+              className="font-medium underline decoration-sky-300 underline-offset-2 hover:text-sky-700"
+            >
+              Use recent sources instead
+            </button>
+          </div>
+        )}
         {askAi && (
           <div className="mt-2 flex flex-wrap gap-2">
             <button
