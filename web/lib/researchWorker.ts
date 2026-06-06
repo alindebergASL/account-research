@@ -36,6 +36,7 @@ import { insertJournalEntry } from "./journal";
 import { listBriefEmailRecipients } from "./briefRecipients";
 import { sendBriefMonitorUpdateEmail } from "./email";
 import { maybeRunDailySchedule } from "./monitorScheduler";
+import { neutralizeSourceLegendMarkers } from "./journalSourceLegend";
 
 const POLL_INTERVAL_MS = 2000;
 const MONITOR_ALLOWED_PATCH_FIELDS = new Set([
@@ -339,7 +340,7 @@ function formatMonitorJournalBody(args: {
   return [
     "Daily monitor update",
     "",
-    args.summary,
+    neutralizeSourceLegendMarkers(args.summary),
     "",
     `Changed sections: ${changed}`,
     `Applied changes: ${args.patchesApplied}`,

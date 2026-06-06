@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { db, type JournalDocumentRow as DbJournalDocumentRow } from "@/lib/db";
+import { neutralizeSourceLegendMarkers } from "@/lib/journalSourceLegend";
 import { newId } from "@/lib/password";
 
 export type JournalDocumentRow = DbJournalDocumentRow;
@@ -255,6 +256,10 @@ function normalizeExtractedText(raw: string): string {
     .slice(0, MAX_EXTRACTED_TEXT_CHARS);
 }
 
+function neutralizeCitationLikeLabels(text: string): string {
+  return neutralizeSourceLegendMarkers(text).replace(/\[(?=(?:J|D)\d+\])/g, "\\u005b");
+}
+
 export async function extractJournalDocument(args: {
   filename: string;
   mimeType: string;
@@ -387,13 +392,13 @@ export function formatDocumentsForPrompt(documents: JournalDocumentRow[]): strin
   if (documents.length === 0) return "(none)";
   return documents
     .map((doc, idx) => {
-      const excerpt = doc.content_text.slice(0, DOCUMENT_CONTEXT_CHARS_PER_DOC);
+      const excerpt = neutralizeCitationLikeLabels(doc.content_text.slice(0, DOCUMENT_CONTEXT_CHARS_PER_DOC));
       const suffix = doc.content_text.length > DOCUMENT_CONTEXT_CHARS_PER_DOC ? "\n…[truncated]" : "";
       const payload = JSON.stringify(
         {
           source_label: `D${idx + 1}`,
           index: idx + 1,
-          filename: doc.filename,
+          filename: neutralizeCitationLikeLabels(doc.filename),
           mime: doc.mime_type,
           bytes: doc.byte_size,
           content: `${excerpt}${suffix}`,

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 
 type Author = {
   id: string;
@@ -116,17 +117,37 @@ const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
   },
 ];
 
-function extractCitationLabels(body: string | null): string[] {
-  if (!body) return [];
-  const seen = new Set<string>();
-  for (const match of body.matchAll(/\[(?:J|D)\d+\]/g)) {
-    seen.add(match[0]);
+function trustedLegendStart(entry: Entry): number {
+  if (entry.author_type !== "assistant" || !entry.reply_to || !entry.body) {
+    return -1;
   }
-  return Array.from(seen);
+  return findSourceLegendBlockStart(entry.body);
 }
 
-function renderCitationChips(body: string | null) {
-  const labels = extractCitationLabels(body);
+function extractCitationLabels(entry: Entry): string[] {
+  const legendStart = trustedLegendStart(entry);
+  if (legendStart < 0 || !entry.body) return [];
+  const answerText = entry.body.slice(0, legendStart);
+  const legendText = entry.body.slice(legendStart);
+  const validLabels = new Set<string>();
+  for (const match of legendText.matchAll(/\[(?:J|D)\d+\]/g)) {
+    validLabels.add(match[0]);
+  }
+  const citedLabels = new Set<string>();
+  for (const match of answerText.matchAll(/\[(?:J|D)\d+\]/g)) {
+    if (validLabels.has(match[0])) citedLabels.add(match[0]);
+  }
+  return Array.from(citedLabels);
+}
+
+function displayEntryBody(entry: Entry): string | null {
+  const legendStart = trustedLegendStart(entry);
+  if (legendStart < 0 || !entry.body) return entry.body;
+  return entry.body.slice(0, legendStart).trimEnd();
+}
+
+function renderCitationChips(entry: Entry) {
+  const labels = extractCitationLabels(entry);
   if (labels.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-violet-900">
@@ -238,6 +259,12 @@ export default function JournalSection({
   }
 
   async function runIntelligenceAction(prompt: string) {
+    if (
+      composeText.trim() &&
+      !window.confirm("Replace your current draft with this intelligence action?")
+    ) {
+      return;
+    }
     setAskAi(true);
     await postJournalEntry(prompt, true);
   }
@@ -421,12 +448,12 @@ export default function JournalSection({
                   This entry was deleted.
                 </span>
               ) : (
-                e.body
+                displayEntryBody(e)
               )}
             </p>
           )}
 
-          {isAssistant && !editing && !deleted && renderCitationChips(e.body)}
+          {isAssistant && !editing && !deleted && renderCitationChips(e)}
 
           {!editing && !deleted && e.documents && e.documents.length > 0 && (
             <div className="mt-3 space-y-2">
