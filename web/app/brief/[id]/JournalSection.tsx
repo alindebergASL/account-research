@@ -11,6 +11,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 
 type Author = {
   id: string;
@@ -73,6 +74,94 @@ function summarizeDocumentPrompt(filename: string): string {
 
 function briefUpdatePrompt(filename: string): string {
   return `Review the uploaded document "${filename}" and tell me what should be added or changed in the account brief. Be specific about fields or sections, and cite the uploaded document by filename.`;
+}
+
+type IntelligenceAction = {
+  label: string;
+  description: string;
+  prompt: string;
+  primary?: boolean;
+};
+
+const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
+  {
+    label: "Generate account update",
+    description: "What changed, why it matters, and recommended moves.",
+    primary: true,
+    prompt:
+      "Generate an account update from the recent journal notes and uploaded documents. Use sections: What changed, Why it matters, Evidence, Recommended next moves. Cite source labels like [J1] and [D1] for factual claims.",
+  },
+  {
+    label: "Extract action items",
+    description: "Owners, deliverables, dates, and evidence.",
+    prompt:
+      "Extract action items from the recent journal notes and uploaded documents. For each action item include owner if stated, deliverable, due date or trigger if stated, and supporting source labels like [J1] or [D1]. If ownership or dates are missing, say so explicitly.",
+  },
+  {
+    label: "Find brief update candidates",
+    description: "Field-level suggestions to send to brief chat.",
+    prompt:
+      "Find brief update candidates supported by the recent journal notes and uploaded documents. For each candidate include the target brief section or field, proposed change, confidence, and evidence source labels like [J1] or [D1]. Do not claim you edited the brief.",
+  },
+  {
+    label: "Draft follow-up",
+    description: "A concise stakeholder-ready note.",
+    prompt:
+      "Draft a concise follow-up message for the account team based on recent journal notes and uploaded documents. Include key context, next steps, and source labels like [J1] or [D1] in a short evidence section.",
+  },
+  {
+    label: "Open questions",
+    description: "Gaps to resolve before outreach or brief edits.",
+    prompt:
+      "Identify open questions and evidence gaps from the recent journal notes and uploaded documents. Group by account strategy, stakeholders, technical fit, procurement, and next action. Cite source labels where a gap is based on a specific note or document.",
+  },
+];
+
+function trustedLegendStart(entry: Entry): number {
+  if (entry.author_type !== "assistant" || !entry.reply_to || !entry.body) {
+    return -1;
+  }
+  return findSourceLegendBlockStart(entry.body);
+}
+
+function extractCitationLabels(entry: Entry): string[] {
+  const legendStart = trustedLegendStart(entry);
+  if (legendStart < 0 || !entry.body) return [];
+  const answerText = entry.body.slice(0, legendStart);
+  const legendText = entry.body.slice(legendStart);
+  const validLabels = new Set<string>();
+  for (const match of legendText.matchAll(/\[(?:J|D)\d+\]/g)) {
+    validLabels.add(match[0]);
+  }
+  const citedLabels = new Set<string>();
+  for (const match of answerText.matchAll(/\[(?:J|D)\d+\]/g)) {
+    if (validLabels.has(match[0])) citedLabels.add(match[0]);
+  }
+  return Array.from(citedLabels);
+}
+
+function displayEntryBody(entry: Entry): string | null {
+  const legendStart = trustedLegendStart(entry);
+  if (legendStart < 0 || !entry.body) return entry.body;
+  return entry.body.slice(0, legendStart).trimEnd();
+}
+
+function renderCitationChips(entry: Entry) {
+  const labels = extractCitationLabels(entry);
+  if (labels.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-violet-900">
+      <span className="font-medium">Sources cited</span>
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="rounded-full border border-violet-200 bg-white px-2 py-0.5 font-mono text-[11px] text-violet-800 shadow-sm"
+        >
+          {label}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 export default function JournalSection({
@@ -167,6 +256,17 @@ export default function JournalSection({
 
   async function submit() {
     await postJournalEntry(composeText, askAi);
+  }
+
+  async function runIntelligenceAction(prompt: string) {
+    if (
+      composeText.trim() &&
+      !window.confirm("Replace your current draft with this intelligence action?")
+    ) {
+      return;
+    }
+    setAskAi(true);
+    await postJournalEntry(prompt, true);
   }
 
   async function uploadDocument({ summarizeAfterUpload = false } = {}) {
@@ -348,10 +448,12 @@ export default function JournalSection({
                   This entry was deleted.
                 </span>
               ) : (
-                e.body
+                displayEntryBody(e)
               )}
             </p>
           )}
+
+          {isAssistant && !editing && !deleted && renderCitationChips(e)}
 
           {!editing && !deleted && e.documents && e.documents.length > 0 && (
             <div className="mt-3 space-y-2">
@@ -421,6 +523,49 @@ export default function JournalSection({
       {loading && !entries && (
         <div className="text-sm text-muted">Loading journal…</div>
       )}
+
+      <div className="mb-4 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
+              <Sparkles className="size-3.5" /> Journal Intelligence
+            </div>
+            <h3 className="mt-3 text-base font-semibold text-ink">
+              Turn notes and evidence into account motion
+            </h3>
+            <p className="mt-1 max-w-2xl text-sm text-muted">
+              Generate advisory digests, action items, brief-update candidates,
+              follow-ups, and open questions. Replies stay in the journal and cite
+              source labels such as [J1] and [D1] when the model uses notes or
+              uploaded documents.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {INTELLIGENCE_ACTIONS.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                onClick={() => runIntelligenceAction(action.prompt)}
+                disabled={posting || loading || !entries}
+                className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  action.primary
+                    ? "border-violet-300 bg-violet-600 text-white shadow-sm hover:bg-violet-700"
+                    : "border-slate-200 bg-white text-ink hover:border-violet-200 hover:bg-violet-50"
+                }`}
+              >
+                <span className="block font-medium">{action.label}</span>
+                <span
+                  className={`mt-0.5 block text-xs ${
+                    action.primary ? "text-violet-100" : "text-muted"
+                  }`}
+                >
+                  {action.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {entries && entries.length === 0 && (
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">

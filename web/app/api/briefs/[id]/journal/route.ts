@@ -10,7 +10,9 @@ import {
   type JournalListRow,
 } from "@/lib/journal";
 import {
+  formatJournalSourceLegend,
   runJournalReply,
+  sanitizeJournalAssistantText,
   type JournalContextEntry,
 } from "@/lib/journalAi";
 import { friendlyAnthropicError } from "@/lib/anthropicError";
@@ -156,17 +158,27 @@ export async function POST(
       created_at: r.created_at,
     }));
 
+  const documents = listRecentDocumentsForBrief(params.id);
+
   try {
     const result = await runJournalReply({
       brief_json: briefJson,
       entries: contextEntries,
-      documents: listRecentDocumentsForBrief(params.id),
+      documents,
     });
+    const safeReplyText = sanitizeJournalAssistantText(result.text);
     const aiEntryId = insertJournalEntry({
       briefId: params.id,
       userId: user.id,
       authorType: "assistant",
-      body: result.text,
+      body: `${safeReplyText}${formatJournalSourceLegend(
+        {
+          brief_json: briefJson,
+          entries: contextEntries,
+          documents,
+        },
+        safeReplyText,
+      )}`,
       replyTo: userEntryId,
     });
     const aiEntry = loadEntryDto(params.id, aiEntryId);
