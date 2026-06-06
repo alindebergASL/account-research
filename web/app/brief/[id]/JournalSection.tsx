@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpen,
+  CheckCircle2,
   FileText,
   Loader2,
   Paperclip,
@@ -59,6 +60,21 @@ function authorName(e: Entry): string {
   return e.author?.display_name || e.author?.email || "Unknown";
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.ceil(kb)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function summarizeDocumentPrompt(filename: string): string {
+  return `Summarize the uploaded document "${filename}" for this account. Call out: 1) what changed or is being requested, 2) why it matters for the account brief, and 3) recommended next actions. Use the document as evidence and name it in your answer.`;
+}
+
+function briefUpdatePrompt(filename: string): string {
+  return `Review the uploaded document "${filename}" and tell me what should be added or changed in the account brief. Be specific about fields or sections, and cite the uploaded document by filename.`;
+}
+
 export default function JournalSection({
   briefId,
   currentUserId,
@@ -79,6 +95,7 @@ export default function JournalSection({
   const [posting, setPosting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const composeRef = useRef<HTMLTextAreaElement>(null);
@@ -107,16 +124,29 @@ export default function JournalSection({
     load();
   }, [load]);
 
-  async function submit() {
-    const text = composeText.trim();
-    if (!text || posting) return;
+  function prepareAssistantPrompt(text: string) {
+    if (
+      composeText.trim() &&
+      composeText !== text &&
+      !window.confirm("Replace your current draft with this assistant prompt?")
+    ) {
+      return;
+    }
+    setAskAi(true);
+    setComposeText(text);
+    window.setTimeout(() => composeRef.current?.focus(), 0);
+  }
+
+  async function postJournalEntry(text: string, askAssistant: boolean) {
+    const trimmed = text.trim();
+    if (!trimmed || posting) return false;
     setPosting(true);
     setAiError(null);
     try {
       const r = await fetch(`/api/briefs/${briefId}/journal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: text, ask_ai: askAi }),
+        body: JSON.stringify({ body: trimmed, ask_ai: askAssistant }),
       });
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
@@ -126,17 +156,25 @@ export default function JournalSection({
       setComposeText("");
       if (data.ai_error) setAiError(data.ai_error);
       await load();
+      return !data.ai_error;
     } catch (e: any) {
       setError(e?.message || "Failed to post entry");
+      return false;
     } finally {
       setPosting(false);
     }
   }
 
-  async function uploadDocument() {
+  async function submit() {
+    await postJournalEntry(composeText, askAi);
+  }
+
+  async function uploadDocument({ summarizeAfterUpload = false } = {}) {
     if (!selectedFile || uploading) return;
+    const uploadedFileName = selectedFile.name;
     setUploading(true);
     setAiError(null);
+    setUploadNotice(null);
     try {
       const form = new FormData();
       form.set("file", selectedFile);
@@ -149,9 +187,25 @@ export default function JournalSection({
         const data = await r.json().catch(() => ({}));
         throw new Error(data?.error || `HTTP ${r.status}`);
       }
+      const data = await r.json();
       setSelectedFile(null);
       setComposeText("");
-      await load();
+      const filename = data?.document?.filename || uploadedFileName;
+      setUploadNotice(
+        summarizeAfterUpload
+          ? `Uploaded ${filename}. Asking the journal assistant to summarize it now…`
+          : `Uploaded ${filename}. Its extracted text is now available to the journal assistant and brief chat.`,
+      );
+      if (summarizeAfterUpload) {
+        const assistantPosted = await postJournalEntry(summarizeDocumentPrompt(filename), true);
+        if (assistantPosted) {
+          setUploadNotice(`Uploaded ${filename}. The journal assistant reply was added below.`);
+        } else {
+          setUploadNotice(`Uploaded ${filename}. The assistant could not summarize it automatically; try again from Ask assistant.`);
+        }
+      } else {
+        await load();
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to upload document");
     } finally {
@@ -306,12 +360,30 @@ export default function JournalSection({
                   key={doc.id}
                   className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800"
                 >
-                  <div className="flex items-center gap-2 font-medium text-ink">
-                    <FileText className="size-3.5" />
-                    <span>{doc.filename}</span>
-                    <span className="text-muted font-normal">
-                      · {Math.ceil(doc.byte_size / 1024)} KB
-                    </span>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2 font-medium text-ink">
+                      <FileText className="size-3.5" />
+                      <span>{doc.filename}</span>
+                      <span className="text-muted font-normal">
+                        · {formatFileSize(doc.byte_size)}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename))}
+                        className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                      >
+                        <Sparkles className="size-3" /> Summarize with AI
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename))}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      >
+                        Find brief updates
+                      </button>
+                    </div>
                   </div>
                   <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-muted">
                     {doc.content_preview}
@@ -335,8 +407,9 @@ export default function JournalSection({
         )}
       </header>
       <p className="text-sm text-muted mb-4">
-        Log updates, ask questions, and chat with the assistant. Everyone with
-        access to this brief can see and add to the journal.
+        Log updates, attach evidence, and ask the journal assistant to interpret
+        recent notes or uploaded documents. Journal replies are advisory; use the
+        main brief chat when you want the brief itself edited.
       </p>
 
       {error && (
@@ -351,8 +424,8 @@ export default function JournalSection({
 
       {entries && entries.length === 0 && (
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-          No journal entries yet. Post an update, or toggle “Ask the assistant”
-          to ask a question grounded in this brief.
+          No journal entries yet. Add a note, upload a document, or switch to
+          “Ask assistant” to ask a question grounded in this brief.
         </div>
       )}
 
@@ -364,7 +437,47 @@ export default function JournalSection({
         </div>
       )}
 
+      {uploadNotice && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+          <span>{uploadNotice}</span>
+        </div>
+      )}
+
       <div className="mt-6 rounded-xl border border-[var(--line)] bg-white p-4">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div
+            role="group"
+            aria-label="Journal compose mode"
+            className="inline-flex w-fit rounded-lg border border-[var(--line)] bg-slate-50 p-0.5 text-sm"
+          >
+            <button
+              type="button"
+              aria-pressed={!askAi}
+              onClick={() => setAskAi(false)}
+              className={`rounded-md px-3 py-1.5 transition-colors ${
+                !askAi ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"
+              }`}
+            >
+              Add note
+            </button>
+            <button
+              type="button"
+              aria-pressed={askAi}
+              onClick={() => setAskAi(true)}
+              className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 transition-colors ${
+                askAi ? "bg-violet-600 text-white shadow-sm" : "text-muted hover:text-ink"
+              }`}
+            >
+              <Sparkles className="size-3.5" /> Ask assistant
+            </button>
+          </div>
+          <p className="text-xs text-muted">
+            {askAi
+              ? "Assistant answers appear in the journal and can use recent uploaded documents."
+              : "Notes are saved as-is. Turn on Ask assistant when you want an AI reply."}
+          </p>
+        </div>
         <textarea
           ref={composeRef}
           value={composeText}
@@ -377,20 +490,50 @@ export default function JournalSection({
           rows={3}
           className="w-full rounded-lg border border-[var(--line)] p-2 text-sm"
         />
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <label className="inline-flex items-center gap-2 text-sm text-ink cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={askAi}
-              onChange={(e) => setAskAi(e.target.checked)}
-              className="size-4 accent-violet-600"
-            />
-            <span className="inline-flex items-center gap-1">
-              <Sparkles className="size-3.5 text-violet-600" />
-              Ask the assistant
-            </span>
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
+        {askAi && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt("Summarize the most recent uploaded document and explain why it matters for this account.")}
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+            >
+              Summarize latest document
+            </button>
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt("What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.")}
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+            >
+              Suggest brief updates
+            </button>
+            <button
+              type="button"
+              onClick={() => prepareAssistantPrompt("Turn the recent journal notes and documents into recommended next actions for this account.")}
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+            >
+              Draft next actions
+            </button>
+          </div>
+        )}
+        <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                <Paperclip className="size-3.5" /> Upload evidence
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                PDFs up to 50 pages / 2MB, plus text, markdown, CSV, JSON, XML,
+                and YAML. Uploading extracts text and makes it available to AI;
+                it does not edit the brief automatically.
+              </p>
+              {selectedFile && (
+                <p className="mt-2 truncate text-xs text-ink">
+                  Selected: <span className="font-medium">{selectedFile.name}</span>
+                  <span className="text-muted"> · {formatFileSize(selectedFile.size)}</span>
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink hover:bg-slate-50">
               <Paperclip className="size-3.5" />
               <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
@@ -403,13 +546,26 @@ export default function JournalSection({
             </label>
             <button
               type="button"
-              onClick={uploadDocument}
-              disabled={uploading || !selectedFile}
+              onClick={() => uploadDocument()}
+              disabled={uploading || posting || !selectedFile}
               className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink disabled:opacity-50"
             >
               {uploading && <Loader2 className="size-3.5 animate-spin" />}
               {uploading ? "Uploading…" : "Upload document"}
             </button>
+            <button
+              type="button"
+              onClick={() => uploadDocument({ summarizeAfterUpload: true })}
+              disabled={uploading || posting || !selectedFile}
+              className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 disabled:opacity-50"
+            >
+              {uploading && <Loader2 className="size-3.5 animate-spin" />}
+              Upload + summarize
+            </button>
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex justify-end">
             <button
               type="button"
               onClick={submit}
@@ -419,7 +575,6 @@ export default function JournalSection({
               {posting && <Loader2 className="size-3.5 animate-spin" />}
               {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
             </button>
-          </div>
         </div>
       </div>
     </section>

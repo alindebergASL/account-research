@@ -458,7 +458,7 @@ test("document upload persistence is atomic when document insert fails", async (
   assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
 });
 
-test("JournalSection exposes document upload controls with text and PDF accept", () => {
+test("JournalSection exposes document upload controls with text, PDF accept, and AI follow-up affordances", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const source = fs.readFileSync(
@@ -468,6 +468,11 @@ test("JournalSection exposes document upload controls with text and PDF accept",
   assert.match(source, /type=\"file\"/);
   assert.match(source, /\/journal\/documents/);
   assert.match(source, /Upload document/);
+  assert.match(source, /Upload \+ summarize/);
+  assert.match(source, /Summarize latest document/);
+  assert.match(source, /Find brief updates/);
+  assert.match(source, /Journal compose mode/);
+  assert.match(source, /it does not edit the brief automatically/);
   assert.match(source, /application\/pdf/);
   assert.match(source, /\.pdf/);
 });
