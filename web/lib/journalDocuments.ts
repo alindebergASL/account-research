@@ -391,6 +391,7 @@ export function formatDocumentsForPrompt(documents: JournalDocumentRow[]): strin
       const suffix = doc.content_text.length > DOCUMENT_CONTEXT_CHARS_PER_DOC ? "\n…[truncated]" : "";
       const payload = JSON.stringify(
         {
+          source_label: `D${idx + 1}`,
           index: idx + 1,
           filename: doc.filename,
           mime: doc.mime_type,

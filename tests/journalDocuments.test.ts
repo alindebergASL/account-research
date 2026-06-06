@@ -502,6 +502,54 @@ test("journal assistant prompt includes uploaded documents as untrusted context"
   assert.match(messages.system, /secure AI infrastructure/);
 });
 
+test("journal assistant prompt assigns citeable source labels to entries and documents", () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+  const doc = db()
+    .prepare(`SELECT * FROM journal_documents WHERE brief_id = ? AND filename = ?`)
+    .get("brief-doc", "cio-briefing.md") as typeof import("../web/lib/db").JournalDocumentRow;
+  const messages = journalAi.buildJournalMessages({
+    brief_json: makeBrief(),
+    entries: [
+      {
+        author_type: "user",
+        author_display_name: "Owner",
+        body: "Meeting note: CIO wants secure AI infrastructure.",
+        created_at: Date.now(),
+      },
+      {
+        author_type: "assistant",
+        author_display_name: "Assistant",
+        body: "Prior answer about research computing.",
+        created_at: Date.now() + 1,
+      },
+    ],
+    documents: [doc],
+  });
+
+  assert.match(messages.system, /cite source labels like \[J1\] or \[D1\]/i);
+  assert.match(messages.system, /\[J1\] \[Owner\] Meeting note/);
+  assert.match(messages.system, /\[J2\] \[Assistant\] Prior answer/);
+  assert.match(messages.system, /"source_label": "D1"/);
+  assert.match(messages.system, /"filename": "cio-briefing\.md"/);
+});
+
+test("JournalSection exposes intelligence panel actions and citation chips", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const source = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+  assert.match(source, /Journal Intelligence/);
+  assert.match(source, /Generate account update/);
+  assert.match(source, /Extract action items/);
+  assert.match(source, /Find brief update candidates/);
+  assert.match(source, /Draft follow-up/);
+  assert.match(source, /Open questions/);
+  assert.match(source, /renderCitationChips/);
+  assert.match(source, /Sources cited/);
+});
+
 test("Hermes chat path includes document-aware update and citation instructions", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");

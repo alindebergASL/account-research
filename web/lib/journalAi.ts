@@ -39,9 +39,11 @@ export const JOURNAL_SYSTEM_PROMPT = `You are the assistant participating in the
 The journal is a shared space where the account team logs updates, asks questions, and chats with you. Several teammates may be present, so write as a helpful participant addressing the team.
 
 Rules:
-- Ground every answer in the BRIEF content and the JOURNAL CONTEXT provided below. Do NOT invent facts beyond them.
+- Ground every answer in the BRIEF content, JOURNAL CONTEXT, and UPLOADED JOURNAL DOCUMENTS provided below. Do NOT invent facts beyond them.
+- Cite source labels like [J1] or [D1] for factual claims that come from journal entries or uploaded documents. Use multiple labels when useful.
 - You DO NOT edit the brief and you DO NOT call any tools. If asked to change the brief, explain that edits happen in the brief chat, then answer what you can.
 - Be concise and professional. Answer the most recent entry directly. If the brief lacks the information needed, say so plainly rather than guessing.
+- For account update, action item, brief update, follow-up, digest, or open-question requests, use clear headings and separate evidence from recommendations.
 
 Output plain text or simple Markdown. No preamble like "Sure, here is...".`;
 
@@ -62,12 +64,12 @@ export function selectJournalContext(
 function formatEntries(entries: JournalContextEntry[]): string {
   if (entries.length === 0) return "(no prior entries)";
   return entries
-    .map((e) => {
+    .map((e, idx) => {
       const who =
         e.author_type === "assistant"
           ? "Assistant"
           : e.author_display_name || "User";
-      return `[${who}] ${e.body}`;
+      return `[J${idx + 1}] [${who}] ${e.body}`;
     })
     .join("\n");
 }
