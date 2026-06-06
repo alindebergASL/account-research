@@ -180,6 +180,169 @@ test("journal document upload stores extracted text, creates a journal entry, an
   assert.equal(listed.documents[0].content_preview.includes("secure AI infrastructure"), true);
 });
 
+test("source-scoped document selection preserves selected uploaded documents", async () => {
+  const firstForm = new FormData();
+  firstForm.set("body", "Uploading the first duplicate source.");
+  firstForm.set(
+    "file",
+    new File(["First duplicate source says pricing changed."], "duplicate-source.md", { type: "text/markdown" }),
+  );
+  const firstRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: firstForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(firstRes.status, 200);
+  const firstData = await jsonOf(firstRes);
+
+  const secondForm = new FormData();
+  secondForm.set("body", "Uploading the second duplicate source.");
+  secondForm.set(
+    "file",
+    new File(["Second duplicate source says security review changed."], "duplicate-source.md", { type: "text/markdown" }),
+  );
+  const secondRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: secondForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(secondRes.status, 200);
+  const secondData = await jsonOf(secondRes);
+
+  const selected = journalDocuments.listDocumentsForBriefByIds("brief-doc", [
+    secondData.document.id,
+    firstData.document.id,
+  ]);
+  assert.equal(selected.length, 2);
+  assert.equal(selected[0].id, secondData.document.id);
+  assert.equal(selected[1].id, firstData.document.id);
+  assert.match(selected[0].content_text, /security review changed/);
+  assert.match(selected[1].content_text, /pricing changed/);
+
+  const missingScopeRes = await journalRoute.POST(
+    makeJsonReq({
+      sessionId: ownerSession,
+      body: {
+        body: "Summarize the selected source.",
+        ask_ai: true,
+        source_document_ids: ["missing-doc"],
+      },
+    }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(missingScopeRes.status, 400);
+  assert.match((await jsonOf(missingScopeRes)).error, /Selected source document was not found/);
+});
+
+test("source-scoped journal assistant receives only selected documents in selected order", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+
+  const unselectedForm = new FormData();
+  unselectedForm.set("body", "Uploading an unselected source.");
+  unselectedForm.set(
+    "file",
+    new File(["Unselected source should not reach the scoped assistant prompt."], "unselected-scope.md", { type: "text/markdown" }),
+  );
+  const unselectedRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: unselectedForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(unselectedRes.status, 200);
+
+  const alphaForm = new FormData();
+  alphaForm.set("body", "Uploading scoped alpha source.");
+  alphaForm.set(
+    "file",
+    new File(["Scoped alpha source says implementation starts with workspaces."], "scoped-alpha.md", { type: "text/markdown" }),
+  );
+  const alphaRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: alphaForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(alphaRes.status, 200);
+  const alpha = await jsonOf(alphaRes);
+
+  const betaForm = new FormData();
+  betaForm.set("body", "Uploading scoped beta source.");
+  betaForm.set(
+    "file",
+    new File(["Scoped beta source says source cards need preview actions."], "scoped-beta.md", { type: "text/markdown" }),
+  );
+  const betaRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: betaForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(betaRes.status, 200);
+  const beta = await jsonOf(betaRes);
+
+  let capturedSystem = "";
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create(args) {
+        capturedSystem = args.system;
+        return { content: [{ type: "text", text: "Scoped answer [D1] [D2]." }] };
+      },
+    },
+  });
+  try {
+    const askRes = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "Summarize only the selected sources.",
+          ask_ai: true,
+          source_document_ids: [` ${beta.document.id} `, alpha.document.id, beta.document.id],
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(askRes.status, 200);
+    const askData = await jsonOf(askRes);
+    assert.equal(askData.entries.length, 2);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+
+  assert.match(capturedSystem, /"source_label": "D1"[\s\S]*scoped-beta\.md/);
+  assert.match(capturedSystem, /"source_label": "D2"[\s\S]*scoped-alpha\.md/);
+  assert.match(capturedSystem, /source cards need preview actions/);
+  assert.match(capturedSystem, /implementation starts with workspaces/);
+  assert.doesNotMatch(capturedSystem, /Unselected source should not reach/);
+  assert.ok(capturedSystem.indexOf("scoped-beta.md") < capturedSystem.indexOf("scoped-alpha.md"));
+});
+
+test("source-scoped journal assistant rejects deleted document scope before writing entries", async () => {
+  const form = new FormData();
+  form.set("body", "Uploading soon-deleted scoped source.");
+  form.set(
+    "file",
+    new File(["Deleted scoped source should not be used."], "deleted-scope.md", { type: "text/markdown" }),
+  );
+  const uploadRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(uploadRes.status, 200);
+  const uploaded = await jsonOf(uploadRes);
+  db()
+    .prepare(`UPDATE journal_entries SET deleted_at = ? WHERE id = ?`)
+    .run(Date.now(), uploaded.entry.id);
+
+  const beforeEntries = (db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n;
+  const res = await journalRoute.POST(
+    makeJsonReq({
+      sessionId: ownerSession,
+      body: {
+        body: "Summarize this deleted source.",
+        ask_ai: true,
+        source_document_ids: [uploaded.document.id],
+      },
+    }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await jsonOf(res)).error, /Selected source document was not found/);
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
+});
+
 test("journal document upload is hidden from outsiders", async () => {
   const before = (db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n;
   const form = new FormData();
@@ -480,6 +643,16 @@ test("JournalSection exposes document upload controls with text, PDF accept, and
   assert.match(source, /it does not edit the brief automatically/);
   assert.match(source, /application\/pdf/);
   assert.match(source, /\.pdf/);
+  assert.match(source, /type JournalWorkspace = "timeline" \| "sources" \| "intelligence"/);
+  assert.match(source, /Source Library/);
+  assert.match(source, /collectJournalSources/);
+  assert.match(source, /Compare with brief/);
+  assert.match(source, /Ask about this/);
+  assert.match(source, /source-scoped/);
+  assert.match(source, /source_document_ids/);
+  assert.match(source, /AI context scoped/);
+  assert.match(source, /postJournalEntry\(prompt, true, \[\]\)/);
+  assert.match(source, /uploadedDocumentId \? \[uploadedDocumentId\] : \[\]/);
 });
 
 test("journal assistant prompt includes uploaded documents as untrusted context", () => {
@@ -719,7 +892,10 @@ test("Hermes chat path includes document-aware update and citation instructions"
 });
 
 test("brief chat prompt includes uploaded document excerpts and tells writable chat to update when relevant", async () => {
-  const docs = journalDocuments.listRecentDocumentsForBrief("brief-doc", 5);
+  const doc = db()
+    .prepare(`SELECT id FROM journal_documents WHERE brief_id = ? AND filename = ?`)
+    .get("brief-doc", "cio-briefing.md") as any;
+  const docs = journalDocuments.listDocumentsForBriefByIds("brief-doc", [doc.id]);
   const system = briefChatContext.buildBriefChatSystemPrompt({
     brief: makeBrief(),
     documents: docs,

@@ -370,6 +370,30 @@ export function loadJournalDocument(briefId: string, documentId: string): Journa
   );
 }
 
+export function listDocumentsForBriefByIds(
+  briefId: string,
+  documentIds: string[],
+): JournalDocumentRow[] {
+  const uniqueIds = Array.from(new Set(documentIds)).filter(Boolean);
+  if (uniqueIds.length === 0) return [];
+  const rows = db()
+    .prepare(
+      `SELECT d.*
+         FROM journal_documents d
+         JOIN journal_entries j ON j.id = d.journal_entry_id
+        WHERE d.brief_id = ?
+          AND j.brief_id = ?
+          AND j.deleted_at IS NULL
+          AND d.id IN (${uniqueIds.map(() => "?").join(",")})`,
+    )
+    .all(briefId, briefId, ...uniqueIds) as JournalDocumentRow[];
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return uniqueIds.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [row] : [];
+  });
+}
+
 export function listRecentDocumentsForBrief(
   briefId: string,
   limit = DOCUMENT_CONTEXT_MAX,
