@@ -643,8 +643,9 @@ test("JournalSection exposes document upload controls with text, PDF accept, and
   assert.match(source, /it does not edit the brief automatically/);
   assert.match(source, /application\/pdf/);
   assert.match(source, /\.pdf/);
-  assert.match(source, /type JournalWorkspace = "timeline" \| "sources" \| "intelligence"/);
+  assert.match(source, /type JournalWorkspace = "timeline" \| "sources" \| "intelligence" \| "review"/);
   assert.match(source, /Source Library/);
+  assert.match(source, /Review Queue/);
   assert.match(source, /collectJournalSources/);
   assert.match(source, /Compare with brief/);
   assert.match(source, /Ask about this/);
@@ -866,6 +867,15 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /Find brief update candidates/);
   assert.match(source, /Draft follow-up/);
   assert.match(source, /Open questions/);
+  assert.match(source, /Review Queue/);
+  assert.match(source, /Review brief update candidates/);
+  assert.match(source, /Review action items/);
+  assert.match(source, /Review decisions/);
+  assert.match(source, /Review open questions/);
+  assert.match(source, /human-review queue only/);
+  assert.match(source, /Do not assign anyone or create durable tasks/);
+  assert.match(source, /Do not mark anything official/);
+  assert.match(source, /it does not\s+edit the brief, assign tasks, or mark decisions official/);
   assert.match(source, /renderCitationChips/);
   assert.match(source, /Sources cited/);
   assert.match(source, /findSourceLegendBlockStart/);
