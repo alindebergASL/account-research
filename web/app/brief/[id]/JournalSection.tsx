@@ -40,7 +40,7 @@ type Entry = {
   documents?: JournalDocument[];
 };
 
-type JournalWorkspace = "timeline" | "sources" | "intelligence";
+type JournalWorkspace = "timeline" | "sources" | "intelligence" | "review";
 
 type JournalSource = JournalDocument & {
   entryId: string;
@@ -131,6 +131,34 @@ const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
     description: "Gaps to resolve before outreach or brief edits.",
     prompt:
       "Identify open questions and evidence gaps from the recent journal notes and uploaded documents. Group by account strategy, stakeholders, technical fit, procurement, and next action. Cite source labels where a gap is based on a specific note or document.",
+  },
+];
+
+const REVIEW_QUEUE_ACTIONS: IntelligenceAction[] = [
+  {
+    label: "Review brief update candidates",
+    description: "Proposed brief changes with target fields, confidence, and evidence.",
+    primary: true,
+    prompt:
+      "Create a review queue of brief update candidates from recent journal notes and uploaded documents. For each candidate include: target brief section or field, proposed text, evidence source labels like [J1] or [D1], confidence, risk of applying, and suggested reviewer action. Do not claim you edited the brief; this is a human-review queue only.",
+  },
+  {
+    label: "Review action items",
+    description: "Suggested tasks that need owner/date review before becoming durable.",
+    prompt:
+      "Create a human-review queue of action item candidates from recent journal notes and uploaded documents. For each candidate include: task, owner if stated, due date or trigger if stated, evidence source labels like [J1] or [D1], missing fields, confidence, and suggested reviewer action. Do not assign anyone or create durable tasks.",
+  },
+  {
+    label: "Review decisions",
+    description: "Potential decisions, rationale, reversals, and contradictions.",
+    prompt:
+      "Create a human-review queue of decision candidates from recent journal notes and uploaded documents. For each candidate include: decision statement, date or timing if known, decider or owner if stated, rationale, evidence source labels like [J1] or [D1], alternatives or reversal conditions if present, confidence, and suggested reviewer action. Do not mark anything official.",
+  },
+  {
+    label: "Review open questions",
+    description: "Unresolved account questions to ask, answer, or convert to brief updates.",
+    prompt:
+      "Create a human-review queue of open questions from recent journal notes and uploaded documents. Group by account strategy, stakeholders, technical fit, procurement, budget/timing, competitors, and next meeting prep. For each question include evidence source labels like [J1] or [D1], why it matters, whether it blocks outreach or brief edits, and suggested reviewer action.",
   },
 ];
 
@@ -644,6 +672,11 @@ export default function JournalSection({
       label: "Intelligence",
       description: "Advisory AI actions",
     },
+    {
+      id: "review",
+      label: "Review Queue",
+      description: "Brief, action, decision candidates",
+    },
   ];
 
   return (
@@ -671,7 +704,7 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-3">
+      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-4">
         {workspaceTabs.map((tab) => {
           const active = activeWorkspace === tab.id;
           return (
@@ -740,6 +773,51 @@ export default function JournalSection({
                   <span
                     className={`mt-0.5 block text-xs ${
                       action.primary ? "text-violet-100" : "text-muted"
+                    }`}
+                  >
+                    {action.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeWorkspace === "review" && (
+        <div className="mb-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-800">
+                <CheckCircle2 className="size-3.5" /> Review Queue
+              </div>
+              <h3 className="mt-3 text-base font-semibold text-ink">
+                Turn messy evidence into human-review candidates
+              </h3>
+              <p className="mt-1 max-w-2xl text-sm text-muted">
+                Start the next Journal phase with review-only queues for brief
+                updates, action items, decisions, and open questions. The assistant
+                can suggest candidates with evidence and confidence, but it does not
+                edit the brief, assign tasks, or mark decisions official.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
+              {REVIEW_QUEUE_ACTIONS.map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={() => runIntelligenceAction(action.prompt)}
+                  disabled={posting || loading || !entries}
+                  className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    action.primary
+                      ? "border-amber-300 bg-amber-600 text-white shadow-sm hover:bg-amber-700"
+                      : "border-slate-200 bg-white text-ink hover:border-amber-200 hover:bg-amber-50"
+                  }`}
+                >
+                  <span className="block font-medium">{action.label}</span>
+                  <span
+                    className={`mt-0.5 block text-xs ${
+                      action.primary ? "text-amber-100" : "text-muted"
                     }`}
                   >
                     {action.description}
