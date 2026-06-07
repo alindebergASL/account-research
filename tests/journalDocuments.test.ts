@@ -875,7 +875,7 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /human-review queue only/);
   assert.match(source, /Do not assign anyone or create durable tasks/);
   assert.match(source, /Do not mark anything official/);
-  assert.match(source, /it does not\s+edit the brief, assign tasks, or mark decisions official/);
+  assert.match(source, /it does not\s+edit the brief, assign\s+tasks, or mark decisions official/);
   assert.match(source, /renderCitationChips/);
   assert.match(source, /Sources cited/);
   assert.match(source, /findSourceLegendBlockStart/);
@@ -888,6 +888,36 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /displayEntryBody\(e\)/);
   assert.match(source, /renderCitationChips\(e\)/);
   assert.match(source, /Replace your current draft with this intelligence action/);
+});
+
+test("JournalSection grounds workspaces in the current brief baseline", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+  const pageSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/page.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /type JournalBriefContext/);
+  assert.match(journalSource, /briefContext/);
+  assert.match(journalSource, /Brief baseline/);
+  assert.match(journalSource, /Current brief priority/);
+  assert.match(journalSource, /Current next action/);
+  assert.match(journalSource, /Current brief sources/);
+  assert.match(journalSource, /Use this workspace to reconcile new journal evidence with what the brief already says/);
+  assert.match(journalSource, /Compare evidence against the current brief baseline/);
+  assert.match(journalSource, /Brief-grounded review/);
+  assert.match(journalSource, /which current brief claim it supports, contradicts, or updates/);
+  assert.match(journalSource, /View brief baseline first/);
+  assert.match(pageSource, /briefContext=\{\{/);
+  assert.match(pageSource, /account_name: brief\.account_name/);
+  assert.match(pageSource, /priority_summary: brief\.priority_summary/);
+  assert.match(pageSource, /next_action: brief\.next_action/);
+  assert.match(pageSource, /sources_count: brief\.sources\.length/);
 });
 
 test("Hermes chat path includes document-aware update and citation instructions", () => {

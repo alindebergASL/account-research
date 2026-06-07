@@ -49,6 +49,13 @@ type JournalSource = JournalDocument & {
   entryCreatedAt: number;
 };
 
+type JournalBriefContext = {
+  account_name: string;
+  priority_summary: string;
+  next_action: string;
+  sources_count: number;
+};
+
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 function relativeTime(ts: number): string {
@@ -106,7 +113,7 @@ const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
     description: "What changed, why it matters, and recommended moves.",
     primary: true,
     prompt:
-      "Generate an account update from the recent journal notes and uploaded documents. Use sections: What changed, Why it matters, Evidence, Recommended next moves. Cite source labels like [J1] and [D1] for factual claims.",
+      "Generate an account update from the recent journal notes and uploaded documents, explicitly comparing it to the current brief baseline. Use sections: What changed, Current brief baseline, Evidence, Recommended next moves. Cite source labels like [J1] and [D1] for factual claims.",
   },
   {
     label: "Extract action items",
@@ -118,7 +125,7 @@ const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
     label: "Find brief update candidates",
     description: "Field-level suggestions to send to brief chat.",
     prompt:
-      "Find brief update candidates supported by the recent journal notes and uploaded documents. For each candidate include the target brief section or field, proposed change, confidence, and evidence source labels like [J1] or [D1]. Do not claim you edited the brief.",
+      "Find brief update candidates supported by the recent journal notes and uploaded documents. For each candidate include the target brief section or field, which current brief claim it supports, contradicts, or updates, proposed change, confidence, and evidence source labels like [J1] or [D1]. Do not claim you edited the brief.",
   },
   {
     label: "Draft follow-up",
@@ -140,7 +147,7 @@ const REVIEW_QUEUE_ACTIONS: IntelligenceAction[] = [
     description: "Proposed brief changes with target fields, confidence, and evidence.",
     primary: true,
     prompt:
-      "Create a review queue of brief update candidates from recent journal notes and uploaded documents. For each candidate include: target brief section or field, proposed text, evidence source labels like [J1] or [D1], confidence, risk of applying, and suggested reviewer action. Do not claim you edited the brief; this is a human-review queue only.",
+      "Create a review queue of brief update candidates from recent journal notes and uploaded documents. For each candidate include: target brief section or field, current brief baseline or claim, proposed text, evidence source labels like [J1] or [D1], confidence, risk of applying, and suggested reviewer action. Do not claim you edited the brief; this is a human-review queue only.",
   },
   {
     label: "Review action items",
@@ -229,11 +236,15 @@ export default function JournalSection({
   currentUserId,
   isAdmin,
   canManage,
+  briefContext,
+  onViewBriefBaseline,
 }: {
   briefId: string;
   currentUserId: string;
   isAdmin: boolean;
   canManage: boolean;
+  briefContext: JournalBriefContext;
+  onViewBriefBaseline?: () => void;
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [activeWorkspace, setActiveWorkspace] =
@@ -694,6 +705,58 @@ export default function JournalSection({
         main brief chat when you want the brief itself edited.
       </p>
 
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
+              Brief baseline
+            </div>
+            <h3 className="mt-3 text-base font-semibold text-ink">
+              {briefContext.account_name}
+            </h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Current brief priority
+                </div>
+                <p className="mt-1 line-clamp-3 text-sm text-slate-800">
+                  {briefContext.priority_summary || "Not set yet."}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Current next action
+                </div>
+                <p className="mt-1 line-clamp-3 text-sm text-slate-800">
+                  {briefContext.next_action || "Not set yet."}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Current brief sources
+                </div>
+                <p className="mt-1 text-sm text-slate-800">
+                  {briefContext.sources_count} saved source{briefContext.sources_count === 1 ? "" : "s"}
+                </p>
+              </div>
+            </div>
+            <p className="mt-3 max-w-3xl text-sm text-muted">
+              Use this workspace to reconcile new journal evidence with what the brief already says,
+              then send accepted changes through the main brief chat or brief editor.
+            </p>
+          </div>
+          {onViewBriefBaseline && (
+            <button
+              type="button"
+              onClick={onViewBriefBaseline}
+              className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              View brief baseline first
+            </button>
+          )}
+        </div>
+      </div>
+
       {error && (
         <div className="mb-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
@@ -751,9 +814,9 @@ export default function JournalSection({
               </h3>
               <p className="mt-1 max-w-2xl text-sm text-muted">
                 Generate advisory digests, action items, brief-update candidates,
-                follow-ups, and open questions. Replies stay in the journal and cite
-                source labels such as [J1] and [D1] when the model uses notes or
-                uploaded documents.
+                follow-ups, and open questions. Compare evidence against the current brief baseline,
+                keep replies in the journal, and cite source labels such as [J1]
+                and [D1] when the model uses notes or uploaded documents.
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -795,10 +858,11 @@ export default function JournalSection({
                 Turn messy evidence into human-review candidates
               </h3>
               <p className="mt-1 max-w-2xl text-sm text-muted">
-                Start the next Journal phase with review-only queues for brief
-                updates, action items, decisions, and open questions. The assistant
-                can suggest candidates with evidence and confidence, but it does not
-                edit the brief, assign tasks, or mark decisions official.
+                Brief-grounded review starts with the current brief baseline, then
+                queues journal evidence as brief updates, action items, decisions,
+                and open questions. The assistant can suggest candidates with
+                evidence and confidence, but it does not edit the brief, assign
+                tasks, or mark decisions official.
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
@@ -841,7 +905,9 @@ export default function JournalSection({
             <p className="mt-1 max-w-3xl text-sm text-muted">
               Sources are pulled from journal document uploads. Use source-scoped
               prompts to summarize, compare against the brief, or find supported
-              brief update candidates without directly editing the brief.
+              brief update candidates without directly editing the brief. Each source
+              should help confirm, challenge, or update the current brief priority
+              and next action above.
             </p>
           </div>
           {sources.length === 0 ? (

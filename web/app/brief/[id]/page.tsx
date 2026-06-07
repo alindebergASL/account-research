@@ -232,6 +232,13 @@ export default function BriefPage({ params }: { params: { id: string } }) {
             currentUserId={me.id}
             isAdmin={me.role === "admin"}
             canManage={access.can_manage}
+            briefContext={{
+              account_name: brief.account_name,
+              priority_summary: brief.priority_summary,
+              next_action: brief.next_action,
+              sources_count: brief.sources.length,
+            }}
+            onViewBriefBaseline={() => setViewMode("brief")}
           />
         ) : (
           <div className="max-w-7xl mx-auto px-6 mt-8 text-sm text-muted">
