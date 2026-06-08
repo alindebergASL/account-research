@@ -1,17 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
   FileText,
   Loader2,
+  MessageSquare,
   Paperclip,
   Pencil,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
+import { resolveCitedDocumentSource } from "@/lib/journalCitationResolution";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
+import CommentsSection from "./CommentsSection";
 
 type Author = {
   id: string;
@@ -40,7 +44,8 @@ type Entry = {
   documents?: JournalDocument[];
 };
 
-type JournalWorkspace = "timeline" | "sources" | "intelligence" | "review";
+type JournalWorkspace = "timeline" | "sources" | "intelligence" | "review" | "team";
+type TimelineFilter = "all" | "notes" | "assistant" | "documents";
 
 type JournalSource = JournalDocument & {
   entryId: string;
@@ -54,6 +59,54 @@ type JournalBriefContext = {
   priority_summary: string;
   next_action: string;
   sources_count: number;
+};
+
+type ReviewCandidateType = "brief_update" | "action_item" | "decision" | "open_question";
+type ReviewCandidateStatus =
+  | "new"
+  | "reviewing"
+  | "accepted"
+  | "sent_to_brief_chat"
+  | "applied"
+  | "dismissed";
+
+type ReviewCandidate = {
+  id: string;
+  candidate_type: ReviewCandidateType;
+  status: ReviewCandidateStatus;
+  title: string;
+  proposed_text: string;
+  target: string | null;
+  current_baseline: string | null;
+  evidence: string | null;
+  confidence: string | null;
+  risk: string | null;
+  source_entry_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+const timelineFilterLabels: Record<TimelineFilter, string> = {
+  all: "All entries",
+  notes: "Notes",
+  assistant: "Assistant",
+  documents: "Documents",
+};
+
+const candidateTypeLabels: Record<ReviewCandidateType, string> = {
+  brief_update: "Brief update",
+  action_item: "Action item",
+  decision: "Decision",
+  open_question: "Open question",
+};
+
+const candidateStatusLabels: Record<ReviewCandidateStatus, string> = {
+  new: "New",
+  reviewing: "Reviewing",
+  accepted: "Accepted",
+  sent_to_brief_chat: "Sent to brief chat",
+  applied: "Applied",
+  dismissed: "Dismissed",
 };
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
@@ -108,6 +161,25 @@ type IntelligenceAction = {
 };
 
 const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
+  {
+    label: "Catch me up",
+    description: "Concise account catch-up grounded in recent evidence.",
+    primary: true,
+    prompt:
+      "Catch me up on this account using the current brief baseline plus recent journal notes and uploaded documents. Use sections: Current state, What changed, What needs attention, Suggested next move, Evidence. Cite source labels like [J1] and [D1].",
+  },
+  {
+    label: "What changed since the last brief version",
+    description: "New evidence, challenged assumptions, and stale fields.",
+    prompt:
+      "Explain what changed since the last brief version based on recent journal notes and uploaded documents. Identify new facts, changed assumptions, stale brief fields, unresolved questions, and recommended brief-update candidates. Cite source labels like [J1] and [D1].",
+  },
+  {
+    label: "What needs attention",
+    description: "Prioritized risks, blockers, and next actions.",
+    prompt:
+      "Identify what needs attention for this account now. Rank the highest-priority risks, blockers, open questions, and next actions. For each item include why it matters, evidence source labels like [J1] or [D1], and whether it should become a review candidate.",
+  },
   {
     label: "Generate account update",
     description: "What changed, why it matters, and recommended moves.",
@@ -213,19 +285,25 @@ function collectJournalSources(entries: Entry[] | null): JournalSource[] {
     .sort((a, b) => b.created_at - a.created_at);
 }
 
-function renderCitationChips(entry: Entry) {
+function renderCitationChips(
+  entry: Entry,
+  onCitationClick?: (label: string, entry: Entry) => void,
+) {
   const labels = extractCitationLabels(entry);
   if (labels.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-violet-900">
       <span className="font-medium">Sources cited</span>
       {labels.map((label) => (
-        <span
+        <button
           key={label}
-          className="rounded-full border border-violet-200 bg-white px-2 py-0.5 font-mono text-[11px] text-violet-800 shadow-sm"
+          type="button"
+          onClick={() => onCitationClick?.(label, entry)}
+          className="rounded-full border border-violet-200 bg-white px-2 py-0.5 font-mono text-[11px] text-violet-800 shadow-sm hover:bg-violet-50"
+          title="Open cited source context"
         >
           {label}
-        </span>
+        </button>
       ))}
     </div>
   );
@@ -249,6 +327,18 @@ export default function JournalSection({
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [activeWorkspace, setActiveWorkspace] =
     useState<JournalWorkspace>("timeline");
+  const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
+  const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [newCandidateType, setNewCandidateType] = useState<ReviewCandidateType>("brief_update");
+  const [newCandidateTitle, setNewCandidateTitle] = useState("");
+  const [newCandidateTarget, setNewCandidateTarget] = useState("");
+  const [newCandidateText, setNewCandidateText] = useState("");
+  const [newCandidateEvidence, setNewCandidateEvidence] = useState("");
+  const [newCandidateConfidence, setNewCandidateConfidence] = useState("");
+  const [newCandidateRisk, setNewCandidateRisk] = useState("");
+  const [selectedSource, setSelectedSource] = useState<JournalSource | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -283,9 +373,30 @@ export default function JournalSection({
     }
   }, [briefId]);
 
+  const loadReviewCandidates = useCallback(async () => {
+    setReviewLoading(true);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/journal/review-candidates`, {
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      setReviewCandidates(data.candidates ?? []);
+      setReviewError(null);
+    } catch (e: any) {
+      setReviewError(e?.message || "Failed to load review candidates");
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [briefId]);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadReviewCandidates();
+  }, [load, loadReviewCandidates]);
 
   function prepareAssistantPrompt(text: string, sourceDocumentIds: string[] = []) {
     if (
@@ -355,6 +466,89 @@ export default function JournalSection({
     setAskAi(true);
     setScopedDocumentIds([]);
     await postJournalEntry(prompt, true, []);
+  }
+
+  async function createReviewCandidate() {
+    const title = newCandidateTitle.trim();
+    const proposedText = newCandidateText.trim();
+    if (!title || !proposedText) {
+      setReviewError("Review candidate needs a title and proposed text.");
+      return;
+    }
+    setReviewLoading(true);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/journal/review-candidates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate_type: newCandidateType,
+          title,
+          proposed_text: proposedText,
+          target: newCandidateTarget,
+          current_baseline: briefContext.priority_summary,
+          evidence: newCandidateEvidence,
+          confidence: newCandidateConfidence,
+          risk: newCandidateRisk,
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      setNewCandidateTitle("");
+      setNewCandidateTarget("");
+      setNewCandidateText("");
+      setNewCandidateEvidence("");
+      setNewCandidateConfidence("");
+      setNewCandidateRisk("");
+      setReviewError(null);
+      await loadReviewCandidates();
+    } catch (e: any) {
+      setReviewError(e?.message || "Failed to create review candidate");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  async function updateCandidateStatus(candidateId: string, status: ReviewCandidateStatus) {
+    setReviewLoading(true);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/journal/review-candidates/${candidateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      await loadReviewCandidates();
+    } catch (e: any) {
+      setReviewError(e?.message || "Failed to update review candidate");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  function briefChatPromptForCandidate(candidate: ReviewCandidate): string {
+    return `Please review this human-accepted Journal candidate and update the brief only if appropriate.\n\nType: ${candidateTypeLabels[candidate.candidate_type]}\nStatus: ${candidateStatusLabels[candidate.status]}\nTarget: ${candidate.target || "Not specified"}\nCurrent brief baseline: ${candidate.current_baseline || "Not specified"}\nProposed text: ${candidate.proposed_text}\nEvidence: ${candidate.evidence || "Not specified"}\nConfidence: ${candidate.confidence || "Not specified"}\nRisk / review notes: ${candidate.risk || "Not specified"}\n\nPreserve version history and do not invent evidence.`;
+  }
+
+  async function copyBriefChatPrompt(candidate: ReviewCandidate) {
+    const prompt = briefChatPromptForCandidate(candidate);
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setUploadNotice("Copied brief-chat prompt. Open the brief to apply it through the normal versioned chat flow.");
+    } catch {
+      setComposeText(prompt);
+      setAskAi(false);
+      setUploadNotice("Clipboard was unavailable, so the brief-chat prompt was copied into the Journal composer.");
+    }
+  }
+
+  function openBriefToApply(candidate?: ReviewCandidate) {
+    if (candidate) void updateCandidateStatus(candidate.id, "sent_to_brief_chat");
+    onViewBriefBaseline?.();
   }
 
   async function uploadDocument({ summarizeAfterUpload = false } = {}) {
@@ -470,6 +664,13 @@ export default function JournalSection({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => setSelectedSource(source)}
+              className="rounded-md border border-sky-200 bg-white px-2 py-1 text-xs font-medium text-sky-800 hover:bg-sky-50"
+            >
+              Preview source
+            </button>
+            <button
+              type="button"
               onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id])}
               className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
             >
@@ -508,6 +709,148 @@ export default function JournalSection({
         )}
       </div>
     );
+  }
+
+  function renderSourcePreview() {
+    if (!selectedSource) {
+      return (
+        <div className="hidden rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted shadow-sm xl:block">
+          <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
+            <FileText className="size-3.5" /> Source preview
+          </div>
+          <p className="mt-3">
+            Select “Preview source” on a source card to inspect extracted text and run source-scoped prompts without changing the brief.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
+              <FileText className="size-3.5" /> Source preview
+            </div>
+            <h3 className="mt-3 text-base font-semibold text-ink">{selectedSource.filename}</h3>
+            <p className="mt-1 text-xs text-muted">
+              Uploaded {relativeTime(selectedSource.created_at)} by {selectedSource.entryAuthor} · {formatFileSize(selectedSource.byte_size)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedSource(null)}
+            className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
+            aria-label="Close source preview"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <p className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-800">
+          {selectedSource.content_preview || "No text preview extracted."}
+        </p>
+        {selectedSource.entryBody && (
+          <p className="mt-3 rounded-lg border border-slate-100 bg-white p-3 text-xs text-muted">
+            Attached journal note: {selectedSource.entryBody}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(selectedSource.filename), [selectedSource.id])}
+            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+          >
+            <Sparkles className="size-3" /> Summarize
+          </button>
+          <button
+            type="button"
+            onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(selectedSource.filename), [selectedSource.id])}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Compare with brief
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderReviewCandidate(candidate: ReviewCandidate) {
+    return (
+      <div key={candidate.id} className="rounded-xl border border-amber-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+                {candidateTypeLabels[candidate.candidate_type]}
+              </span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
+                {candidateStatusLabels[candidate.status]}
+              </span>
+              {candidate.confidence && <span className="text-xs text-muted">Confidence: {candidate.confidence}</span>}
+            </div>
+            <h3 className="mt-2 text-sm font-semibold text-ink">{candidate.title}</h3>
+            {candidate.target && <p className="mt-1 text-xs text-muted">Target: {candidate.target}</p>}
+          </div>
+          <select
+            aria-label="Review candidate status"
+            value={candidate.status}
+            disabled={reviewLoading}
+            onChange={(ev) => updateCandidateStatus(candidate.id, ev.target.value as ReviewCandidateStatus)}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+          >
+            {Object.entries(candidateStatusLabels).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+        {candidate.current_baseline && (
+          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs text-slate-700">
+            <span className="font-semibold text-slate-800">Current baseline:</span> {candidate.current_baseline}
+          </div>
+        )}
+        <p className="mt-3 whitespace-pre-wrap text-sm text-slate-900">{candidate.proposed_text}</p>
+        {candidate.evidence && (
+          <p className="mt-3 rounded-lg bg-violet-50 p-3 text-xs text-violet-900">
+            Evidence: {candidate.evidence}
+          </p>
+        )}
+        {candidate.risk && (
+          <p className="mt-2 rounded-lg bg-rose-50 p-3 text-xs text-rose-900">
+            Risk / review note: {candidate.risk}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => copyBriefChatPrompt(candidate)}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Copy brief-chat prompt
+          </button>
+          {onViewBriefBaseline && (
+            <button
+              type="button"
+              onClick={() => openBriefToApply(candidate)}
+              className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+            >
+              Open brief to apply
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function openCitationContext(label: string, entry: Entry) {
+    if (label.startsWith("[D")) {
+      const source = resolveCitedDocumentSource(label, entry.body, sources);
+      if (source) {
+        setSelectedSource(source);
+        setActiveWorkspace("sources");
+        return;
+      }
+    }
+    setTimelineFilter("all");
+    setActiveWorkspace("timeline");
   }
 
   function renderEntry(e: Entry) {
@@ -613,7 +956,7 @@ export default function JournalSection({
             </p>
           )}
 
-          {isAssistant && !editing && !deleted && renderCitationChips(e)}
+          {isAssistant && !editing && !deleted && renderCitationChips(e, openCitationContext)}
 
           {!editing && !deleted && e.documents && e.documents.length > 0 && (
             <div className="mt-3 space-y-2">
@@ -660,6 +1003,13 @@ export default function JournalSection({
   }
 
   const sources = collectJournalSources(entries);
+  const filteredEntries = useMemo(() => {
+    if (!entries) return null;
+    if (timelineFilter === "notes") return entries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
+    if (timelineFilter === "assistant") return entries.filter((e) => e.author_type === "assistant");
+    if (timelineFilter === "documents") return entries.filter((e) => (e.documents?.length ?? 0) > 0);
+    return entries;
+  }, [entries, timelineFilter]);
   const workspaceTabs: Array<{
     id: JournalWorkspace;
     label: string;
@@ -687,6 +1037,12 @@ export default function JournalSection({
       id: "review",
       label: "Review Queue",
       description: "Brief, action, decision candidates",
+      count: reviewCandidates.length,
+    },
+    {
+      id: "team",
+      label: "Team Room",
+      description: "General discussion",
     },
   ];
 
@@ -767,7 +1123,7 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-4">
+      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-5">
         {workspaceTabs.map((tab) => {
           const active = activeWorkspace === tab.id;
           return (
@@ -848,47 +1204,133 @@ export default function JournalSection({
       )}
 
       {activeWorkspace === "review" && (
-        <div className="mb-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-800">
-                <CheckCircle2 className="size-3.5" /> Review Queue
+        <div className="mb-4 space-y-4">
+          <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-800">
+                  <CheckCircle2 className="size-3.5" /> Review Queue
+                </div>
+                <h3 className="mt-3 text-base font-semibold text-ink">
+                  Turn messy evidence into human-review candidates
+                </h3>
+                <p className="mt-1 max-w-2xl text-sm text-muted">
+                  Brief-grounded review starts with the current brief baseline, then
+                  queues journal evidence as brief updates, action items, decisions,
+                  and open questions. The assistant can suggest candidates with
+                  evidence and confidence, but it does not edit the brief, assign
+                  tasks, or mark decisions official.
+                </p>
               </div>
-              <h3 className="mt-3 text-base font-semibold text-ink">
-                Turn messy evidence into human-review candidates
-              </h3>
-              <p className="mt-1 max-w-2xl text-sm text-muted">
-                Brief-grounded review starts with the current brief baseline, then
-                queues journal evidence as brief updates, action items, decisions,
-                and open questions. The assistant can suggest candidates with
-                evidence and confidence, but it does not edit the brief, assign
-                tasks, or mark decisions official.
-              </p>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
-              {REVIEW_QUEUE_ACTIONS.map((action) => (
-                <button
-                  key={action.label}
-                  type="button"
-                  onClick={() => runIntelligenceAction(action.prompt)}
-                  disabled={posting || loading || !entries}
-                  className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                    action.primary
-                      ? "border-amber-300 bg-amber-600 text-white shadow-sm hover:bg-amber-700"
-                      : "border-slate-200 bg-white text-ink hover:border-amber-200 hover:bg-amber-50"
-                  }`}
-                >
-                  <span className="block font-medium">{action.label}</span>
-                  <span
-                    className={`mt-0.5 block text-xs ${
-                      action.primary ? "text-amber-100" : "text-muted"
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
+                {REVIEW_QUEUE_ACTIONS.map((action) => (
+                  <button
+                    key={action.label}
+                    type="button"
+                    onClick={() => runIntelligenceAction(action.prompt)}
+                    disabled={posting || loading || !entries}
+                    className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      action.primary
+                        ? "border-amber-300 bg-amber-600 text-white shadow-sm hover:bg-amber-700"
+                        : "border-slate-200 bg-white text-ink hover:border-amber-200 hover:bg-amber-50"
                     }`}
                   >
-                    {action.description}
-                  </span>
-                </button>
-              ))}
+                    <span className="block font-medium">{action.label}</span>
+                    <span
+                      className={`mt-0.5 block text-xs ${
+                        action.primary ? "text-amber-100" : "text-muted"
+                      }`}
+                    >
+                      {action.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
+            <p className="mt-1 text-xs text-muted">
+              Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
+            </p>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <select
+                value={newCandidateType}
+                onChange={(ev) => setNewCandidateType(ev.target.value as ReviewCandidateType)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                aria-label="Review candidate type"
+              >
+                {Object.entries(candidateTypeLabels).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+              <input
+                value={newCandidateTitle}
+                onChange={(ev) => setNewCandidateTitle(ev.target.value)}
+                placeholder="Candidate title"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <input
+                value={newCandidateTarget}
+                onChange={(ev) => setNewCandidateTarget(ev.target.value)}
+                placeholder="Target brief field/section, owner, or question category"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <input
+                value={newCandidateConfidence}
+                onChange={(ev) => setNewCandidateConfidence(ev.target.value)}
+                placeholder="Confidence, e.g. high / medium / low"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <textarea
+                value={newCandidateText}
+                onChange={(ev) => setNewCandidateText(ev.target.value)}
+                placeholder="Proposed text / action / decision / open question"
+                rows={3}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm lg:col-span-2"
+              />
+              <textarea
+                value={newCandidateEvidence}
+                onChange={(ev) => setNewCandidateEvidence(ev.target.value)}
+                placeholder="Evidence/source labels, e.g. [J1], [D1], filename, quote"
+                rows={2}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <textarea
+                value={newCandidateRisk}
+                onChange={(ev) => setNewCandidateRisk(ev.target.value)}
+                placeholder="Risk of applying / reviewer note"
+                rows={2}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+            </div>
+            {reviewError && (
+              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+                {reviewError}
+              </div>
+            )}
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={createReviewCandidate}
+                disabled={reviewLoading}
+                className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {reviewLoading && <Loader2 className="size-3.5 animate-spin" />}
+                Save review candidate
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {reviewCandidates.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-amber-200 bg-white p-6 text-sm text-muted">
+                No review candidate cards yet. Use the assistant actions above to draft candidates, then save the reviewed items here for team follow-up.
+              </div>
+            ) : (
+              reviewCandidates.map((candidate) => renderReviewCandidate(candidate))
+            )}
           </div>
         </div>
       )}
@@ -916,21 +1358,60 @@ export default function JournalSection({
               make extracted evidence available to the Journal assistant.
             </div>
           ) : (
-            <div className="grid gap-3 xl:grid-cols-2">
-              {sources.map((source) => renderSourceCard(source))}
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="grid gap-3 xl:grid-cols-2">
+                {sources.map((source) => renderSourceCard(source))}
+              </div>
+              {renderSourcePreview()}
             </div>
           )}
         </div>
       )}
 
-      {activeWorkspace === "timeline" && entries && entries.length === 0 && (
-        <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-          No journal entries yet. Add a note, upload a document, or switch to
-          “Ask assistant” to ask a question grounded in this brief.
+      {activeWorkspace === "team" && (
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
+            <MessageSquare className="size-3.5" /> Team Room
+          </div>
+          <h3 className="mt-3 text-base font-semibold text-ink">General team discussion</h3>
+          <p className="mt-1 max-w-3xl text-sm text-muted">
+            Use this general team discussion space for teammate review comments and alignment that should not be mixed with source-grounded Journal evidence or assistant review cards.
+          </p>
+          <div className="mt-4">
+            <CommentsSection briefId={briefId} currentUserId={currentUserId} isAdmin={isAdmin} />
+          </div>
         </div>
       )}
 
-      {activeWorkspace === "timeline" && entries && entries.map((e) => renderEntry(e))}
+      {activeWorkspace === "timeline" && entries && (
+        <div className="mb-3 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+          {(Object.keys(timelineFilterLabels) as TimelineFilter[]).map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              aria-pressed={timelineFilter === filter}
+              onClick={() => setTimelineFilter(filter)}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${
+                timelineFilter === filter
+                  ? "bg-ink text-white"
+                  : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              {timelineFilterLabels[filter]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeWorkspace === "timeline" && filteredEntries && filteredEntries.length === 0 && (
+        <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
+          {entries?.length === 0
+            ? "No journal entries yet. Add a note, upload a document, or switch to Ask assistant to ask a question grounded in this brief."
+            : "No entries match this Timeline filter."}
+        </div>
+      )}
+
+      {activeWorkspace === "timeline" && filteredEntries && filteredEntries.map((e) => renderEntry(e))}
 
       {aiError && (
         <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">

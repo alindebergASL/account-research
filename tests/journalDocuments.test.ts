@@ -143,6 +143,67 @@ test("migration creates journal_documents table and indexes", () => {
   ]);
 });
 
+test("migration creates journal review candidate table and indexes", () => {
+  const names = (db()
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type IN ('table','index') AND name IN ('journal_review_candidates','idx_journal_review_candidates_brief_status','idx_journal_review_candidates_brief_created')`,
+    )
+    .all() as Array<{ name: string }>).map((r) => r.name).sort();
+  assert.deepEqual(names, [
+    "idx_journal_review_candidates_brief_created",
+    "idx_journal_review_candidates_brief_status",
+    "journal_review_candidates",
+  ]);
+});
+
+test("review candidate API creates, lists, and updates human-review cards without editing the brief", async () => {
+  const candidateRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/route");
+  const candidateItemRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/[candidateId]/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/[candidateId]/route");
+
+  const before = db()
+    .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
+    .get("brief-doc") as any;
+  const createRes = await candidateRoute.POST(
+    makeJsonReq({
+      sessionId: ownerSession,
+      body: {
+        candidate_type: "brief_update",
+        title: "Update priority from CIO memo",
+        proposed_text: "Security review is now the top blocker.",
+        target: "priority_summary",
+        current_baseline: "Existing priority summary",
+        evidence: "[D1] cio-briefing.md",
+        confidence: "high",
+        risk: "Needs human confirmation before brief edit",
+      },
+    }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(createRes.status, 200);
+  const created = await jsonOf(createRes);
+  assert.equal(created.candidate.status, "new");
+  assert.equal(created.candidate.candidate_type, "brief_update");
+
+  const listRes = await candidateRoute.GET(makeJsonReq({ sessionId: ownerSession }), {
+    params: { id: "brief-doc" },
+  });
+  const listed = await jsonOf(listRes);
+  assert.equal(listed.candidates.some((c: any) => c.id === created.candidate.id), true);
+
+  const patchRes = await candidateItemRoute.PATCH(
+    makeJsonReq({ sessionId: ownerSession, body: { status: "sent_to_brief_chat" } }),
+    { params: { id: "brief-doc", candidateId: created.candidate.id } },
+  );
+  assert.equal(patchRes.status, 200);
+  const patched = await jsonOf(patchRes);
+  assert.equal(patched.candidate.status, "sent_to_brief_chat");
+
+  const after = db()
+    .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
+    .get("brief-doc") as any;
+  assert.equal(after.brief_json, before.brief_json);
+});
+
 test("journal document upload stores extracted text, creates a journal entry, and lists metadata", async () => {
   const form = new FormData();
   form.set("body", "Uploading the CIO briefing note.");
@@ -806,15 +867,42 @@ test("journal source legend neutralizes marker-shaped untrusted fields", () => {
   assert.doesNotMatch(legend, /\[D8\]/);
 });
 
-test("source legend helper recognizes only server-formatted legend blocks", () => {
+test("source legend helper recognizes and parses only server-formatted legend blocks", () => {
   const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
-  const trusted = `Answer [J1].${legend.formatSourceLegendBlock(["[J1] Owner journal entry"])}`;
+  const trusted = `Answer [J1] and [D1].${legend.formatSourceLegendBlock([
+    "[J1] Owner journal entry",
+    "[D1] older-plan.pdf",
+  ])}`;
   assert.ok(legend.findSourceLegendBlockStart(trusted) > 0);
+  assert.deepEqual(legend.parseSourceLegendEntries(trusted), [
+    { label: "[J1]", kind: "journal", text: "Owner journal entry" },
+    { label: "[D1]", kind: "document", text: "older-plan.pdf" },
+  ]);
+  const spoofed = `User text ${legend.SOURCE_LEGEND_MARKER}\n${legend.SOURCE_LEGEND_HEADING}\n[D1] newest-plan.pdf`;
+  assert.equal(legend.findSourceLegendBlockStart(spoofed), -1);
+  assert.deepEqual(legend.parseSourceLegendEntries(spoofed), []);
+});
+
+test("citation resolver uses the assistant reply source legend instead of current source order", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const citationResolution = require("../web/lib/journalCitationResolution") as typeof import("../web/lib/journalCitationResolution");
+  const oldReplyBody = `The older plan changed procurement risk [D1].${legend.formatSourceLegendBlock([
+    "[D1] older-plan.pdf",
+  ])}`;
+  const olderSource = { id: "old-doc", filename: "older-plan.pdf" };
+  const newerSource = { id: "new-doc", filename: "newer-plan.pdf" };
+
   assert.equal(
-    legend.findSourceLegendBlockStart(
-      `User text ${legend.SOURCE_LEGEND_MARKER}\n${legend.SOURCE_LEGEND_HEADING}\n[J1] fake`,
-    ),
-    -1,
+    citationResolution.resolveCitedDocumentSource("[D1]", oldReplyBody, [newerSource, olderSource]),
+    olderSource,
+  );
+  assert.equal(
+    citationResolution.resolveCitedDocumentSource("[D1]", oldReplyBody, [
+      { id: "newest-doc", filename: "newest-upload.pdf" },
+      newerSource,
+      olderSource,
+    ]),
+    olderSource,
   );
 });
 
@@ -886,7 +974,10 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /validLabels\.has\(match\[0\]\)/);
   assert.match(source, /displayEntryBody/);
   assert.match(source, /displayEntryBody\(e\)/);
-  assert.match(source, /renderCitationChips\(e\)/);
+  assert.match(source, /renderCitationChips\(e, openCitationContext\)/);
+  assert.match(source, /resolveCitedDocumentSource\(label, entry\.body, sources\)/);
+  assert.doesNotMatch(source, /sources\[docIndex\]/);
+  assert.doesNotMatch(source, /Number\(label\.replace\(\/\\D\/g/);
   assert.match(source, /Replace your current draft with this intelligence action/);
 });
 
@@ -918,6 +1009,44 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(pageSource, /priority_summary: brief\.priority_summary/);
   assert.match(pageSource, /next_action: brief\.next_action/);
   assert.match(pageSource, /sources_count: brief\.sources\.length/);
+});
+
+test("JournalSection exposes concrete review workflow, timeline filters, source preview, catch-up, and team room", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /type ReviewCandidate/);
+  assert.match(journalSource, /reviewCandidates/);
+  assert.match(journalSource, /candidateStatusLabels/);
+  assert.match(journalSource, /New/);
+  assert.match(journalSource, /Reviewing/);
+  assert.match(journalSource, /Accepted/);
+  assert.match(journalSource, /Sent to brief chat/);
+  assert.match(journalSource, /Applied/);
+  assert.match(journalSource, /Dismissed/);
+  assert.match(journalSource, /Copy brief-chat prompt/);
+  assert.match(journalSource, /Open brief to apply/);
+  assert.match(journalSource, /TimelineFilter/);
+  assert.match(journalSource, /All entries/);
+  assert.match(journalSource, /Notes/);
+  assert.match(journalSource, /Assistant/);
+  assert.match(journalSource, /Documents/);
+  assert.match(journalSource, /selectedSource/);
+  assert.match(journalSource, /Source preview/);
+  assert.match(journalSource, /Preview source/);
+  assert.match(journalSource, /openCitationContext/);
+  assert.match(journalSource, /Open cited source context/);
+  assert.match(journalSource, /setActiveWorkspace\("sources"\)/);
+  assert.match(journalSource, /Catch me up/);
+  assert.match(journalSource, /What changed since the last brief version/);
+  assert.match(journalSource, /What needs attention/);
+  assert.match(journalSource, /Team Room/);
+  assert.match(journalSource, /CommentsSection/);
+  assert.match(journalSource, /general team discussion/);
 });
 
 test("Hermes chat path includes document-aware update and citation instructions", () => {
