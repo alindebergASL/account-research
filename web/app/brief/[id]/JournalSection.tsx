@@ -20,6 +20,7 @@ import {
 } from "@/lib/journalCitationResolution";
 import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
 import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
+import { buildJournalCockpitSummary } from "@/lib/journalCockpitSummary";
 import {
   buildJournalSearchRecallPrompt,
   searchJournalWorkspace,
@@ -1440,6 +1441,7 @@ export default function JournalSection({
   const selectedPreviewMatchesSearch =
     !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
   const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
+  const cockpitSummary = buildJournalCockpitSummary(displayedReviewCandidates);
 
   function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
     const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
@@ -1699,7 +1701,8 @@ export default function JournalSection({
       {renderCitationContext()}
 
       {activeWorkspace === "intelligence" && (
-        <div className="mb-4 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
+        <div className="mb-4 space-y-4">
+          <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
@@ -1738,6 +1741,72 @@ export default function JournalSection({
                   </span>
                 </button>
               ))}
+            </div>
+          </div>
+          </div>
+
+          <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  Reviewed account signals
+                </div>
+                <h3 className="mt-1 text-base font-semibold text-ink">Account Intelligence Cockpit</h3>
+                <p className="mt-1 max-w-3xl text-sm text-muted">
+                  First-pass cockpit cards are derived only from review candidates that are accepted, sent to brief chat, or applied. New, reviewing, and dismissed cards remain in the Review Queue until a human promotes them.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2">
+                  <div className="text-lg font-semibold text-indigo-900">{cockpitSummary.reviewedCount}</div>
+                  <div className="text-indigo-700">reviewed</div>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="text-lg font-semibold text-slate-800">{cockpitSummary.pendingCount}</div>
+                  <div className="text-muted">pending</div>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="text-lg font-semibold text-slate-800">{cockpitSummary.dismissedCount}</div>
+                  <div className="text-muted">dismissed</div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-4">
+              {STRUCTURED_REVIEW_BOARDS.map((board) => {
+                const reviewedCards = cockpitSummary.cardsByType[board.type];
+                return (
+                  <div key={board.type} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold text-ink">{board.title}</h4>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{reviewedCards.length}</span>
+                    </div>
+                    {reviewedCards.length === 0 ? (
+                      <p className="mt-2 text-xs text-muted">No reviewed signal yet.</p>
+                    ) : (
+                      <p className="mt-2 line-clamp-3 text-xs text-slate-700">{reviewedCards[0].title}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 space-y-2">
+              <h4 className="text-sm font-semibold text-ink">Priority reviewed cards</h4>
+              {cockpitSummary.priorityCards.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-muted">
+                  No accepted, sent, or applied review candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
+                </div>
+              ) : (
+                cockpitSummary.priorityCards.map((card) => (
+                  <div key={card.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium text-ink">{card.title}</span>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{candidateStatusLabels[card.status]}</span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-muted">{card.proposed_text}</p>
+                    {card.evidence && <p className="mt-2 text-xs text-slate-600">Evidence: {card.evidence}</p>}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
