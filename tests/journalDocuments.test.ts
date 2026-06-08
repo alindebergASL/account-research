@@ -906,6 +906,46 @@ test("citation resolver uses the assistant reply source legend instead of curren
   );
 });
 
+test("citation resolver resolves journal and brief-source legend entries without trusting label order", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const citationResolution = require("../web/lib/journalCitationResolution") as typeof import("../web/lib/journalCitationResolution");
+  const replyBody = `The CIO asked for procurement next steps [J1] and the baseline source agrees [D2].${legend.formatSourceLegendBlock([
+    "[J1] Owner journal entry — CIO asked whether procurement can start in June",
+    "[D2] California procurement plan",
+  ])}`;
+  const citedJournalEntry = {
+    id: "journal-old",
+    body: "CIO asked whether procurement can start in June and wants follow-up.",
+  };
+  const otherJournalEntry = {
+    id: "journal-new",
+    body: "Different note that happens to be newer.",
+  };
+  const citedBriefSource = {
+    title: "California procurement plan",
+    url: "https://example.edu/procurement-plan",
+    accessed: "2026-06-01",
+  };
+  const otherBriefSource = {
+    title: "Newest unrelated source",
+    url: "https://example.edu/newest",
+    accessed: "2026-06-02",
+  };
+
+  assert.equal(
+    citationResolution.resolveCitedJournalEntry("[J1]", replyBody, [otherJournalEntry, citedJournalEntry]),
+    citedJournalEntry,
+  );
+  assert.equal(
+    citationResolution.resolveCitedBriefSource("[D2]", replyBody, [otherBriefSource, citedBriefSource]),
+    citedBriefSource,
+  );
+  assert.equal(
+    citationResolution.resolveCitedJournalEntry("[J2]", replyBody, [citedJournalEntry]),
+    null,
+  );
+});
+
 test("monitor journal entries neutralize source legend marker-shaped summaries", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
@@ -976,6 +1016,12 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /displayEntryBody\(e\)/);
   assert.match(source, /renderCitationChips\(e, openCitationContext\)/);
   assert.match(source, /resolveCitedDocumentSource\(label, entry\.body, sources\)/);
+  assert.match(source, /resolveCitedJournalEntry\(label, entry\.body, entries \?\? \[\]\)/);
+  assert.match(source, /resolveCitedBriefSource\(label, entry\.body, currentBriefSources\)/);
+  assert.match(source, /Citation source context/);
+  assert.match(source, /Referenced journal entry/);
+  assert.match(source, /Referenced brief source/);
+  assert.match(source, /setSelectedCitationContext/);
   assert.doesNotMatch(source, /sources\[docIndex\]/);
   assert.doesNotMatch(source, /Number\(label\.replace\(\/\\D\/g/);
   assert.match(source, /Replace your current draft with this intelligence action/);
