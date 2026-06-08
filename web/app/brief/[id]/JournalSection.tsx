@@ -18,6 +18,7 @@ import {
   resolveCitedDocumentSource,
   resolveCitedJournalEntry,
 } from "@/lib/journalCitationResolution";
+import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
 import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 import { SourceLink } from "@/components/SourceLink";
@@ -100,6 +101,14 @@ type SelectedCitationContext =
       title: string;
       body: string | null;
       meta: string;
+      evidenceSnippet: string | null;
+    }
+  | {
+      kind: "document";
+      label: string;
+      title: string;
+      preview: string | null;
+      evidenceSnippet: string | null;
     }
   | {
       kind: "brief_source";
@@ -107,6 +116,7 @@ type SelectedCitationContext =
       title: string;
       url: string;
       accessed: string;
+      evidenceSnippet: string | null;
     }
   | {
       kind: "unresolved";
@@ -827,6 +837,14 @@ export default function JournalSection({
     );
   }
 
+  async function copyCitationEvidence(evidenceSnippet: string) {
+    try {
+      await navigator.clipboard.writeText(evidenceSnippet);
+    } catch {
+      setError("Could not copy evidence snippet to clipboard.");
+    }
+  }
+
   function renderCitationContext() {
     if (!selectedCitationContext) return null;
     const context = selectedCitationContext;
@@ -839,6 +857,7 @@ export default function JournalSection({
             </div>
             <h3 className="mt-3 text-sm font-semibold text-ink">
               {context.kind === "journal" && "Referenced journal entry"}
+              {context.kind === "document" && "Referenced uploaded document"}
               {context.kind === "brief_source" && "Referenced brief source"}
               {context.kind === "unresolved" && "Citation context unavailable"}
             </h3>
@@ -860,6 +879,16 @@ export default function JournalSection({
             </p>
           </div>
         )}
+        {context.kind === "document" && (
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+            <p className="text-sm font-medium text-ink">{context.title}</p>
+            {context.preview && (
+              <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-sm text-slate-900">
+                {context.preview}
+              </p>
+            )}
+          </div>
+        )}
         {context.kind === "brief_source" && (
           <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
             <p className="text-sm font-medium text-ink">{context.title || "Untitled source"}</p>
@@ -871,6 +900,27 @@ export default function JournalSection({
               />
             </div>
             {context.accessed && <p className="mt-1 text-xs text-muted">Accessed {context.accessed}</p>}
+          </div>
+        )}
+        {context.kind !== "unresolved" && context.evidenceSnippet && (
+          <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">
+                  Cited source snippet
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-violet-950">
+                  {context.evidenceSnippet}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyCitationEvidence(context.evidenceSnippet || "")}
+                className="shrink-0 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              >
+                Copy evidence snippet
+              </button>
+            </div>
           </div>
         )}
         {context.kind === "unresolved" && (
@@ -951,10 +1001,18 @@ export default function JournalSection({
 
   function openCitationContext(label: string, entry: Entry) {
     setSelectedCitationContext(null);
+    const evidenceSnippet = citationEvidenceSnippet(label, entry.body);
     if (label.startsWith("[D")) {
       const source = resolveCitedDocumentSource(label, entry.body, sources);
       if (source) {
         setSelectedSource(source);
+        setSelectedCitationContext({
+          kind: "document",
+          label,
+          title: source.filename,
+          preview: source.content_preview,
+          evidenceSnippet,
+        });
         setActiveWorkspace("sources");
         return;
       }
@@ -966,6 +1024,7 @@ export default function JournalSection({
           title: briefSource.title,
           url: briefSource.url,
           accessed: briefSource.accessed,
+          evidenceSnippet,
         });
         setActiveWorkspace("sources");
         return;
@@ -980,6 +1039,7 @@ export default function JournalSection({
           title: authorName(journalEntry),
           body: displayEntryBody(journalEntry),
           meta: `${authorName(journalEntry)} · ${relativeTime(journalEntry.created_at)}`,
+          evidenceSnippet,
         });
         setTimelineFilter("all");
         setActiveWorkspace("timeline");
