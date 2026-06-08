@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, Globe2, Loader2, Lock, Mail, Share2, X } from "lucide-react";
 import {
   SHARE_LINK_TTL_OPTIONS,
@@ -62,7 +62,7 @@ export default function ShareDialog({
   const [linkEmailErrors, setLinkEmailErrors] = useState<Record<string, string>>({});
   const [linkEmailSuccess, setLinkEmailSuccess] = useState<Record<string, string>>({});
 
-  async function load() {
+  const load = useCallback(async function load() {
     try {
       const r = await fetch(`/api/briefs/${briefId}/shares`, {
         cache: "no-store",
@@ -76,9 +76,9 @@ export default function ShareDialog({
     } catch {
       setShares([]);
     }
-  }
+  }, [briefId]);
 
-  async function loadLinks() {
+  const loadLinks = useCallback(async function loadLinks() {
     try {
       const r = await fetch(`/api/briefs/${briefId}/share-links`, {
         cache: "no-store",
@@ -92,12 +92,12 @@ export default function ShareDialog({
     } catch {
       setLinks([]);
     }
-  }
+  }, [briefId]);
 
   useEffect(() => {
     load();
     loadLinks();
-  }, [briefId]);
+  }, [briefId, load, loadLinks]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

@@ -97,28 +97,4 @@ export function ConfidenceChip({ value }: { value: string }) {
   return <span className={`chip ${cls}`}>{value || "—"}</span>;
 }
 
-function isSafeSourceUrl(source: string): boolean {
-  try {
-    const parsed = new URL(source);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-export function SourceLink({ source }: { source: string }) {
-  if (!source) return <span className="text-muted">—</span>;
-  if (isSafeSourceUrl(source)) {
-    return (
-      <a
-        href={source}
-        target="_blank"
-        rel="noreferrer noopener"
-        className="text-accent hover:underline break-all"
-      >
-        {source}
-      </a>
-    );
-  }
-  return <span className="text-muted">{source}</span>;
-}
+export { isSafeSourceUrl, SourceLink } from "./SourceLink";

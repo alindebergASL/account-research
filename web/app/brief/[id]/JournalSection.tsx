@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { resolveCitedDocumentSource } from "@/lib/journalCitationResolution";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
+import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
 
 type Author = {
@@ -136,34 +137,6 @@ function formatFileSize(bytes: number): string {
   const kb = bytes / 1024;
   if (kb < 1024) return `${Math.ceil(kb)} KB`;
   return `${(kb / 1024).toFixed(1)} MB`;
-}
-
-function isSafeHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return (
-      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-      !parsed.username &&
-      !parsed.password
-    );
-  } catch {
-    return false;
-  }
-}
-
-function BriefSourceLink({ url }: { url: string }) {
-  if (!url) return <span className="text-muted">—</span>;
-  if (!isSafeHttpUrl(url)) return <span className="break-all text-muted">{url}</span>;
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer noopener"
-      className="break-all text-sky-800 hover:underline"
-    >
-      {url}
-    </a>
-  );
 }
 
 function summarizeDocumentPrompt(filename: string): string {
@@ -1405,7 +1378,11 @@ export default function JournalSection({
                       {source.title || "Untitled source"}
                     </p>
                     <div className="mt-1 text-sm">
-                      <BriefSourceLink url={source.url} />
+                      <SourceLink
+                        source={source.url}
+                        className="break-all text-sky-800 hover:underline"
+                        mutedClassName="break-all text-muted"
+                      />
                     </div>
                     {source.accessed && (
                       <p className="mt-1 text-xs text-muted">Accessed {source.accessed}</p>
