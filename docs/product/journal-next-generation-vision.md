@@ -13,7 +13,7 @@ The agreed starting path is:
 
 ## Current implementation status
 
-This document started as a product reference note in PR #81. Since then, PRs #82-#87 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, and advisory intelligence surface.
+This document started as a product reference note in PR #81. Since then, PRs #82-#89 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, and click-to-source citation context.
 
 Current production baseline on `main`:
 
@@ -25,7 +25,7 @@ Current production baseline on `main`:
 | Workspaces + source library | First production pass shipped | #82, #84, #86, #87 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources. Source counts now match the baseline plus uploads. |
 | Brief-grounded review queue | First production pass shipped | #83, #84, #85 | Review candidate cards exist for brief updates, actions, decisions, and open questions; status workflow and brief-chat handoff exist. No automatic brief mutation. |
 | Team Room separation | Shipped | #86 | General teammate discussion is separated from source-grounded Timeline evidence and made the default workspace. |
-| Citation/source trust layer | Partial | #78-#87 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, and source link rendering is hardened. Exact click-to-source passage preview/highlighting is the next trust-layer slice. |
+| Citation/source trust layer | First production pass shipped | #78-#89 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, source link rendering is hardened, spoofed legend blocks are ignored, and citation chips now open source context for referenced Journal entries, uploaded documents, or Brief baseline sources when resolvable. Passage-level highlighting and exact quote actions are still future polish. |
 | Account Intelligence Cockpit | Scaffolded | #80, #85 | The UI has an Intelligence surface and review workflow, but no cached structured cockpit built from accepted source/action/decision/question data yet. |
 
 ### Shipped foundation
@@ -39,11 +39,11 @@ Current production baseline on `main`:
 - Candidate status supports New, Reviewing, Accepted, Sent to brief chat, Applied, and Dismissed.
 - Safe source-link rendering is shared and rejects deceptive URLs containing username/password userinfo.
 - Server-formatted source legends are parsed defensively; spoofed user-authored marker blocks are ignored.
+- Citation chips on assistant answers open source context for resolvable `[J]` and `[D]` labels without relying on the current global source list order.
 
 ### Still partial / future
 
 - Source include/exclude toggles and source health labels: stale, duplicate, superseded, conflicting.
-- Click-to-source citation preview for `[J]` and `[D]` citations, including exact source context where available.
 - Passage-level highlighting and copy cited quote actions.
 - Automatic extraction of assistant output into saved review candidate cards.
 - Structured Actions, Decisions, and Questions boards with owners, due dates, and lifecycle metadata.
@@ -52,16 +52,16 @@ Current production baseline on `main`:
 
 ### Recommended next implementation slice
 
-Build the citation/source preview drawer next. Clicking a `[J]` or `[D]` citation in an assistant answer should open the relevant source context in the Journal instead of only leaving the reader to inspect the raw Timeline. This strengthens the trust layer before adding more automation.
+Build assistant-output extraction into saved Review Queue candidates next. When an assistant answer proposes brief updates, action items, decisions, or open questions, users should be able to turn the response into one or more durable human-review cards instead of manually copying prose into the Review Queue. This converts advisory AI output into structured, reviewable account-workspace objects while preserving the no-automatic-brief-mutation principle.
 
 Scope for that next slice:
 
-1. Parse citation labels in assistant answers.
-2. Resolve `[D#]` citations to uploaded document or Brief baseline source context when available.
-3. Resolve `[J#]` citations to the referenced Journal entry context when available.
-4. Open a source/context preview panel from the citation click.
-5. Keep unsupported/unresolved labels non-destructive: show a safe fallback rather than fabricating evidence.
-6. Add regression tests for source legend parsing, citation resolution, and rendered click targets.
+1. Detect candidate-like sections or lines in assistant answers without treating user-authored text as trusted instructions.
+2. Let users choose a candidate type and prefill title, proposed text, evidence, confidence, risk/reviewer notes, current baseline, and source entry id from the assistant answer.
+3. Preserve evidence labels like `[J1]` and `[D1]` from trusted assistant legends so saved candidates remain source-traceable.
+4. Keep saved candidates human-review-only: creating or updating cards must not edit the Brief, assign tasks, or mark decisions official.
+5. Keep unresolved citations safe: retain the label text and show a fallback rather than fabricating source context.
+6. Add regression tests for extraction helpers, candidate creation from assistant source entries, citation/evidence persistence, and spoofed legend safety.
 
 ## High-level thesis
 
