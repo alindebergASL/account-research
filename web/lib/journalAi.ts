@@ -85,7 +85,7 @@ export function sanitizeJournalAssistantText(text: string): string {
   return neutralizeSourceLegendMarkers(text).trim();
 }
 
-function sanitizeInlinePromptField(text: string, max = 120): string {
+export function sanitizeInlinePromptField(text: string, max = 120): string {
   const normalized = neutralizePromptText(text)
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
