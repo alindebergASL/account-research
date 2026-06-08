@@ -13,20 +13,20 @@ The agreed starting path is:
 
 ## Current implementation status
 
-This document started as a product reference note in PR #81. Since then, PRs #82-#89 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, and click-to-source citation context.
+This document started as a product reference note in PR #81. Since then, PRs #82-#94 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, click-to-source citation context, source health controls, assistant-to-candidate drafting, evidence snippets, and structured review boards.
 
 Current production baseline on `main`:
 
 | Area | Status | Shipped in | Notes |
 | --- | --- | --- | --- |
 | Journal document uploads | Shipped | #78, #79 | Uploads extract text and can be used by Journal AI; workflow polish followed the first upload PR. |
-| Intelligence panel / advisory prompts | Scaffolded | #80 | Users can ask for digests, brief-update candidates, follow-ups, and open questions, but durable generated cockpit cards are still future work. |
-| Product direction note | Shipped | #81 | This file became the guiding reference for subsequent Journal PRs. |
-| Workspaces + source library | First production pass shipped | #82, #84, #86, #87 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources. Source counts now match the baseline plus uploads. |
-| Brief-grounded review queue | First production pass shipped | #83, #84, #85 | Review candidate cards exist for brief updates, actions, decisions, and open questions; status workflow and brief-chat handoff exist. No automatic brief mutation. |
+| Intelligence panel / advisory prompts | Scaffolded | #80, #91 | Users can ask for digests, brief-update candidates, follow-ups, and open questions; assistant replies can now seed durable human-review candidates. Cached cockpit cards are still future work. |
+| Product direction note | Shipped | #81, #90; updated by #95 | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
+| Workspaces + source library | First production pass shipped | #82, #84, #86, #87, #93 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, and show first-pass health labels. |
+| Brief-grounded review queue | First production pass shipped | #83, #84, #85, #91, #94 | Review candidate cards exist for brief updates, actions, decisions, and open questions; assistant replies can draft candidates; structured board lanes now group candidate types. No automatic brief mutation. |
 | Team Room separation | Shipped | #86 | General teammate discussion is separated from source-grounded Timeline evidence and made the default workspace. |
-| Citation/source trust layer | First production pass shipped | #78-#89 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, source link rendering is hardened, spoofed legend blocks are ignored, and citation chips now open source context for referenced Journal entries, uploaded documents, or Brief baseline sources when resolvable. Passage-level highlighting and exact quote actions are still future polish. |
-| Account Intelligence Cockpit | Scaffolded | #80, #85 | The UI has an Intelligence surface and review workflow, but no cached structured cockpit built from accepted source/action/decision/question data yet. |
+| Citation/source trust layer | First production pass shipped | #78-#89, #92 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, source link rendering is hardened, spoofed legend blocks are ignored, citation chips open source context, and trusted legend entries can produce evidence snippets. True passage-level highlighting and exact-quote extraction are still future polish. |
+| Account Intelligence Cockpit | Scaffolded | #80, #85, #94 | The UI has an Intelligence surface, review workflow, and structured review boards, but no cached cockpit summary built from accepted evidence, actions, decisions, questions, and source changes yet. |
 
 ### Shipped foundation
 
@@ -34,34 +34,40 @@ Current production baseline on `main`:
 - Team Room is the default collaboration space and is separate from evidence/timeline entries.
 - Source Library shows uploaded Journal documents plus Brief baseline sources.
 - Source previews exist for uploaded documents.
-- Uploaded sources can scope assistant questions.
+- Uploaded sources can scope assistant questions and can be excluded from assistant context.
+- Source Library shows first-pass source health labels for current, stale, duplicate, superseded, and conflicting uploads.
 - Review Queue stores human-review candidates without silently editing the Brief.
+- Assistant replies can draft review candidates while preserving trusted evidence labels.
 - Candidate status supports New, Reviewing, Accepted, Sent to brief chat, Applied, and Dismissed.
+- Structured Actions, Decisions, Open Questions, and Brief Updates boards group review candidates into human-reviewed lanes.
 - Safe source-link rendering is shared and rejects deceptive URLs containing username/password userinfo.
 - Server-formatted source legends are parsed defensively; spoofed user-authored marker blocks are ignored.
 - Citation chips on assistant answers open source context for resolvable `[J]` and `[D]` labels without relying on the current global source list order.
+- Trusted source legend entries can produce evidence snippets/copyable source context for cited labels.
 
 ### Still partial / future
 
-- Source include/exclude toggles and source health labels: stale, duplicate, superseded, conflicting.
-- Passage-level highlighting and copy cited quote actions.
-- Automatic extraction of assistant output into saved review candidate cards.
-- Structured Actions, Decisions, and Questions boards with owners, due dates, and lifecycle metadata.
+- True passage-level highlighting and exact-quote extraction beyond trusted legend snippets.
+- Source health controls remain first-pass heuristics; no durable source-resolution lifecycle or user-confirmed conflict status yet.
+- Structured boards do not yet support owner, due-date, priority, CRM sync, reminders, or official decision/action lifecycle metadata.
 - Cached Account Intelligence cockpit built from accepted evidence, actions, decisions, questions, and source changes.
 - Journal search, source-scoped search, and “what changed since…” summaries.
+- Durable accepted-candidate rollups that distinguish draft/reviewed/applied account facts from general notes.
 
 ### Recommended next implementation slice
 
-Build assistant-output extraction into saved Review Queue candidates next. When an assistant answer proposes brief updates, action items, decisions, or open questions, users should be able to turn the response into one or more durable human-review cards instead of manually copying prose into the Review Queue. This converts advisory AI output into structured, reviewable account-workspace objects while preserving the no-automatic-brief-mutation principle.
+Build Journal search and source-scoped recall next. Now that PRs #90-#94 have added source health controls, assistant-to-candidate drafting, evidence snippets, and structured review boards, the next bottleneck is findability: users need a fast way to search Journal notes, assistant replies, uploaded-source filenames/previews/available snippets, evidence labels, and review candidates, then ask “what changed since…” from a filtered/source-scoped context.
 
 Scope for that next slice:
 
-1. Detect candidate-like sections or lines in assistant answers without treating user-authored text as trusted instructions.
-2. Let users choose a candidate type and prefill title, proposed text, evidence, confidence, risk/reviewer notes, current baseline, and source entry id from the assistant answer.
-3. Preserve evidence labels like `[J1]` and `[D1]` from trusted assistant legends so saved candidates remain source-traceable.
-4. Keep saved candidates human-review-only: creating or updating cards must not edit the Brief, assign tasks, or mark decisions official.
-5. Keep unresolved citations safe: retain the label text and show a fallback rather than fabricating source context.
-6. Add regression tests for extraction helpers, candidate creation from assistant source entries, citation/evidence persistence, and spoofed legend safety.
+1. Add a Journal search input that filters the Timeline, uploaded source cards, and Review Queue candidates without changing durable data.
+2. Search across entry body, author/source labels, uploaded document filename/preview/content snippets, candidate title/proposed text/evidence/notes, and candidate type/status labels.
+3. Preserve the human-review-only boundary: search and recall must not edit the Brief, create candidates, mark actions official, or mutate source inclusion state.
+4. Add source-scoped recall affordances from search results, so users can ask the assistant about the visible/selected sources without leaking excluded uploads.
+5. Keep empty states useful: show whether no matches came from notes, sources, or review candidates, and offer to clear search.
+6. Add regression tests for client-side search affordances, query matching coverage, excluded-source scoping, and no brief mutation.
+
+After search/recall, the following slice should add a first cached Account Intelligence cockpit summary built from accepted/reviewed data only. The cockpit should summarize accepted brief-update candidates, active actions, decisions, open questions, recent source changes, and evidence snippets, while clearly separating reviewed facts from draft assistant suggestions. Candidate existence alone must not make an action official or a decision settled; cockpit rollups should preserve candidate status, provenance, and evidence labels.
 
 ## High-level thesis
 
@@ -1184,31 +1190,28 @@ Output:
 - Recommended mitigation
 - Owner/action
 
-## Concrete feature buckets for future PRs
+## Concrete feature buckets after PR #90-#94
 
-### Small / high-leverage
+### First-pass shipped; remaining polish
 
-- Journal filters by entry type
-- Better assistant reply grouping
-- Catch me up action
-- Pin important entries
-- Mark entry as decision/action/question
-- Source preview drawer
-- Citation click-to-source
-- Open questions extraction
-- Action item extraction as advisory text
+- Journal filters by entry type: shipped for Timeline notes/assistant/documents; monitor-specific filtering remains future.
+- Better assistant reply grouping: partially addressed through citation chips, evidence snippets, and candidate drafting; richer threading remains future.
+- Catch me up action: shipped as an advisory prompt; durable “what changed since…” recall remains future.
+- Source preview drawer/card: first pass shipped for uploaded documents and citation context; deeper extracted-text browsing remains future.
+- Citation click-to-source: first pass shipped for trusted `[J]`/`[D]` legends; true passage highlighting remains future.
+- Open questions/action/decision extraction: first pass shipped as assistant-to-review-candidate drafting and structured boards; lifecycle metadata remains future.
+- Source library panel: first pass shipped as the Sources workspace with baseline plus uploaded sources, health badges, and include/exclude controls.
+- Brief update candidate queue: first pass shipped as human-review Review Queue cards and brief-chat handoff.
 
-### Medium
+### Next high-leverage PRs
 
-- Structured action item table
-- Structured decision log
-- Source library panel
-- Brief update candidate queue
-- Intelligence dashboard with cached cards
-- Journal search
-- Date/source-scoped AI questions
-- Team mentions / notifications
-- What changed since summaries
+- Journal search across notes, assistant replies, available source snippets, and review candidates.
+- Source-scoped search/recall and “what changed since…” summaries.
+- Cached Account Intelligence cockpit cards built from accepted/reviewed data only.
+- Pin important entries.
+- Mark entry as decision/action/question directly from Timeline where appropriate.
+- Owner, due date, priority, and status lifecycle metadata for structured board cards.
+- Team mentions / notifications.
 
 ### Large / next-generation
 
@@ -1222,9 +1225,9 @@ Output:
 - Multi-signal monitor orchestration
 - Role-specific views
 
-## Agreed first step: Journal Workspaces + Source Library
+## Original first step: Journal Workspaces + Source Library
 
-Start with the product foundation, not durable workflow mutation.
+This section is historical. The first-pass workspace/source foundation has now shipped across PRs #82, #84, #86, #87, #93, and #94. Keep it as context for why the Journal started with durable information architecture before deeper workflow mutation.
 
 Initial scoped direction:
 
@@ -1273,11 +1276,12 @@ Non-goals for the first PR:
 
 ## Open product questions
 
-- Should the Journal use tabs, a left sidebar, or a three-panel layout in the current brief page constraints?
-- Should Sources be a tab or a persistent side panel?
-- Should future sections be visible as placeholders, or should we avoid showing non-working concepts?
-- Should uploaded docs become first-class “sources” even before web/monitor/meeting sources share one abstraction?
-- How much should source inclusion be user-controllable in the MVP?
-- Should “Catch me up” live in Feed, Intelligence, or both?
-- Should source previews expose extracted text directly or only bounded snippets?
-- What is the cleanest handoff from Source → Brief Update Candidate → Brief Chat?
+- Given the first-pass workspace/source foundation is shipped, should the Journal now keep tabs, move toward a left sidebar, or evolve into a three-panel cockpit layout within current brief page constraints?
+- Should Sources remain a tab, become a persistent side panel, or appear contextually beside search/recall results?
+- Which future sections should stay visible as shipped structured boards versus hidden until lifecycle metadata exists?
+- How durable should source inclusion/exclusion become: session-only UI state, saved user preference, or source-resolution workflow state?
+- What conflict-resolution lifecycle is needed for stale, duplicate, superseded, and conflicting source health labels?
+- Should “Catch me up” live in Feed, Intelligence, search results, or all three?
+- Should source previews expose extracted text directly, bounded snippets only, or server-side searched excerpts?
+- What is the cleanest handoff from Search/Source → Review Candidate → Brief Chat → applied Brief update?
+- For the cockpit, which statuses count as reviewed enough to roll up: accepted, sent_to_brief_chat, applied, or a new explicit official state?
