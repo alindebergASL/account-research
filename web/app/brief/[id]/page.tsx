@@ -237,6 +237,7 @@ export default function BriefPage({ params }: { params: { id: string } }) {
               priority_summary: brief.priority_summary,
               next_action: brief.next_action,
               sources_count: brief.sources.length,
+              sources: brief.sources,
             }}
             onViewBriefBaseline={() => setViewMode("brief")}
           />

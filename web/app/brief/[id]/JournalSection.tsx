@@ -59,6 +59,7 @@ type JournalBriefContext = {
   priority_summary: string;
   next_action: string;
   sources_count: number;
+  sources: Array<{ title: string; url: string; accessed: string }>;
 };
 
 type ReviewCandidateType = "brief_update" | "action_item" | "decision" | "open_question";
@@ -135,6 +136,34 @@ function formatFileSize(bytes: number): string {
   const kb = bytes / 1024;
   if (kb < 1024) return `${Math.ceil(kb)} KB`;
   return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !parsed.username &&
+      !parsed.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+function BriefSourceLink({ url }: { url: string }) {
+  if (!url) return <span className="text-muted">—</span>;
+  if (!isSafeHttpUrl(url)) return <span className="break-all text-muted">{url}</span>;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="break-all text-sky-800 hover:underline"
+    >
+      {url}
+    </a>
+  );
 }
 
 function summarizeDocumentPrompt(filename: string): string {
@@ -326,7 +355,7 @@ export default function JournalSection({
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [activeWorkspace, setActiveWorkspace] =
-    useState<JournalWorkspace>("timeline");
+    useState<JournalWorkspace>("team");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -1003,6 +1032,8 @@ export default function JournalSection({
   }
 
   const sources = collectJournalSources(entries);
+  const currentBriefSources = briefContext.sources ?? [];
+  const totalSourceCount = currentBriefSources.length + sources.length;
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
     if (timelineFilter === "notes") return entries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
@@ -1017,6 +1048,11 @@ export default function JournalSection({
     count?: number;
   }> = [
     {
+      id: "team",
+      label: "Team Room",
+      description: "General discussion",
+    },
+    {
       id: "timeline",
       label: "Timeline",
       description: "Canonical account history",
@@ -1025,8 +1061,8 @@ export default function JournalSection({
     {
       id: "sources",
       label: "Sources",
-      description: "Uploaded evidence library",
-      count: sources.length,
+      description: "Brief + uploaded evidence",
+      count: totalSourceCount,
     },
     {
       id: "intelligence",
@@ -1038,11 +1074,6 @@ export default function JournalSection({
       label: "Review Queue",
       description: "Brief, action, decision candidates",
       count: reviewCandidates.length,
-    },
-    {
-      id: "team",
-      label: "Team Room",
-      description: "General discussion",
     },
   ];
 
@@ -1342,29 +1373,70 @@ export default function JournalSection({
               <FileText className="size-3.5" /> Source Library
             </div>
             <h3 className="mt-3 text-base font-semibold text-ink">
-              Review uploaded evidence before asking AI to synthesize it
+              Review brief and uploaded evidence before asking AI to synthesize it
             </h3>
             <p className="mt-1 max-w-3xl text-sm text-muted">
-              Sources are pulled from journal document uploads. Use source-scoped
-              prompts to summarize, compare against the brief, or find supported
-              brief update candidates without directly editing the brief. Each source
-              should help confirm, challenge, or update the current brief priority
-              and next action above.
+              Sources include the current brief baseline sources plus any journal
+              document uploads. Use source-scoped prompts to summarize uploaded
+              documents, compare against the brief, or find supported brief update
+              candidates without directly editing the brief.
             </p>
           </div>
-          {sources.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-              No uploaded sources yet. Choose a document in the composer below to
-              make extracted evidence available to the Journal assistant.
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-ink">Brief baseline sources</h3>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+                {currentBriefSources.length}
+              </span>
             </div>
-          ) : (
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-              <div className="grid gap-3 xl:grid-cols-2">
-                {sources.map((source) => renderSourceCard(source))}
+            {currentBriefSources.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-slate-50 p-4 text-sm text-muted">
+                No current brief sources are saved on the baseline brief.
               </div>
-              {renderSourcePreview()}
+            ) : (
+              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                {currentBriefSources.map((source, index) => (
+                  <div key={`${source.url}-${index}`} className="rounded-xl border border-[var(--line)] bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Source {index + 1}
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-ink">
+                      {source.title || "Untitled source"}
+                    </p>
+                    <div className="mt-1 text-sm">
+                      <BriefSourceLink url={source.url} />
+                    </div>
+                    {source.accessed && (
+                      <p className="mt-1 text-xs text-muted">Accessed {source.accessed}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-ink">Journal uploaded sources</h3>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+                {sources.length}
+              </span>
             </div>
-          )}
+            {sources.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
+                No uploaded sources yet. Choose a document in the composer below to
+                make extracted evidence available to the Journal assistant.
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {sources.map((source) => renderSourceCard(source))}
+                </div>
+                {renderSourcePreview()}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
