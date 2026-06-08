@@ -20,6 +20,10 @@ import {
 } from "@/lib/journalCitationResolution";
 import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
 import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
+import {
+  buildJournalSearchRecallPrompt,
+  searchJournalWorkspace,
+} from "@/lib/journalSearch";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
@@ -487,7 +491,9 @@ export default function JournalSection({
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [scopedDocumentIds, setScopedDocumentIds] = useState<string[]>([]);
+  const [requireSourceDocumentScope, setRequireSourceDocumentScope] = useState(false);
   const [excludedDocumentIds, setExcludedDocumentIds] = useState<string[]>([]);
+  const [journalSearchQuery, setJournalSearchQuery] = useState("");
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -538,7 +544,11 @@ export default function JournalSection({
     loadReviewCandidates();
   }, [load, loadReviewCandidates]);
 
-  function prepareAssistantPrompt(text: string, sourceDocumentIds: string[] = []) {
+  function prepareAssistantPrompt(
+    text: string,
+    sourceDocumentIds: string[] = [],
+    requireSourceDocumentScope = false,
+  ) {
     if (
       composeText.trim() &&
       composeText !== text &&
@@ -547,6 +557,7 @@ export default function JournalSection({
       return;
     }
     setAskAi(true);
+    setRequireSourceDocumentScope(requireSourceDocumentScope);
     setScopedDocumentIds(filteredSourceDocumentIds(sourceDocumentIds));
     setComposeText(text);
     window.setTimeout(() => composeRef.current?.focus(), 0);
@@ -557,6 +568,7 @@ export default function JournalSection({
     askAssistant: boolean,
     sourceDocumentIds = scopedDocumentIds,
     additionalAvailableDocumentIds: string[] = [],
+    forceSourceDocumentScope = false,
   ) {
     const trimmed = text.trim();
     if (!trimmed || posting) return false;
@@ -572,7 +584,7 @@ export default function JournalSection({
         body: JSON.stringify({
           body: trimmed,
           ask_ai: askAssistant,
-          ...(askAssistant && safeSourceDocumentIds.length > 0
+          ...(askAssistant && (forceSourceDocumentScope || safeSourceDocumentIds.length > 0)
             ? { source_document_ids: safeSourceDocumentIds }
             : {}),
           ...(askAssistant && excludedDocumentIds.length > 0
@@ -586,6 +598,7 @@ export default function JournalSection({
       }
       const data = await r.json();
       setComposeText("");
+      setRequireSourceDocumentScope(false);
       setScopedDocumentIds([]);
       if (data.ai_error) setAiError(data.ai_error);
       await load();
@@ -600,7 +613,7 @@ export default function JournalSection({
   }
 
   async function submit() {
-    await postJournalEntry(composeText, askAi, scopedDocumentIds);
+    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope);
   }
 
   async function runIntelligenceAction(prompt: string) {
@@ -611,6 +624,7 @@ export default function JournalSection({
       return;
     }
     setAskAi(true);
+    setRequireSourceDocumentScope(false);
     setScopedDocumentIds([]);
     await postJournalEntry(prompt, true, []);
   }
@@ -1401,7 +1415,31 @@ export default function JournalSection({
   const currentBriefSources = briefContext.sources ?? [];
   const totalSourceCount = currentBriefSources.length + sources.length;
   const activeScopedDocumentIds = filteredSourceDocumentIds(scopedDocumentIds);
-  const reviewCandidatesByType = groupReviewCandidatesByType(reviewCandidates);
+  const journalSearchResult = useMemo(
+    () => searchJournalWorkspace({
+      query: journalSearchQuery,
+      entries: entries ?? [],
+      sources,
+      reviewCandidates,
+      excludedDocumentIds,
+    }),
+    [journalSearchQuery, entries, sources, reviewCandidates, excludedDocumentIds],
+  );
+  const searchEntryIds = useMemo(() => new Set(journalSearchResult.entryIds), [journalSearchResult.entryIds]);
+  const searchSourceIds = useMemo(() => new Set(journalSearchResult.sourceIds), [journalSearchResult.sourceIds]);
+  const searchReviewCandidateIds = useMemo(
+    () => new Set(journalSearchResult.reviewCandidateIds),
+    [journalSearchResult.reviewCandidateIds],
+  );
+  const displayedSources = journalSearchResult.isActive
+    ? sources.filter((source) => searchSourceIds.has(source.id))
+    : sources;
+  const displayedReviewCandidates = journalSearchResult.isActive
+    ? reviewCandidates.filter((candidate) => searchReviewCandidateIds.has(candidate.id))
+    : reviewCandidates;
+  const selectedPreviewMatchesSearch =
+    !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
+  const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
 
   function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
     const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
@@ -1433,13 +1471,34 @@ export default function JournalSection({
     prepareAssistantPrompt(prompt, selectedIds);
   }
 
+  function runSearchRecallPrompt() {
+    const sourceIds = journalSearchResult.recallSourceDocumentIds;
+    if (!journalSearchResult.isActive || !journalSearchResult.hasMatches) {
+      setUploadNotice("Search the Journal first, then ask about matching notes, sources, and review candidates.");
+      return;
+    }
+    const prompt = buildJournalSearchRecallPrompt({
+      query: journalSearchResult.query,
+      entries: entries ?? [],
+      sources,
+      reviewCandidates,
+      result: journalSearchResult,
+    });
+    prepareAssistantPrompt(prompt, sourceIds, true);
+  }
+
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
-    if (timelineFilter === "notes") return entries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
-    if (timelineFilter === "assistant") return entries.filter((e) => e.author_type === "assistant");
-    if (timelineFilter === "documents") return entries.filter((e) => (e.documents?.length ?? 0) > 0);
-    return entries;
-  }, [entries, timelineFilter]);
+    const timelineEntries = (() => {
+      if (timelineFilter === "notes") return entries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
+      if (timelineFilter === "assistant") return entries.filter((e) => e.author_type === "assistant");
+      if (timelineFilter === "documents") return entries.filter((e) => (e.documents?.length ?? 0) > 0);
+      return entries;
+    })();
+    return journalSearchResult.isActive
+      ? timelineEntries.filter((entry) => searchEntryIds.has(entry.id))
+      : timelineEntries;
+  }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds]);
   const workspaceTabs: Array<{
     id: JournalWorkspace;
     label: string;
@@ -1588,6 +1647,55 @@ export default function JournalSection({
         })}
       </div>
 
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <label className="min-w-0 flex-1 text-sm font-medium text-ink">
+            Search Journal, sources, and review candidates
+            <input
+              value={journalSearchQuery}
+              onChange={(event) => setJournalSearchQuery(event.target.value)}
+              placeholder="Search notes, assistant replies, source snippets, evidence labels, or review cards…"
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-ink placeholder:text-muted"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            {journalSearchResult.isActive && (
+              <button
+                type="button"
+                onClick={() => setJournalSearchQuery("")}
+                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Clear search
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={runSearchRecallPrompt}
+              disabled={!journalSearchResult.isActive || !journalSearchResult.hasMatches || posting || loading}
+              className="rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Ask about search results
+            </button>
+          </div>
+        </div>
+        {journalSearchResult.isActive && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span className="rounded-full bg-slate-100 px-2 py-0.5">
+              {journalSearchResult.entryIds.length} timeline match{journalSearchResult.entryIds.length === 1 ? "" : "es"}
+            </span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5">
+              {journalSearchResult.sourceIds.length} source match{journalSearchResult.sourceIds.length === 1 ? "" : "es"}
+            </span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5">
+              {journalSearchResult.reviewCandidateIds.length} review card match{journalSearchResult.reviewCandidateIds.length === 1 ? "" : "es"}
+            </span>
+            <span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-900">
+              {journalSearchResult.recallSourceDocumentIds.length} included source{journalSearchResult.recallSourceDocumentIds.length === 1 ? "" : "s"} available for recall
+            </span>
+          </div>
+        )}
+      </div>
+
       {renderCitationContext()}
 
       {activeWorkspace === "intelligence" && (
@@ -1693,7 +1801,7 @@ export default function JournalSection({
                 </p>
               </div>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
-                {reviewCandidates.length} card{reviewCandidates.length === 1 ? "" : "s"}
+                {displayedReviewCandidates.length} card{displayedReviewCandidates.length === 1 ? "" : "s"}
               </span>
             </div>
             <div className="mt-4 grid gap-3 xl:grid-cols-4 md:grid-cols-2">
@@ -1833,12 +1941,14 @@ export default function JournalSection({
                 Same human-review cards, shown ungrouped for status changes and brief-chat handoff.
               </span>
             </div>
-            {reviewCandidates.length === 0 ? (
+            {displayedReviewCandidates.length === 0 ? (
               <div className="rounded-xl border border-dashed border-amber-200 bg-white p-6 text-sm text-muted">
-                No review candidate cards yet. Use the assistant actions above to draft candidates, then save the reviewed items here for team follow-up.
+                {journalSearchResult.isActive
+                  ? "No review candidate cards match this search. Clear search to see the full Review Queue."
+                  : "No review candidate cards yet. Use the assistant actions above to draft candidates, then save the reviewed items here for team follow-up."}
               </div>
             ) : (
-              reviewCandidates.map((candidate) => renderReviewCandidate(candidate))
+              displayedReviewCandidates.map((candidate) => renderReviewCandidate(candidate))
             )}
           </div>
         </div>
@@ -1904,7 +2014,7 @@ export default function JournalSection({
                 <div className="flex items-center gap-3">
                   <h3 className="text-sm font-semibold text-ink">Journal uploaded sources</h3>
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
-                    {sources.length}
+                    {displayedSources.length}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-muted">
@@ -1947,12 +2057,20 @@ export default function JournalSection({
                 No uploaded sources yet. Choose a document in the composer below to
                 make extracted evidence available to the Journal assistant.
               </div>
+            ) : displayedSources.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
+                No uploaded sources match this search. Clear search to see all uploaded sources.
+              </div>
             ) : (
               <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="grid gap-3 xl:grid-cols-2">
-                  {sources.map((source) => renderSourceCard(source))}
+                  {displayedSources.map((source) => renderSourceCard(source))}
                 </div>
-                {renderSourcePreview()}
+                {selectedPreviewMatchesSearch ? renderSourcePreview() : (
+                  <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
+                    The selected source preview does not match this search. Clear search or open a matching source.
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1998,7 +2116,9 @@ export default function JournalSection({
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
           {entries?.length === 0
             ? "No journal entries yet. Add a note, upload a document, or switch to Ask assistant to ask a question grounded in this brief."
-            : "No entries match this Timeline filter."}
+            : journalSearchResult.isActive
+              ? "No Timeline entries match this search. Clear search or try another query."
+              : "No entries match this Timeline filter."}
         </div>
       )}
 
@@ -2029,6 +2149,7 @@ export default function JournalSection({
               aria-pressed={!askAi}
               onClick={() => {
                 setAskAi(false);
+                setRequireSourceDocumentScope(false);
                 setScopedDocumentIds([]);
               }}
               className={`rounded-md px-3 py-1.5 transition-colors ${
@@ -2074,7 +2195,10 @@ export default function JournalSection({
             </span>
             <button
               type="button"
-              onClick={() => setScopedDocumentIds([])}
+              onClick={() => {
+                setRequireSourceDocumentScope(false);
+                setScopedDocumentIds([]);
+              }}
               className="font-medium underline decoration-sky-300 underline-offset-2 hover:text-sky-700"
             >
               Use recent sources instead

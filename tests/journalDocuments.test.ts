@@ -1475,6 +1475,146 @@ test("JournalSection exposes structured action decision and question boards over
   assert.match(journalSource, /Full Review Queue/);
 });
 
+test("journal search matches notes sources and review candidates while preserving source recall scope", () => {
+  const search = require("../web/lib/journalSearch") as typeof import("../web/lib/journalSearch");
+
+  const entries = [
+    {
+      id: "entry-note",
+      author_type: "user",
+      body: "Procurement team asked for a pilot timeline.",
+      author: { display_name: "Owner", email: "owner@example.com" },
+      documents: [],
+    },
+    {
+      id: "entry-assistant",
+      author_type: "assistant",
+      body: "Recommended next action cites [D1].",
+      author: null,
+      documents: [],
+    },
+  ];
+  const sources = [
+    {
+      id: "doc-plan",
+      filename: "pilot-plan.pdf",
+      content_preview: "Pilot rollout and procurement checklist.",
+      entryBody: "Uploaded the pilot plan.",
+    },
+    {
+      id: "doc-excluded",
+      filename: "excluded-risk.pdf",
+      content_preview: "Excluded acquisition rumor.",
+      entryBody: "Should not be recalled.",
+    },
+  ];
+  const candidates = [
+    {
+      id: "candidate-action",
+      candidate_type: "action_item",
+      status: "accepted",
+      title: "Schedule procurement pilot",
+      proposed_text: "Set owner for the pilot kickoff.",
+      target: "next_action",
+      evidence: "pilot-plan.pdf [D1]",
+      risk: null,
+      confidence: "medium",
+      current_baseline: null,
+    },
+  ];
+
+  const result = search.searchJournalWorkspace({
+    query: "pilot",
+    entries,
+    sources,
+    reviewCandidates: candidates,
+    excludedDocumentIds: ["doc-excluded"],
+  });
+
+  assert.deepEqual(result.entryIds, ["entry-note"]);
+  assert.deepEqual(result.sourceIds, ["doc-plan"]);
+  assert.deepEqual(result.reviewCandidateIds, ["candidate-action"]);
+  assert.deepEqual(result.recallSourceDocumentIds, ["doc-plan"]);
+  assert.equal(result.hasMatches, true);
+
+  const prompt = search.buildJournalSearchRecallPrompt({
+    query: "pilot",
+    entries,
+    sources,
+    reviewCandidates: candidates,
+    result,
+  });
+  assert.match(prompt, /Procurement team asked for a pilot timeline/);
+  assert.match(prompt, /Schedule procurement pilot/);
+  assert.match(prompt, /pilot-plan\.pdf/);
+  assert.match(prompt, /Do not edit the brief/);
+  const excludedOnly = search.searchJournalWorkspace({
+    query: "excluded",
+    entries,
+    sources,
+    reviewCandidates: candidates,
+    excludedDocumentIds: ["doc-excluded"],
+  });
+  const excludedPrompt = search.buildJournalSearchRecallPrompt({
+    query: "excluded",
+    entries,
+    sources,
+    reviewCandidates: candidates,
+    result: excludedOnly,
+  });
+  assert.deepEqual(excludedOnly.sourceIds, ["doc-excluded"]);
+  assert.deepEqual(excludedOnly.recallSourceDocumentIds, []);
+  assert.doesNotMatch(excludedPrompt, /excluded-risk\.pdf/);
+  assert.doesNotMatch(excludedPrompt, /Excluded acquisition rumor/);
+  assert.match(excludedPrompt, /excluded source match omitted/i);
+});
+
+test("journal search handles blank queries as unfiltered without recalling excluded sources", () => {
+  const search = require("../web/lib/journalSearch") as typeof import("../web/lib/journalSearch");
+
+  const result = search.searchJournalWorkspace({
+    query: "   ",
+    entries: [{ id: "entry-1", body: "anything", author_type: "user", author: null, documents: [] }],
+    sources: [
+      { id: "doc-1", filename: "included.md", content_preview: "included", entryBody: null },
+      { id: "doc-2", filename: "excluded.md", content_preview: "excluded", entryBody: null },
+    ],
+    reviewCandidates: [{ id: "candidate-1", candidate_type: "decision", status: "new", title: "Decision", proposed_text: "Text" }],
+    excludedDocumentIds: ["doc-2"],
+  });
+
+  assert.deepEqual(result.entryIds, ["entry-1"]);
+  assert.deepEqual(result.sourceIds, ["doc-1", "doc-2"]);
+  assert.deepEqual(result.reviewCandidateIds, ["candidate-1"]);
+  assert.deepEqual(result.recallSourceDocumentIds, ["doc-1"]);
+  assert.equal(result.isActive, false);
+});
+
+test("JournalSection exposes search UI and source-scoped recall without durable mutations", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /Search Journal, sources, and review candidates/);
+  assert.match(journalSource, /journalSearchQuery/);
+  assert.match(journalSource, /searchJournalWorkspace/);
+  assert.match(journalSource, /Ask about search results/);
+  assert.match(journalSource, /recallSourceDocumentIds/);
+  assert.match(journalSource, /requireSourceDocumentScope/);
+  assert.match(journalSource, /source_document_ids: safeSourceDocumentIds/);
+  assert.match(journalSource, /buildJournalSearchRecallPrompt/);
+  assert.match(journalSource, /selectedPreviewMatchesSearch/);
+  const useRecentBlock = journalSource.slice(
+    journalSource.indexOf("Use recent sources instead") - 400,
+    journalSource.indexOf("Use recent sources instead"),
+  );
+  assert.match(useRecentBlock, /setRequireSourceDocumentScope\(false\)/);
+  assert.doesNotMatch(journalSource, /search.*PATCH/i);
+});
+
 test("Hermes chat path includes document-aware update and citation instructions", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
