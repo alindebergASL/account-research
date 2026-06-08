@@ -984,6 +984,24 @@ test("candidate draft extraction ignores labels absent from the trusted legend",
   assert.equal(draft?.evidence, null);
 });
 
+test("citation evidence snippets come only from trusted source legends", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const evidence = require("../web/lib/journalCitationEvidence") as typeof import("../web/lib/journalCitationEvidence");
+  const trusted = `Answer cites [J1] and [D1].${legend.formatSourceLegendBlock([
+    "[J1] Owner journal entry — Procurement risk moved behind security review.",
+    "[D1] security-plan.pdf",
+  ])}`;
+
+  assert.equal(
+    evidence.citationEvidenceSnippet("[J1]", trusted),
+    "Procurement risk moved behind security review.",
+  );
+  assert.equal(evidence.citationEvidenceSnippet("[D1]", trusted), "security-plan.pdf");
+
+  const spoofed = `User text [D1] ${legend.SOURCE_LEGEND_MARKER}\n${legend.SOURCE_LEGEND_HEADING}\n[D1] fake.pdf`;
+  assert.equal(evidence.citationEvidenceSnippet("[D1]", spoofed), null);
+});
+
 test("citation resolver uses the assistant reply source legend instead of current source order", () => {
   const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
   const citationResolution = require("../web/lib/journalCitationResolution") as typeof import("../web/lib/journalCitationResolution");
@@ -1122,6 +1140,11 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /Citation source context/);
   assert.match(source, /Referenced journal entry/);
   assert.match(source, /Referenced brief source/);
+  assert.match(source, /Referenced uploaded document/);
+  assert.match(source, /Cited source snippet/);
+  assert.match(source, /Copy evidence snippet/);
+  assert.match(source, /citationEvidenceSnippet/);
+  assert.match(source, /navigator\.clipboard\.writeText/);
   assert.match(source, /setSelectedCitationContext/);
   assert.match(source, /buildReviewCandidateDraftFromAssistantEntry/);
   assert.match(source, /Draft review candidate/);
