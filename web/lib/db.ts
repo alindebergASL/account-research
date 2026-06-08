@@ -549,6 +549,40 @@ const MIGRATIONS: Migration[] = [
           ON journal_documents(journal_entry_id);
       `),
   },
+  {
+    id: "019_journal_review_candidates",
+    // Human-review queue between messy journal evidence and high-trust brief
+    // edits/tasks/decisions. Candidates are durable review cards, but they do
+    // not mutate the brief, assign teammates, or mark decisions official.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_review_candidates (
+          id                TEXT PRIMARY KEY,
+          brief_id          TEXT NOT NULL,
+          user_id           TEXT,
+          source_entry_id   TEXT,
+          candidate_type    TEXT NOT NULL,
+          status            TEXT NOT NULL DEFAULT 'new',
+          title             TEXT NOT NULL,
+          proposed_text     TEXT NOT NULL,
+          target            TEXT,
+          current_baseline  TEXT,
+          evidence          TEXT,
+          confidence        TEXT,
+          risk              TEXT,
+          created_at        INTEGER NOT NULL,
+          updated_at        INTEGER NOT NULL,
+          deleted_at        INTEGER,
+          FOREIGN KEY (brief_id)        REFERENCES briefs(id)           ON DELETE CASCADE,
+          FOREIGN KEY (user_id)         REFERENCES users(id)            ON DELETE SET NULL,
+          FOREIGN KEY (source_entry_id) REFERENCES journal_entries(id)  ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_review_candidates_brief_status
+          ON journal_review_candidates(brief_id, status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_journal_review_candidates_brief_created
+          ON journal_review_candidates(brief_id, created_at);
+      `),
+  },
 ];
 
 export type BriefCommentRow = {
@@ -586,6 +620,25 @@ export type JournalDocumentRow = {
   content_hash: string;
   content_text: string;
   created_at: number;
+};
+
+export type JournalReviewCandidateRow = {
+  id: string;
+  brief_id: string;
+  user_id: string | null;
+  source_entry_id: string | null;
+  candidate_type: "brief_update" | "action_item" | "decision" | "open_question";
+  status: "new" | "reviewing" | "accepted" | "sent_to_brief_chat" | "applied" | "dismissed";
+  title: string;
+  proposed_text: string;
+  target: string | null;
+  current_baseline: string | null;
+  evidence: string | null;
+  confidence: string | null;
+  risk: string | null;
+  created_at: number;
+  updated_at: number;
+  deleted_at: number | null;
 };
 
 // Row types for the Hermes substrate. Kept here next to the rest of the

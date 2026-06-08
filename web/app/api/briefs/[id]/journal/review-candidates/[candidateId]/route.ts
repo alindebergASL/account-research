@@ -1,0 +1,56 @@
+import { NextRequest, NextResponse } from "next/server";
+import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import {
+  parseReviewCandidateStatus,
+  updateReviewCandidateStatus,
+} from "@/lib/journalReviewCandidates";
+
+export const runtime = "nodejs";
+
+function authError(e: unknown) {
+  if (e instanceof HttpError) {
+    return NextResponse.json(e.body, { status: e.status });
+  }
+  return null;
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string; candidateId: string } },
+) {
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    const r = authError(e);
+    if (r) return r;
+    throw e;
+  }
+  if (!canReadBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  let body: { status?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  let status;
+  try {
+    status = parseReviewCandidateStatus(body.status);
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Invalid status" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const candidate = updateReviewCandidateStatus(params.id, params.candidateId, status);
+    return NextResponse.json({ candidate });
+  } catch {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+}
