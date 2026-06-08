@@ -59,6 +59,8 @@ type JournalSource = JournalDocument & {
   entryCreatedAt: number;
 };
 
+type SourceHealthStatus = "current" | "stale" | "duplicate" | "superseded" | "conflicting";
+
 type JournalBriefContext = {
   account_name: string;
   priority_summary: string;
@@ -312,6 +314,62 @@ function collectJournalSources(entries: Entry[] | null): JournalSource[] {
     .sort((a, b) => b.created_at - a.created_at);
 }
 
+function sourceFingerprint(source: JournalSource): string {
+  return `${source.filename.trim().toLowerCase()}::${source.byte_size}`;
+}
+
+function sourceHealthBadges(
+  source: JournalSource,
+  allSources: JournalSource[],
+): Array<{ status: SourceHealthStatus; label: string; description: string }> {
+  const badges: Array<{ status: SourceHealthStatus; label: string; description: string }> = [];
+  const sameFingerprint = allSources.filter((candidate) =>
+    sourceFingerprint(candidate) === sourceFingerprint(source),
+  );
+  const newestDuplicate = sameFingerprint.reduce<JournalSource | null>(
+    (newest, candidate) => !newest || candidate.created_at > newest.created_at ? candidate : newest,
+    null,
+  );
+  const searchableText = `${source.filename} ${source.entryBody ?? ""} ${source.content_preview ?? ""}`.toLowerCase();
+
+  if (sameFingerprint.length > 1) {
+    badges.push({
+      status: "duplicate",
+      label: "duplicate",
+      description: "Another uploaded source has the same filename and size.",
+    });
+  }
+  if (newestDuplicate && newestDuplicate.id !== source.id) {
+    badges.push({
+      status: "superseded",
+      label: "superseded",
+      description: "A newer duplicate upload exists; prefer the latest copy unless review says otherwise.",
+    });
+  }
+  if (Date.now() - source.created_at > 1000 * 60 * 60 * 24 * 45) {
+    badges.push({
+      status: "stale",
+      label: "stale",
+      description: "This source is older than 45 days and may need a freshness check.",
+    });
+  }
+  if (/\b(conflict|conflicting|contradict|contradiction|dispute|disputed)\b/.test(searchableText)) {
+    badges.push({
+      status: "conflicting",
+      label: "conflicting",
+      description: "This source mentions conflict or contradiction and needs reconciliation.",
+    });
+  }
+  if (badges.length === 0) {
+    badges.push({
+      status: "current",
+      label: "current",
+      description: "No freshness, duplicate, superseded, or conflict signal detected.",
+    });
+  }
+  return badges;
+}
+
 function renderCitationChips(
   entry: Entry,
   onCitationClick?: (label: string, entry: Entry) => void,
@@ -376,6 +434,7 @@ export default function JournalSection({
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [scopedDocumentIds, setScopedDocumentIds] = useState<string[]>([]);
+  const [excludedDocumentIds, setExcludedDocumentIds] = useState<string[]>([]);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -435,7 +494,7 @@ export default function JournalSection({
       return;
     }
     setAskAi(true);
-    setScopedDocumentIds(sourceDocumentIds);
+    setScopedDocumentIds(filteredSourceDocumentIds(sourceDocumentIds));
     setComposeText(text);
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
@@ -444,9 +503,13 @@ export default function JournalSection({
     text: string,
     askAssistant: boolean,
     sourceDocumentIds = scopedDocumentIds,
+    additionalAvailableDocumentIds: string[] = [],
   ) {
     const trimmed = text.trim();
     if (!trimmed || posting) return false;
+    const safeSourceDocumentIds = askAssistant
+      ? filteredSourceDocumentIds(sourceDocumentIds, additionalAvailableDocumentIds)
+      : [];
     setPosting(true);
     setAiError(null);
     try {
@@ -456,8 +519,11 @@ export default function JournalSection({
         body: JSON.stringify({
           body: trimmed,
           ask_ai: askAssistant,
-          ...(askAssistant && sourceDocumentIds.length > 0
-            ? { source_document_ids: sourceDocumentIds }
+          ...(askAssistant && safeSourceDocumentIds.length > 0
+            ? { source_document_ids: safeSourceDocumentIds }
+            : {}),
+          ...(askAssistant && excludedDocumentIds.length > 0
+            ? { excluded_source_document_ids: excludedDocumentIds }
             : {}),
         }),
       });
@@ -613,6 +679,7 @@ export default function JournalSection({
           summarizeDocumentPrompt(filename),
           true,
           uploadedDocumentId ? [uploadedDocumentId] : [],
+          uploadedDocumentId ? [uploadedDocumentId] : [],
         );
         if (assistantPosted) {
           setUploadNotice(`Uploaded ${filename}. The journal assistant reply was added below.`);
@@ -667,10 +734,15 @@ export default function JournalSection({
   }
 
   function renderSourceCard(source: JournalSource) {
+    const isSelected = scopedDocumentIds.includes(source.id);
+    const isExcluded = excludedDocumentIds.includes(source.id);
+    const healthBadges = sourceHealthBadges(source, sources);
     return (
       <div
         key={`${source.entryId}-${source.id}`}
-        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+        className={`rounded-xl border p-4 shadow-sm ${
+          isExcluded ? "border-slate-200 bg-slate-50 opacity-75" : "border-slate-200 bg-white"
+        }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -681,6 +753,13 @@ export default function JournalSection({
               <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
                 Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
               </span>
+              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
+                isExcluded
+                  ? "border-rose-200 bg-rose-50 text-rose-800"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
+              }`}>
+                {isExcluded ? "Excluded from AI context" : "Included in AI context"}
+              </span>
             </div>
             <h3 className="mt-2 truncate text-sm font-semibold text-ink">
               {source.filename}
@@ -688,8 +767,46 @@ export default function JournalSection({
             <p className="mt-1 text-xs text-muted">
               {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source health</span>
+              {healthBadges.map((badge) => (
+                <span
+                  key={badge.status}
+                  title={badge.description}
+                  className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                    badge.status === "current"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : badge.status === "conflicting"
+                        ? "border-rose-200 bg-rose-50 text-rose-800"
+                        : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  {badge.label}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => toggleSourceSelection(source.id)}
+              disabled={isExcluded}
+              aria-pressed={isSelected && !isExcluded}
+              className={`rounded-md border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                isSelected && !isExcluded
+                  ? "border-violet-300 bg-violet-600 text-white"
+                  : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+              }`}
+            >
+              {isSelected && !isExcluded ? "Selected for AI" : "Select for AI"}
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSourceExclusion(source)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {isExcluded ? "Include source" : "Exclude source"}
+            </button>
             <button
               type="button"
               onClick={() => setSelectedSource(source)}
@@ -699,29 +816,33 @@ export default function JournalSection({
             </button>
             <button
               type="button"
+              disabled={isExcluded}
               onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id])}
-              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Sparkles className="size-3" /> Summarize
             </button>
             <button
               type="button"
+              disabled={isExcluded}
               onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id])}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Brief updates
             </button>
             <button
               type="button"
+              disabled={isExcluded}
               onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id])}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Compare with brief
             </button>
             <button
               type="button"
+              disabled={isExcluded}
               onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id])}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Ask about this
             </button>
@@ -752,6 +873,7 @@ export default function JournalSection({
         </div>
       );
     }
+    const isSelectedSourceExcluded = excludedDocumentIds.includes(selectedSource.id);
     return (
       <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
@@ -781,18 +903,25 @@ export default function JournalSection({
             Attached journal note: {selectedSource.entryBody}
           </p>
         )}
+        {isSelectedSourceExcluded && (
+          <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+            This source is excluded from AI context. Include it before running source-scoped prompts from this preview.
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
+            disabled={isSelectedSourceExcluded}
             onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(selectedSource.filename), [selectedSource.id])}
-            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Sparkles className="size-3" /> Summarize
           </button>
           <button
             type="button"
+            disabled={isSelectedSourceExcluded}
             onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(selectedSource.filename), [selectedSource.id])}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Compare with brief
           </button>
@@ -1077,7 +1206,9 @@ export default function JournalSection({
 
           {!editing && !deleted && e.documents && e.documents.length > 0 && (
             <div className="mt-3 space-y-2">
-              {e.documents.map((doc) => (
+              {e.documents.map((doc) => {
+                const isDocExcluded = excludedDocumentIds.includes(doc.id);
+                return (
                 <div
                   key={doc.id}
                   className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800"
@@ -1089,19 +1220,26 @@ export default function JournalSection({
                       <span className="text-muted font-normal">
                         · {formatFileSize(doc.byte_size)}
                       </span>
+                      {isDocExcluded && (
+                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800">
+                          Excluded from AI context
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
+                        disabled={isDocExcluded}
                         onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename), [doc.id])}
-                        className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                        className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Sparkles className="size-3" /> Summarize with AI
                       </button>
                       <button
                         type="button"
+                        disabled={isDocExcluded}
                         onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename), [doc.id])}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Find brief updates
                       </button>
@@ -1111,7 +1249,8 @@ export default function JournalSection({
                     {doc.content_preview}
                   </p>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1122,6 +1261,38 @@ export default function JournalSection({
   const sources = collectJournalSources(entries);
   const currentBriefSources = briefContext.sources ?? [];
   const totalSourceCount = currentBriefSources.length + sources.length;
+  const activeScopedDocumentIds = filteredSourceDocumentIds(scopedDocumentIds);
+
+  function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
+    const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
+    const excludedIds = new Set(excludedDocumentIds);
+    return ids.filter((id) => availableIds.has(id) && !excludedIds.has(id));
+  }
+
+  function toggleSourceSelection(sourceId: string) {
+    setAskAi(true);
+    setScopedDocumentIds((ids) =>
+      ids.includes(sourceId) ? ids.filter((id) => id !== sourceId) : [...ids, sourceId],
+    );
+  }
+
+  function toggleSourceExclusion(source: JournalSource) {
+    setExcludedDocumentIds((ids) =>
+      ids.includes(source.id) ? ids.filter((id) => id !== source.id) : [...ids, source.id],
+    );
+    setScopedDocumentIds((ids) => ids.filter((id) => id !== source.id));
+  }
+
+  function runSelectedSourcePrompt(prompt: string) {
+    const selectedIds = filteredSourceDocumentIds(scopedDocumentIds);
+    if (selectedIds.length === 0) {
+      setUploadNotice("Select at least one included uploaded source before running a source-scoped prompt.");
+      setActiveWorkspace("sources");
+      return;
+    }
+    prepareAssistantPrompt(prompt, selectedIds);
+  }
+
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
     if (timelineFilter === "notes") return entries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
@@ -1511,12 +1682,49 @@ export default function JournalSection({
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-ink">Journal uploaded sources</h3>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
-                {sources.length}
-              </span>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-ink">Journal uploaded sources</h3>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+                    {sources.length}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  source-scoped prompts only include selected, non-excluded uploads. Exclude stale,
+                  duplicate, superseded, or conflicting sources when they should not ground the next answer.
+                </p>
+              </div>
+              {sources.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={activeScopedDocumentIds.length === 0}
+                    onClick={() => runSelectedSourcePrompt(
+                      "Answer using only the selected included Journal sources. Summarize what these sources establish, what remains uncertain, and the best next account-team questions. Cite source labels like [D1] when available.",
+                    )}
+                    className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Ask about selected sources
+                  </button>
+                  <button
+                    type="button"
+                    disabled={activeScopedDocumentIds.length === 0}
+                    onClick={() => runSelectedSourcePrompt(
+                      "Review selected source health. Identify stale, duplicate, superseded, and conflicting evidence signals; explain which sources should be included, excluded, or reconciled before brief updates. Do not edit the brief.",
+                    )}
+                    className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Review selected source health
+                  </button>
+                </div>
+              )}
             </div>
+            {sources.length > 0 && (
+              <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                {activeScopedDocumentIds.length} selected included source{activeScopedDocumentIds.length === 1 ? "" : "s"}; {excludedDocumentIds.length} excluded from AI context.
+              </div>
+            )}
             {sources.length === 0 ? (
               <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
                 No uploaded sources yet. Choose a document in the composer below to
@@ -1641,11 +1849,11 @@ export default function JournalSection({
           rows={3}
           className="w-full rounded-lg border border-[var(--line)] p-2 text-sm"
         />
-        {askAi && scopedDocumentIds.length > 0 && (
+        {askAi && activeScopedDocumentIds.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
             <FileText className="size-3.5" />
             <span>
-              AI context scoped to {scopedDocumentIds.length} selected source{scopedDocumentIds.length === 1 ? "" : "s"}.
+              AI context scoped to {activeScopedDocumentIds.length} selected source{activeScopedDocumentIds.length === 1 ? "" : "s"}.
             </span>
             <button
               type="button"

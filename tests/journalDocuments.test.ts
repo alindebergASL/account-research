@@ -370,6 +370,174 @@ test("source-scoped journal assistant receives only selected documents in select
   assert.ok(capturedSystem.indexOf("scoped-beta.md") < capturedSystem.indexOf("scoped-alpha.md"));
 });
 
+test("journal assistant excludes explicitly excluded documents from recent fallback context", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+
+  const excludedForm = new FormData();
+  excludedForm.set("body", "Uploading source that should be excluded from fallback context.");
+  excludedForm.set(
+    "file",
+    new File(["Excluded fallback source should not reach the assistant prompt."], "excluded-fallback.md", { type: "text/markdown" }),
+  );
+  const excludedRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: excludedForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(excludedRes.status, 200);
+  const excluded = await jsonOf(excludedRes);
+
+  const includedForm = new FormData();
+  includedForm.set("body", "Uploading source that may remain in fallback context.");
+  includedForm.set(
+    "file",
+    new File(["Included fallback source may reach the assistant prompt."], "included-fallback.md", { type: "text/markdown" }),
+  );
+  const includedRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: includedForm }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(includedRes.status, 200);
+
+  let capturedSystem = "";
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create(args) {
+        capturedSystem = args.system;
+        return { content: [{ type: "text", text: "Fallback answer [D1]." }] };
+      },
+    },
+  });
+  try {
+    const askRes = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "Summarize recent included sources.",
+          ask_ai: true,
+          excluded_source_document_ids: [excluded.document.id],
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(askRes.status, 200);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+
+  assert.doesNotMatch(capturedSystem, /Excluded fallback source should not reach/);
+  assert.doesNotMatch(capturedSystem, /excluded-fallback\.md/);
+  assert.match(capturedSystem, /Included fallback source may reach/);
+});
+
+test("journal assistant excludes default upload journal entry metadata for excluded documents", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+
+  const form = new FormData();
+  form.set(
+    "file",
+    new File(["Excluded no-note content should not reach assistant context."], "excluded-no-note.md", { type: "text/markdown" }),
+  );
+  const uploadRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(uploadRes.status, 200);
+  const uploaded = await jsonOf(uploadRes);
+
+  let capturedSystem = "";
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create(args) {
+        capturedSystem = args.system;
+        return { content: [{ type: "text", text: "Excluded metadata answer." }] };
+      },
+    },
+  });
+  try {
+    const askRes = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "Summarize recent included sources without the excluded no-note upload.",
+          ask_ai: true,
+          excluded_source_document_ids: [uploaded.document.id],
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(askRes.status, 200);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+
+  assert.doesNotMatch(capturedSystem, /excluded-no-note\.md/);
+  assert.doesNotMatch(capturedSystem, /Excluded no-note content should not reach/);
+});
+
+test("journal assistant excludes prior assistant source legends tied to excluded documents", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+
+  const longFilename = `prior-excluded-${"x".repeat(130)}.md`;
+  const form = new FormData();
+  form.set("body", "Uploading source used by an earlier assistant reply.");
+  form.set(
+    "file",
+    new File(["Prior assistant source content should not remain in later context."], longFilename, { type: "text/markdown" }),
+  );
+  const uploadRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(uploadRes.status, 200);
+  const uploaded = await jsonOf(uploadRes);
+
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "prior-assistant-excluded-source",
+      "brief-doc",
+      "owner-doc",
+      "assistant",
+      `Earlier summary from prior excluded source [D1].${legend.formatSourceLegendBlock([
+        `[D1] ${journalAi.sanitizeInlinePromptField(longFilename)}`,
+      ])}`,
+      Date.now(),
+    );
+
+  let capturedSystem = "";
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create(args) {
+        capturedSystem = args.system;
+        return { content: [{ type: "text", text: "Later answer." }] };
+      },
+    },
+  });
+  try {
+    const askRes = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "Answer without the previously excluded source.",
+          ask_ai: true,
+          excluded_source_document_ids: [uploaded.document.id],
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(askRes.status, 200);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+
+  assert.doesNotMatch(capturedSystem, /prior-excluded/);
+  assert.doesNotMatch(capturedSystem, /Earlier summary from prior excluded source/);
+});
+
 test("source-scoped journal assistant rejects deleted document scope before writing entries", async () => {
   const form = new FormData();
   form.set("body", "Uploading soon-deleted scoped source.");
@@ -1087,6 +1255,34 @@ test("JournalSection opens with Team Room before Timeline and counts current bri
   assert.ok(tabsBlock.indexOf('id: "team"') >= 0);
   assert.ok(tabsBlock.indexOf('id: "team"') < tabsBlock.indexOf('id: "timeline"'));
   assert.ok(tabsBlock.indexOf("count: totalSourceCount") >= 0);
+});
+
+test("JournalSection exposes source controls, source health, and source-scoped actions", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /type SourceHealthStatus/);
+  assert.match(journalSource, /function sourceHealthBadges/);
+  assert.match(journalSource, /Source health/);
+  assert.match(journalSource, /stale/);
+  assert.match(journalSource, /duplicate/);
+  assert.match(journalSource, /superseded/);
+  assert.match(journalSource, /conflicting/);
+  assert.match(journalSource, /excludedDocumentIds/);
+  assert.match(journalSource, /filteredSourceDocumentIds\(sourceDocumentIds, additionalAvailableDocumentIds\)/);
+  assert.match(journalSource, /uploadedDocumentId \? \[uploadedDocumentId\] : \[\]/);
+  assert.match(journalSource, /excluded_source_document_ids/);
+  assert.match(journalSource, /activeScopedDocumentIds/);
+  assert.match(journalSource, /Included in AI context/);
+  assert.match(journalSource, /Excluded from AI context/);
+  assert.match(journalSource, /setScopedDocumentIds\(\(ids\) => ids\.filter\(\(id\) => id !== source\.id\)\)/);
+  assert.match(journalSource, /Ask about selected sources/);
+  assert.match(journalSource, /Review selected source health/);
+  assert.match(journalSource, /source-scoped prompts only include selected, non-excluded uploads/);
 });
 
 test("JournalSection exposes concrete review workflow, timeline filters, source preview, catch-up, and team room", () => {
