@@ -1015,10 +1015,14 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(journalSource, /const totalSourceCount = currentBriefSources\.length \+ sources\.length/);
   assert.match(journalSource, /Brief baseline sources/);
   assert.match(journalSource, /Journal uploaded sources/);
-  assert.match(journalSource, /function BriefSourceLink/);
-  assert.match(journalSource, /parsed\.protocol === "http:" \|\| parsed\.protocol === "https:"/);
-  assert.match(journalSource, /!parsed\.username/);
-  assert.match(journalSource, /!parsed\.password/);
+  assert.match(journalSource, /import \{ SourceLink \} from "@\/components\/SourceLink"/);
+  const sourceLinkSource = fs.readFileSync(
+    path.join(__dirname, "../web/components/SourceLink.tsx"),
+    "utf8",
+  );
+  assert.match(sourceLinkSource, /parsed\.protocol === "http:" \|\| parsed\.protocol === "https:"/);
+  assert.match(sourceLinkSource, /!parsed\.username/);
+  assert.match(sourceLinkSource, /!parsed\.password/);
 });
 
 test("JournalSection opens with Team Room before Timeline and counts current brief sources in Sources", () => {
