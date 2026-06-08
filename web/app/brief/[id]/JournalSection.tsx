@@ -149,6 +149,47 @@ const candidateStatusLabels: Record<ReviewCandidateStatus, string> = {
   dismissed: "Dismissed",
 };
 
+const STRUCTURED_REVIEW_BOARDS: Array<{
+  type: ReviewCandidateType;
+  title: string;
+  description: string;
+  empty: string;
+}> = [
+  {
+    type: "action_item",
+    title: "Actions board",
+    description: "Follow-ups, owners, deliverables, and next moves that need human review.",
+    empty: "No action item candidates yet.",
+  },
+  {
+    type: "decision",
+    title: "Decisions log",
+    description: "Accepted or pending decisions with evidence before they become account truth.",
+    empty: "No decision candidates yet.",
+  },
+  {
+    type: "open_question",
+    title: "Open questions",
+    description: "Unknowns and follow-up questions that still need evidence or owner input.",
+    empty: "No open question candidates yet.",
+  },
+  {
+    type: "brief_update",
+    title: "Brief updates",
+    description: "Field-level account brief changes to send through the normal versioned brief flow.",
+    empty: "No brief update candidates yet.",
+  },
+];
+
+function groupReviewCandidatesByType(candidates: ReviewCandidate[]): Record<ReviewCandidateType, ReviewCandidate[]> {
+  return {
+    brief_update: candidates.filter((candidate) => candidate.candidate_type === "brief_update"),
+    action_item: candidates.filter((candidate) => candidate.candidate_type === "action_item"),
+    decision: candidates.filter((candidate) => candidate.candidate_type === "decision"),
+    open_question: candidates.filter((candidate) => candidate.candidate_type === "open_question"),
+  };
+}
+
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 function relativeTime(ts: number): string {
@@ -1360,6 +1401,7 @@ export default function JournalSection({
   const currentBriefSources = briefContext.sources ?? [];
   const totalSourceCount = currentBriefSources.length + sources.length;
   const activeScopedDocumentIds = filteredSourceDocumentIds(scopedDocumentIds);
+  const reviewCandidatesByType = groupReviewCandidatesByType(reviewCandidates);
 
   function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
     const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
@@ -1639,6 +1681,63 @@ export default function JournalSection({
             </div>
           </div>
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Human-reviewed lanes
+                </div>
+                <h3 className="mt-1 text-sm font-semibold text-ink">Structured review boards</h3>
+                <p className="mt-1 text-xs text-muted">
+                  Review candidates stay in the same human-approved workflow, but are grouped into boards so actions, decisions, open questions, and brief updates are easier to scan.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+                {reviewCandidates.length} card{reviewCandidates.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 xl:grid-cols-4 md:grid-cols-2">
+              {STRUCTURED_REVIEW_BOARDS.map((board) => {
+                const boardCandidates = reviewCandidatesByType[board.type];
+                return (
+                  <div key={board.type} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold text-ink">{board.title}</h4>
+                        <p className="mt-1 text-xs text-muted">{board.description}</p>
+                      </div>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-700">
+                        {boardCandidates.length}
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {boardCandidates.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-xs text-muted">
+                          {board.empty}
+                        </div>
+                      ) : (
+                        boardCandidates.slice(0, 3).map((candidate) => (
+                          <div key={candidate.id} className="rounded-lg border border-slate-200 bg-white p-3 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-ink">{candidate.title}</span>
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-muted">
+                                {candidateStatusLabels[candidate.status]}
+                              </span>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-muted">{candidate.proposed_text}</p>
+                          </div>
+                        ))
+                      )}
+                      {boardCandidates.length > 3 && (
+                        <div className="text-xs text-muted">+ {boardCandidates.length - 3} more in the full Review Queue below</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
             <p className="mt-1 text-xs text-muted">
@@ -1728,6 +1827,12 @@ export default function JournalSection({
           </div>
 
           <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-ink">Full Review Queue</h3>
+              <span className="text-xs text-muted">
+                Same human-review cards, shown ungrouped for status changes and brief-chat handoff.
+              </span>
+            </div>
             {reviewCandidates.length === 0 ? (
               <div className="rounded-xl border border-dashed border-amber-200 bg-white p-6 text-sm text-muted">
                 No review candidate cards yet. Use the assistant actions above to draft candidates, then save the reviewed items here for team follow-up.
