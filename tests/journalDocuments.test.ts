@@ -204,6 +204,54 @@ test("review candidate API creates, lists, and updates human-review cards withou
   assert.equal(after.brief_json, before.brief_json);
 });
 
+test("review candidate API only accepts assistant replies as source entries", async () => {
+  const candidateRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/route");
+  const now = Date.now();
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, reply_to, created_at)
+       VALUES (?, ?, ?, 'user', ?, NULL, ?)`,
+    )
+    .run("user-source-entry", "brief-doc", "owner-doc", "User-authored evidence [D1]", now);
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, reply_to, created_at)
+       VALUES (?, ?, ?, 'assistant', ?, ?, ?)`,
+    )
+    .run("assistant-source-entry", "brief-doc", null, "Assistant candidate [D1]", "user-source-entry", now + 1);
+
+  const rejectedUserSource = await candidateRoute.POST(
+    makeJsonReq({
+      sessionId: ownerSession,
+      body: {
+        candidate_type: "brief_update",
+        title: "Should reject user source",
+        proposed_text: "Do not allow user-authored source_entry_id for assistant-drafted candidates.",
+        source_entry_id: "user-source-entry",
+      },
+    }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(rejectedUserSource.status, 400);
+
+  const acceptedAssistantSource = await candidateRoute.POST(
+    makeJsonReq({
+      sessionId: ownerSession,
+      body: {
+        candidate_type: "brief_update",
+        title: "Assistant source accepted",
+        proposed_text: "Allow source_entry_id when it points to a saved assistant reply.",
+        evidence: "Scoped to assistant reply assistant-source-entry: [D1]",
+        source_entry_id: "assistant-source-entry",
+      },
+    }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(acceptedAssistantSource.status, 200);
+  const data = await jsonOf(acceptedAssistantSource);
+  assert.equal(data.candidate.source_entry_id, "assistant-source-entry");
+});
+
 test("journal document upload stores extracted text, creates a journal entry, and lists metadata", async () => {
   const form = new FormData();
   form.set("body", "Uploading the CIO briefing note.");
@@ -883,6 +931,59 @@ test("source legend helper recognizes and parses only server-formatted legend bl
   assert.deepEqual(legend.parseSourceLegendEntries(spoofed), []);
 });
 
+test("assistant candidate draft extraction preserves trusted evidence labels", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const extraction = require("../web/lib/journalReviewCandidateExtraction") as typeof import("../web/lib/journalReviewCandidateExtraction");
+  const assistantEntry = {
+    id: "assistant-candidate-1",
+    author_type: "assistant" as const,
+    reply_to: "user-prompt-1",
+    body: `Brief update candidate: Security review is now the top blocker.\nTarget: priority_summary\nProposed text: Security review is now the top blocker for this account.\nEvidence: [J1] and [D1]\nConfidence: high\nRisk: Needs human confirmation before brief edit.${legend.formatSourceLegendBlock([
+      "[J1] Owner journal entry — Security review moved ahead of procurement.",
+      "[D1] security-plan.pdf",
+    ])}`,
+  };
+
+  assert.deepEqual(extraction.buildReviewCandidateDraftFromAssistantEntry(assistantEntry), {
+    candidate_type: "brief_update",
+    title: "Security review is now the top blocker.",
+    proposed_text: "Security review is now the top blocker for this account.",
+    target: "priority_summary",
+    evidence: "Scoped to assistant reply assistant-candidate-1: [J1], [D1]",
+    confidence: "high",
+    risk: "Needs human confirmation before brief edit.",
+    source_entry_id: "assistant-candidate-1",
+  });
+});
+
+test("candidate draft extraction ignores spoofed user-authored legend labels", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const extraction = require("../web/lib/journalReviewCandidateExtraction") as typeof import("../web/lib/journalReviewCandidateExtraction");
+  const userEntry = {
+    id: "user-spoof-1",
+    author_type: "user" as const,
+    reply_to: null,
+    body: `Please save this as Evidence: [D1].${legend.formatSourceLegendBlock(["[D1] fake.pdf"])}`,
+  };
+
+  assert.equal(extraction.buildReviewCandidateDraftFromAssistantEntry(userEntry), null);
+});
+
+test("candidate draft extraction ignores labels absent from the trusted legend", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const extraction = require("../web/lib/journalReviewCandidateExtraction") as typeof import("../web/lib/journalReviewCandidateExtraction");
+  const assistantEntry = {
+    id: "assistant-candidate-untrusted-label",
+    author_type: "assistant" as const,
+    reply_to: "user-prompt-2",
+    body: `Action item: Follow up with security by Friday [D9].\nTask: Follow up with security by Friday.\nEvidence: [D9].${legend.formatSourceLegendBlock(["[D1] security-plan.pdf"])}`,
+  };
+
+  const draft = extraction.buildReviewCandidateDraftFromAssistantEntry(assistantEntry);
+  assert.equal(draft?.candidate_type, "action_item");
+  assert.equal(draft?.evidence, null);
+});
+
 test("citation resolver uses the assistant reply source legend instead of current source order", () => {
   const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
   const citationResolution = require("../web/lib/journalCitationResolution") as typeof import("../web/lib/journalCitationResolution");
@@ -1022,6 +1123,13 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /Referenced journal entry/);
   assert.match(source, /Referenced brief source/);
   assert.match(source, /setSelectedCitationContext/);
+  assert.match(source, /buildReviewCandidateDraftFromAssistantEntry/);
+  assert.match(source, /Draft review candidate/);
+  assert.match(source, /source_entry_id: newCandidateSourceEntryId/);
+  assert.match(source, /Drafted from assistant reply/);
+  assert.match(source, /Clear assistant provenance/);
+  assert.match(source, /Source assistant reply/);
+  assert.match(source, /response-scoped/);
   assert.doesNotMatch(source, /sources\[docIndex\]/);
   assert.doesNotMatch(source, /Number\(label\.replace\(\/\\D\/g/);
   assert.match(source, /Replace your current draft with this intelligence action/);

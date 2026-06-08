@@ -16,9 +16,16 @@ function authError(e: unknown) {
   return null;
 }
 
-function sourceEntryBelongsToBrief(briefId: string, entryId: string): boolean {
+function sourceEntryBelongsToAssistantReply(briefId: string, entryId: string): boolean {
   const row = db()
-    .prepare(`SELECT id FROM journal_entries WHERE id = ? AND brief_id = ? AND deleted_at IS NULL`)
+    .prepare(
+      `SELECT id FROM journal_entries
+        WHERE id = ?
+          AND brief_id = ?
+          AND author_type = 'assistant'
+          AND reply_to IS NOT NULL
+          AND deleted_at IS NULL`,
+    )
     .get(entryId, briefId);
   return !!row;
 }
@@ -74,9 +81,9 @@ export async function POST(
     );
   }
 
-  if (input.source_entry_id && !sourceEntryBelongsToBrief(params.id, input.source_entry_id)) {
+  if (input.source_entry_id && !sourceEntryBelongsToAssistantReply(params.id, input.source_entry_id)) {
     return NextResponse.json(
-      { error: "source_entry_id was not found" },
+      { error: "source_entry_id must reference a saved assistant reply" },
       { status: 400 },
     );
   }

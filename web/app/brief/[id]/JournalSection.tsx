@@ -18,6 +18,7 @@ import {
   resolveCitedDocumentSource,
   resolveCitedJournalEntry,
 } from "@/lib/journalCitationResolution";
+import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
@@ -365,6 +366,7 @@ export default function JournalSection({
   const [newCandidateEvidence, setNewCandidateEvidence] = useState("");
   const [newCandidateConfidence, setNewCandidateConfidence] = useState("");
   const [newCandidateRisk, setNewCandidateRisk] = useState("");
+  const [newCandidateSourceEntryId, setNewCandidateSourceEntryId] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<JournalSource | null>(null);
   const [selectedCitationContext, setSelectedCitationContext] = useState<SelectedCitationContext | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -517,6 +519,7 @@ export default function JournalSection({
           evidence: newCandidateEvidence,
           confidence: newCandidateConfidence,
           risk: newCandidateRisk,
+          ...(newCandidateSourceEntryId ? { source_entry_id: newCandidateSourceEntryId } : {}),
         }),
       });
       if (!r.ok) {
@@ -529,6 +532,7 @@ export default function JournalSection({
       setNewCandidateEvidence("");
       setNewCandidateConfidence("");
       setNewCandidateRisk("");
+      setNewCandidateSourceEntryId(null);
       setReviewError(null);
       await loadReviewCandidates();
     } catch (e: any) {
@@ -536,6 +540,25 @@ export default function JournalSection({
     } finally {
       setReviewLoading(false);
     }
+  }
+
+  function draftReviewCandidateFromAssistant(entry: Entry) {
+    const draft = buildReviewCandidateDraftFromAssistantEntry(entry);
+    if (!draft) {
+      setReviewError("Only saved assistant replies can be converted into review candidates.");
+      setActiveWorkspace("review");
+      return;
+    }
+    setNewCandidateType(draft.candidate_type);
+    setNewCandidateTitle(draft.title);
+    setNewCandidateTarget(draft.target ?? "");
+    setNewCandidateText(draft.proposed_text);
+    setNewCandidateEvidence(draft.evidence ?? "");
+    setNewCandidateConfidence(draft.confidence ?? "");
+    setNewCandidateRisk(draft.risk ?? "Review before applying; this card was drafted from an assistant reply.");
+    setNewCandidateSourceEntryId(draft.source_entry_id);
+    setReviewError(null);
+    setActiveWorkspace("review");
   }
 
   async function updateCandidateStatus(candidateId: string, status: ReviewCandidateStatus) {
@@ -559,7 +582,10 @@ export default function JournalSection({
   }
 
   function briefChatPromptForCandidate(candidate: ReviewCandidate): string {
-    return `Please review this human-accepted Journal candidate and update the brief only if appropriate.\n\nType: ${candidateTypeLabels[candidate.candidate_type]}\nStatus: ${candidateStatusLabels[candidate.status]}\nTarget: ${candidate.target || "Not specified"}\nCurrent brief baseline: ${candidate.current_baseline || "Not specified"}\nProposed text: ${candidate.proposed_text}\nEvidence: ${candidate.evidence || "Not specified"}\nConfidence: ${candidate.confidence || "Not specified"}\nRisk / review notes: ${candidate.risk || "Not specified"}\n\nPreserve version history and do not invent evidence.`;
+    const provenance = candidate.source_entry_id
+      ? `\nSource assistant reply: ${candidate.source_entry_id}\nNote: Evidence labels such as [J1] or [D1] are response-scoped to that assistant reply. Resolve them from the saved Journal reply/source legend before using them as brief evidence.`
+      : "";
+    return `Please review this human-accepted Journal candidate and update the brief only if appropriate.\n\nType: ${candidateTypeLabels[candidate.candidate_type]}\nStatus: ${candidateStatusLabels[candidate.status]}\nTarget: ${candidate.target || "Not specified"}\nCurrent brief baseline: ${candidate.current_baseline || "Not specified"}\nProposed text: ${candidate.proposed_text}\nEvidence: ${candidate.evidence || "Not specified"}${provenance}\nConfidence: ${candidate.confidence || "Not specified"}\nRisk / review notes: ${candidate.risk || "Not specified"}\n\nPreserve version history and do not invent evidence.`;
   }
 
   async function copyBriefChatPrompt(candidate: ReviewCandidate) {
@@ -1075,6 +1101,18 @@ export default function JournalSection({
 
           {isAssistant && !editing && !deleted && renderCitationChips(e, openCitationContext)}
 
+          {isAssistant && !editing && !deleted && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => draftReviewCandidateFromAssistant(e)}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-50"
+              >
+                <CheckCircle2 className="size-3" /> Draft review candidate
+              </button>
+            </div>
+          )}
+
           {!editing && !deleted && e.documents && e.documents.length > 0 && (
             <div className="mt-3 space-y-2">
               {e.documents.map((doc) => (
@@ -1375,6 +1413,20 @@ export default function JournalSection({
             <p className="mt-1 text-xs text-muted">
               Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
             </p>
+            {newCandidateSourceEntryId && (
+              <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+                <div>
+                  Drafted from assistant reply {newCandidateSourceEntryId}. Evidence labels are preserved from that reply’s trusted source legend when available.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNewCandidateSourceEntryId(null)}
+                  className="mt-1 font-medium underline decoration-violet-300 underline-offset-2 hover:text-violet-700"
+                >
+                  Clear assistant provenance
+                </button>
+              </div>
+            )}
             <div className="mt-3 grid gap-3 lg:grid-cols-2">
               <select
                 value={newCandidateType}
