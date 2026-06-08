@@ -1590,7 +1590,85 @@ test("journal search handles blank queries as unfiltered without recalling exclu
   assert.equal(result.isActive, false);
 });
 
-test("JournalSection exposes search UI and source-scoped recall without durable mutations", () => {
+test("journal cockpit summary uses reviewed candidates only", () => {
+  const cockpit = require("../web/lib/journalCockpitSummary") as typeof import("../web/lib/journalCockpitSummary");
+  const now = Date.now();
+  const candidates = [
+    {
+      id: "accepted-action",
+      candidate_type: "action_item",
+      status: "accepted",
+      title: "Schedule procurement workshop",
+      proposed_text: "Schedule the procurement workshop with the buyer committee.",
+      target: "Procurement",
+      current_baseline: null,
+      evidence: "[J1] buyer asked for workshop",
+      confidence: "high",
+      risk: null,
+      source_entry_id: "assistant-1",
+      created_at: now - 2000,
+      updated_at: now - 1000,
+    },
+    {
+      id: "applied-update",
+      candidate_type: "brief_update",
+      status: "applied",
+      title: "Update priority summary",
+      proposed_text: "Priority is now procurement acceleration.",
+      target: "priority_summary",
+      current_baseline: "Old priority",
+      evidence: "[D1] procurement-plan.pdf",
+      confidence: "medium",
+      risk: "Confirm timeline",
+      source_entry_id: "assistant-2",
+      created_at: now - 3000,
+      updated_at: now - 500,
+    },
+    {
+      id: "new-decision",
+      candidate_type: "decision",
+      status: "new",
+      title: "Unreviewed decision",
+      proposed_text: "Do not include yet.",
+      target: null,
+      current_baseline: null,
+      evidence: "unreviewed",
+      confidence: null,
+      risk: null,
+      source_entry_id: null,
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: "dismissed-question",
+      candidate_type: "open_question",
+      status: "dismissed",
+      title: "Dismissed question",
+      proposed_text: "Do not include dismissed items.",
+      target: null,
+      current_baseline: null,
+      evidence: null,
+      confidence: null,
+      risk: null,
+      source_entry_id: null,
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+
+  const summary = cockpit.buildJournalCockpitSummary(candidates);
+  assert.equal(summary.reviewedCount, 2);
+  assert.equal(summary.pendingCount, 1);
+  assert.equal(summary.dismissedCount, 1);
+  assert.equal(summary.cardsByType.action_item.length, 1);
+  assert.equal(summary.cardsByType.brief_update.length, 1);
+  assert.equal(summary.cardsByType.decision.length, 0);
+  assert.equal(summary.cardsByType.open_question.length, 0);
+  assert.deepEqual(summary.priorityCards.map((card) => card.id), ["applied-update", "accepted-action"]);
+  assert.match(summary.priorityCards[0].evidence ?? "", /procurement-plan\.pdf/);
+});
+
+test("JournalSection exposes search UI, source-scoped recall, and reviewed cockpit cards without durable mutations", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const journalSource = fs.readFileSync(
@@ -1612,7 +1690,15 @@ test("JournalSection exposes search UI and source-scoped recall without durable 
     journalSource.indexOf("Use recent sources instead"),
   );
   assert.match(useRecentBlock, /setRequireSourceDocumentScope\(false\)/);
-  assert.doesNotMatch(journalSource, /search.*PATCH/i);
+  assert.doesNotMatch(journalSource, /search.*PATCH/i);  assert.match(journalSource, /buildJournalCockpitSummary/);
+  assert.match(journalSource, /Account Intelligence Cockpit/);
+  assert.match(journalSource, /Reviewed account signals/);
+  assert.match(journalSource, /reviewedCount/);
+  assert.match(journalSource, /pendingCount/);
+  assert.match(journalSource, /dismissedCount/);
+  assert.match(journalSource, /accepted, sent to brief chat, or applied/);
+  assert.match(journalSource, /cockpitSummary\.priorityCards/);
+  assert.doesNotMatch(journalSource, /cockpit.*PATCH/i);
 });
 
 test("Hermes chat path includes document-aware update and citation instructions", () => {
