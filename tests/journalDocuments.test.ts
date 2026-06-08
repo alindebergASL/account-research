@@ -1009,6 +1009,34 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(pageSource, /priority_summary: brief\.priority_summary/);
   assert.match(pageSource, /next_action: brief\.next_action/);
   assert.match(pageSource, /sources_count: brief\.sources\.length/);
+  assert.match(journalSource, /sources: Array<\{ title: string; url: string; accessed: string \}>/);
+  assert.match(pageSource, /sources: brief\.sources/);
+  assert.match(journalSource, /const currentBriefSources = briefContext\.sources \?\? \[\]/);
+  assert.match(journalSource, /const totalSourceCount = currentBriefSources\.length \+ sources\.length/);
+  assert.match(journalSource, /Brief baseline sources/);
+  assert.match(journalSource, /Journal uploaded sources/);
+  assert.match(journalSource, /function BriefSourceLink/);
+  assert.match(journalSource, /parsed\.protocol === "http:" \|\| parsed\.protocol === "https:"/);
+  assert.match(journalSource, /!parsed\.username/);
+  assert.match(journalSource, /!parsed\.password/);
+});
+
+test("JournalSection opens with Team Room before Timeline and counts current brief sources in Sources", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /useState<JournalWorkspace>\("team"\)/);
+  const tabsStart = journalSource.indexOf("const workspaceTabs");
+  assert.ok(tabsStart >= 0);
+  const tabsEnd = journalSource.indexOf("];", tabsStart);
+  const tabsBlock = journalSource.slice(tabsStart, tabsEnd);
+  assert.ok(tabsBlock.indexOf('id: "team"') >= 0);
+  assert.ok(tabsBlock.indexOf('id: "team"') < tabsBlock.indexOf('id: "timeline"'));
+  assert.ok(tabsBlock.indexOf("count: totalSourceCount") >= 0);
 });
 
 test("JournalSection exposes concrete review workflow, timeline filters, source preview, catch-up, and team room", () => {
