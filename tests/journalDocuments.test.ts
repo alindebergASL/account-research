@@ -1454,6 +1454,27 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
   assert.match(journalSource, /general team discussion/);
 });
 
+test("JournalSection exposes structured action decision and question boards over review candidates", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /STRUCTURED_REVIEW_BOARDS/);
+  assert.match(journalSource, /groupReviewCandidatesByType/);
+  assert.match(journalSource, /Structured review boards/);
+  assert.match(journalSource, /Actions board/);
+  assert.match(journalSource, /Decisions log/);
+  assert.match(journalSource, /Open questions/);
+  assert.match(journalSource, /Brief updates/);
+  assert.match(journalSource, /candidateStatusLabels\[candidate.status\]/);
+  assert.match(journalSource, /reviewCandidatesByType\[board.type\]/);
+  assert.match(journalSource, /Human-reviewed lanes/);
+  assert.match(journalSource, /Full Review Queue/);
+});
+
 test("Hermes chat path includes document-aware update and citation instructions", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
