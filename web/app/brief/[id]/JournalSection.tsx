@@ -13,7 +13,11 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { resolveCitedDocumentSource } from "@/lib/journalCitationResolution";
+import {
+  resolveCitedBriefSource,
+  resolveCitedDocumentSource,
+  resolveCitedJournalEntry,
+} from "@/lib/journalCitationResolution";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
@@ -87,6 +91,27 @@ type ReviewCandidate = {
   created_at: number;
   updated_at: number;
 };
+
+type SelectedCitationContext =
+  | {
+      kind: "journal";
+      label: string;
+      title: string;
+      body: string | null;
+      meta: string;
+    }
+  | {
+      kind: "brief_source";
+      label: string;
+      title: string;
+      url: string;
+      accessed: string;
+    }
+  | {
+      kind: "unresolved";
+      label: string;
+      message: string;
+    };
 
 const timelineFilterLabels: Record<TimelineFilter, string> = {
   all: "All entries",
@@ -341,6 +366,7 @@ export default function JournalSection({
   const [newCandidateConfidence, setNewCandidateConfidence] = useState("");
   const [newCandidateRisk, setNewCandidateRisk] = useState("");
   const [selectedSource, setSelectedSource] = useState<JournalSource | null>(null);
+  const [selectedCitationContext, setSelectedCitationContext] = useState<SelectedCitationContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -733,7 +759,7 @@ export default function JournalSection({
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
               <FileText className="size-3.5" /> Source preview
             </div>
-            <h3 className="mt-3 text-base font-semibold text-ink">{selectedSource.filename}</h3>
+            <h3 className="mt-3 text-sm font-semibold text-ink">{selectedSource.filename}</h3>
             <p className="mt-1 text-xs text-muted">
               Uploaded {relativeTime(selectedSource.created_at)} by {selectedSource.entryAuthor} · {formatFileSize(selectedSource.byte_size)}
             </p>
@@ -771,6 +797,61 @@ export default function JournalSection({
             Compare with brief
           </button>
         </div>
+      </div>
+    );
+  }
+
+  function renderCitationContext() {
+    if (!selectedCitationContext) return null;
+    const context = selectedCitationContext;
+    return (
+      <div className="mb-4 rounded-2xl border border-violet-200 bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
+              <Sparkles className="size-3.5" /> Citation source context {context.label}
+            </div>
+            <h3 className="mt-3 text-sm font-semibold text-ink">
+              {context.kind === "journal" && "Referenced journal entry"}
+              {context.kind === "brief_source" && "Referenced brief source"}
+              {context.kind === "unresolved" && "Citation context unavailable"}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedCitationContext(null)}
+            className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
+            aria-label="Close citation source context"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        {context.kind === "journal" && (
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+            <p className="text-xs font-medium text-muted">{context.meta}</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">
+              {context.body || "No journal text available."}
+            </p>
+          </div>
+        )}
+        {context.kind === "brief_source" && (
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+            <p className="text-sm font-medium text-ink">{context.title || "Untitled source"}</p>
+            <div className="mt-1 text-sm">
+              <SourceLink
+                source={context.url}
+                className="break-all text-sky-800 hover:underline"
+                mutedClassName="break-all text-muted"
+              />
+            </div>
+            {context.accessed && <p className="mt-1 text-xs text-muted">Accessed {context.accessed}</p>}
+          </div>
+        )}
+        {context.kind === "unresolved" && (
+          <p className="mt-3 rounded-xl border border-dashed border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
+            {context.message}
+          </p>
+        )}
       </div>
     );
   }
@@ -843,6 +924,7 @@ export default function JournalSection({
   }
 
   function openCitationContext(label: string, entry: Entry) {
+    setSelectedCitationContext(null);
     if (label.startsWith("[D")) {
       const source = resolveCitedDocumentSource(label, entry.body, sources);
       if (source) {
@@ -850,7 +932,40 @@ export default function JournalSection({
         setActiveWorkspace("sources");
         return;
       }
+      const briefSource = resolveCitedBriefSource(label, entry.body, currentBriefSources);
+      if (briefSource) {
+        setSelectedCitationContext({
+          kind: "brief_source",
+          label,
+          title: briefSource.title,
+          url: briefSource.url,
+          accessed: briefSource.accessed,
+        });
+        setActiveWorkspace("sources");
+        return;
+      }
     }
+    if (label.startsWith("[J")) {
+      const journalEntry = resolveCitedJournalEntry(label, entry.body, entries ?? []);
+      if (journalEntry) {
+        setSelectedCitationContext({
+          kind: "journal",
+          label,
+          title: authorName(journalEntry),
+          body: displayEntryBody(journalEntry),
+          meta: `${authorName(journalEntry)} · ${relativeTime(journalEntry.created_at)}`,
+        });
+        setTimelineFilter("all");
+        setActiveWorkspace("timeline");
+        return;
+      }
+    }
+    setSelectedCitationContext({
+      kind: "unresolved",
+      label,
+      message:
+        "This citation label was present in the assistant reply, but the current Journal data could not resolve it to a saved note, uploaded document, or brief source. No evidence was fabricated.",
+    });
     setTimelineFilter("all");
     setActiveWorkspace("timeline");
   }
@@ -1161,6 +1276,8 @@ export default function JournalSection({
           );
         })}
       </div>
+
+      {renderCitationContext()}
 
       {activeWorkspace === "intelligence" && (
         <div className="mb-4 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
