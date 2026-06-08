@@ -1,15 +1,67 @@
 # Next-Generation Journal Vision
 
-Status: product direction / reference note
-Last updated: 2026-06-06
+Status: product direction / living implementation guide
+Last updated: 2026-06-08
 
 This note captures the product research and brainstorming for evolving the account-research Journal from notes plus AI replies into a production-ready, next-generation team account-intelligence workspace.
 
-No implementation is specified here as complete. The agreed starting path is:
+The agreed starting path is:
 
 1. Journal Workspaces + Source Library
 2. Brief Update Queue + Action/Decision extraction
 3. Account Intelligence Cockpit built on structured source/action/decision/question data
+
+## Current implementation status
+
+This document started as a product reference note in PR #81. Since then, PRs #82-#87 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, and advisory intelligence surface.
+
+Current production baseline on `main`:
+
+| Area | Status | Shipped in | Notes |
+| --- | --- | --- | --- |
+| Journal document uploads | Shipped | #78, #79 | Uploads extract text and can be used by Journal AI; workflow polish followed the first upload PR. |
+| Intelligence panel / advisory prompts | Scaffolded | #80 | Users can ask for digests, brief-update candidates, follow-ups, and open questions, but durable generated cockpit cards are still future work. |
+| Product direction note | Shipped | #81 | This file became the guiding reference for subsequent Journal PRs. |
+| Workspaces + source library | First production pass shipped | #82, #84, #86, #87 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources. Source counts now match the baseline plus uploads. |
+| Brief-grounded review queue | First production pass shipped | #83, #84, #85 | Review candidate cards exist for brief updates, actions, decisions, and open questions; status workflow and brief-chat handoff exist. No automatic brief mutation. |
+| Team Room separation | Shipped | #86 | General teammate discussion is separated from source-grounded Timeline evidence and made the default workspace. |
+| Citation/source trust layer | Partial | #78-#87 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, and source link rendering is hardened. Exact click-to-source passage preview/highlighting is the next trust-layer slice. |
+| Account Intelligence Cockpit | Scaffolded | #80, #85 | The UI has an Intelligence surface and review workflow, but no cached structured cockpit built from accepted source/action/decision/question data yet. |
+
+### Shipped foundation
+
+- Journal Workspaces: Team Room, Timeline, Sources, Intelligence, and Review Queue.
+- Team Room is the default collaboration space and is separate from evidence/timeline entries.
+- Source Library shows uploaded Journal documents plus Brief baseline sources.
+- Source previews exist for uploaded documents.
+- Uploaded sources can scope assistant questions.
+- Review Queue stores human-review candidates without silently editing the Brief.
+- Candidate status supports New, Reviewing, Accepted, Sent to brief chat, Applied, and Dismissed.
+- Safe source-link rendering is shared and rejects deceptive URLs containing username/password userinfo.
+- Server-formatted source legends are parsed defensively; spoofed user-authored marker blocks are ignored.
+
+### Still partial / future
+
+- Source include/exclude toggles and source health labels: stale, duplicate, superseded, conflicting.
+- Click-to-source citation preview for `[J]` and `[D]` citations, including exact source context where available.
+- Passage-level highlighting and copy cited quote actions.
+- Automatic extraction of assistant output into saved review candidate cards.
+- Structured Actions, Decisions, and Questions boards with owners, due dates, and lifecycle metadata.
+- Cached Account Intelligence cockpit built from accepted evidence, actions, decisions, questions, and source changes.
+- Journal search, source-scoped search, and “what changed since…” summaries.
+
+### Recommended next implementation slice
+
+Build the citation/source preview drawer next. Clicking a `[J]` or `[D]` citation in an assistant answer should open the relevant source context in the Journal instead of only leaving the reader to inspect the raw Timeline. This strengthens the trust layer before adding more automation.
+
+Scope for that next slice:
+
+1. Parse citation labels in assistant answers.
+2. Resolve `[D#]` citations to uploaded document or Brief baseline source context when available.
+3. Resolve `[J#]` citations to the referenced Journal entry context when available.
+4. Open a source/context preview panel from the citation click.
+5. Keep unsupported/unresolved labels non-destructive: show a safe fallback rather than fabricating evidence.
+6. Add regression tests for source legend parsing, citation resolution, and rendered click targets.
 
 ## High-level thesis
 
