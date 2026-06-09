@@ -166,6 +166,7 @@ export default function JournalSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const composeRef = useRef<HTMLTextAreaElement>(null);
+  const sourcePreviewRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -673,7 +674,15 @@ export default function JournalSection({
           </button>
           <button
             type="button"
-            onClick={() => setSelectedSource(source)}
+            onClick={() => {
+              setSelectedSource(source);
+              // Preview stacks above the source list; bring it into view when
+              // opened from a card further down.
+              window.setTimeout(
+                () => sourcePreviewRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
+                0,
+              );
+            }}
             className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
           >
             Preview source
@@ -736,21 +745,10 @@ export default function JournalSection({
   }
 
   function renderSourcePreview() {
-    if (!selectedSource) {
-      return (
-        <div className="hidden rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted shadow-sm xl:block">
-          <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
-            <FileText className="size-3.5" /> Source preview
-          </div>
-          <p className="mt-3">
-            Select “Preview source” on a source card to inspect extracted text and run source-scoped prompts without changing the brief.
-          </p>
-        </div>
-      );
-    }
+    if (!selectedSource) return null;
     const isSelectedSourceExcluded = excludedDocumentIds.includes(selectedSource.id);
     return (
-      <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+      <div ref={sourcePreviewRef} className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
@@ -2126,15 +2124,16 @@ export default function JournalSection({
                 description="Clear the search to see all uploaded sources."
               />
             ) : (
-              <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="grid gap-3 xl:grid-cols-2">
-                  {displayedSources.map((source) => renderSourceCard(source))}
-                </div>
-                {selectedPreviewMatchesSearch ? renderSourcePreview() : (
-                  <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
-                    The selected source preview does not match this search. Clear search or open a matching source.
-                  </div>
-                )}
+              <div className="mt-3 flex flex-col gap-3">
+                {selectedSource &&
+                  (selectedPreviewMatchesSearch ? (
+                    renderSourcePreview()
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
+                      The selected source preview does not match this search. Clear search or open a matching source.
+                    </div>
+                  ))}
+                {displayedSources.map((source) => renderSourceCard(source))}
               </div>
             )}
           </div>
