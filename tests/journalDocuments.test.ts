@@ -156,6 +156,18 @@ test("migration creates journal review candidate table and indexes", () => {
   ]);
 });
 
+test("migration creates durable journal cockpit read model table and indexes", () => {
+  const names = (db()
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type IN ('table','index') AND name IN ('journal_cockpit_read_models','idx_journal_cockpit_read_models_generated')`,
+    )
+    .all() as Array<{ name: string }>).map((r) => r.name).sort();
+  assert.deepEqual(names, [
+    "idx_journal_cockpit_read_models_generated",
+    "journal_cockpit_read_models",
+  ]);
+});
+
 test("review candidate API creates, lists, and updates human-review cards without editing the brief", async () => {
   const candidateRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/route");
   const candidateItemRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/[candidateId]/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/[candidateId]/route");
@@ -202,6 +214,44 @@ test("review candidate API creates, lists, and updates human-review cards withou
     .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
     .get("brief-doc") as any;
   assert.equal(after.brief_json, before.brief_json);
+});
+
+test("journal cockpit read model can be saved and loaded without mutating the brief", () => {
+  const readModel = require("../web/lib/journalCockpitReadModel") as typeof import("../web/lib/journalCockpitReadModel");
+  const before = db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get("brief-doc") as { brief_json: string };
+  const now = Date.UTC(2026, 5, 9, 12, 30, 0);
+  const model = readModel.buildJournalCockpitReadModel({
+    briefId: "brief-doc",
+    generatedAt: now,
+    candidates: [
+      {
+        id: "accepted-update",
+        candidate_type: "brief_update",
+        status: "accepted",
+        title: "Priority changed",
+        proposed_text: "Priority moved to security pilot readiness.",
+        target: "priority_summary",
+        current_baseline: "Old priority",
+        evidence: "[J2] reviewed note",
+        confidence: "high",
+        risk: null,
+        source_entry_id: "assistant-99",
+        created_at: now - 2000,
+        updated_at: now - 1000,
+      },
+    ],
+    invalidation: { briefUpdatedAt: now - 3000, latestJournalEntryAt: now - 2000, latestSourceUpdatedAt: null },
+  });
+
+  readModel.saveJournalCockpitReadModel(model);
+  const loaded = readModel.loadJournalCockpitReadModel("brief-doc");
+  const after = db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get("brief-doc") as { brief_json: string };
+
+  assert.equal(after.brief_json, before.brief_json);
+  assert.equal(loaded?.brief_id, "brief-doc");
+  assert.equal(loaded?.generated_at, now);
+  assert.deepEqual(loaded?.reviewed_candidate_ids, ["accepted-update"]);
+  assert.equal(loaded?.sections.brief_updates[0].candidate_id, "accepted-update");
 });
 
 test("review candidate API only accepts assistant replies as source entries", async () => {
@@ -1733,6 +1783,138 @@ test("journal cockpit summary uses reviewed candidates only", () => {
   assert.equal(summary.cardsByType.open_question.length, 0);
   assert.deepEqual(summary.priorityCards.map((card) => card.id), ["applied-update", "accepted-action"]);
   assert.match(summary.priorityCards[0].evidence ?? "", /procurement-plan\.pdf/);
+});
+
+test("journal cockpit read model preserves reviewed provenance and advisory counts", () => {
+  const readModel = require("../web/lib/journalCockpitReadModel") as typeof import("../web/lib/journalCockpitReadModel");
+  const now = Date.UTC(2026, 5, 9, 12, 0, 0);
+  const candidates = [
+    {
+      id: "accepted-action",
+      candidate_type: "action_item",
+      status: "accepted",
+      title: "Schedule procurement workshop",
+      proposed_text: "Schedule the procurement workshop with the buyer committee.",
+      target: "Procurement",
+      current_baseline: null,
+      evidence: "[J1] buyer asked for workshop",
+      confidence: "high",
+      risk: null,
+      source_entry_id: "assistant-1",
+      created_at: now - 2000,
+      updated_at: now - 1000,
+    },
+    {
+      id: "applied-decision",
+      candidate_type: "decision",
+      status: "applied",
+      title: "Standardize on security pilot path",
+      proposed_text: "Proceed through the security pilot lane.",
+      target: null,
+      current_baseline: null,
+      evidence: "[D1] security-plan.pdf",
+      confidence: "medium",
+      risk: "Confirm security owner",
+      source_entry_id: "assistant-2",
+      created_at: now - 4000,
+      updated_at: now - 500,
+    },
+    {
+      id: "new-question",
+      candidate_type: "open_question",
+      status: "new",
+      title: "Unreviewed question must stay advisory",
+      proposed_text: "Do not make this official.",
+      target: null,
+      current_baseline: null,
+      evidence: "draft evidence",
+      confidence: null,
+      risk: null,
+      source_entry_id: null,
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+
+  const model = readModel.buildJournalCockpitReadModel({
+    briefId: "brief-doc",
+    generatedAt: now,
+    candidates,
+    invalidation: {
+      briefUpdatedAt: now - 10_000,
+      latestJournalEntryAt: now - 9_000,
+      latestSourceUpdatedAt: now - 8_000,
+    },
+  });
+
+  assert.equal(model.schema_version, 1);
+  assert.deepEqual(model.reviewed_candidate_ids, ["applied-decision", "accepted-action"]);
+  assert.equal(model.advisory_counts.pending, 1);
+  assert.equal(model.advisory_counts.dismissed, 0);
+  assert.equal(model.sections.actions[0].candidate_id, "accepted-action");
+  assert.equal(model.sections.decisions[0].source_entry_id, "assistant-2");
+  assert.match(model.sections.decisions[0].evidence ?? "", /security-plan\.pdf/);
+  assert.doesNotMatch(JSON.stringify(model.sections), /Unreviewed question/);
+  assert.match(model.source_fingerprint, /brief:/);
+  assert.match(model.source_fingerprint, /candidate:applied-decision:applied:/);
+});
+
+test("journal cockpit read model fingerprint changes for advisory status and baseline changes", () => {
+  const readModel = require("../web/lib/journalCockpitReadModel") as typeof import("../web/lib/journalCockpitReadModel");
+  const now = Date.UTC(2026, 5, 9, 13, 0, 0);
+  const baseCandidate = {
+    id: "accepted-update",
+    candidate_type: "brief_update",
+    status: "accepted",
+    title: "Priority changed",
+    proposed_text: "Priority moved to security pilot readiness.",
+    target: "priority_summary",
+    current_baseline: "Old priority",
+    evidence: "[J2] reviewed note",
+    confidence: "high",
+    risk: null,
+    source_entry_id: "assistant-99",
+    created_at: now - 2000,
+    updated_at: now - 1000,
+  };
+  const pendingCandidate = {
+    id: "pending-question",
+    candidate_type: "open_question",
+    status: "new",
+    title: "Who owns the pilot?",
+    proposed_text: "Clarify pilot owner.",
+    target: null,
+    current_baseline: null,
+    evidence: "draft",
+    confidence: null,
+    risk: null,
+    source_entry_id: null,
+    created_at: now - 1500,
+    updated_at: now - 500,
+  };
+
+  const first = readModel.buildJournalCockpitReadModel({
+    briefId: "brief-doc",
+    generatedAt: now,
+    candidates: [baseCandidate, pendingCandidate],
+    invalidation: { briefUpdatedAt: now - 10_000, latestJournalEntryAt: now - 9000, latestSourceUpdatedAt: null },
+  });
+  const dismissed = readModel.buildJournalCockpitReadModel({
+    briefId: "brief-doc",
+    generatedAt: now,
+    candidates: [baseCandidate, { ...pendingCandidate, status: "dismissed", updated_at: now }],
+    invalidation: { briefUpdatedAt: now - 10_000, latestJournalEntryAt: now - 9000, latestSourceUpdatedAt: null },
+  });
+  const baselineChanged = readModel.buildJournalCockpitReadModel({
+    briefId: "brief-doc",
+    generatedAt: now,
+    candidates: [{ ...baseCandidate, current_baseline: "Newer baseline" }, pendingCandidate],
+    invalidation: { briefUpdatedAt: now - 10_000, latestJournalEntryAt: now - 9000, latestSourceUpdatedAt: null },
+  });
+
+  assert.notEqual(first.source_fingerprint, dismissed.source_fingerprint);
+  assert.notEqual(first.source_fingerprint, baselineChanged.source_fingerprint);
+  assert.equal(first.sections.brief_updates[0].current_baseline, "Old priority");
 });
 
 test("journal catch-up windows omit old entries excluded sources and unreviewed-only official claims", () => {

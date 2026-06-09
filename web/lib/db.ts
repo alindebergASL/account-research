@@ -583,6 +583,26 @@ const MIGRATIONS: Migration[] = [
           ON journal_review_candidates(brief_id, created_at);
       `),
   },
+  {
+    id: "020_journal_cockpit_read_models",
+    // Durable/cacheable cockpit projection. This stores derived read-model
+    // JSON only; it is not an apply path and does not mutate the brief or
+    // candidate rows.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_cockpit_read_models (
+          brief_id            TEXT PRIMARY KEY,
+          schema_version      INTEGER NOT NULL,
+          source_fingerprint  TEXT NOT NULL,
+          model_json          TEXT NOT NULL,
+          generated_at        INTEGER NOT NULL,
+          updated_at          INTEGER NOT NULL,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_cockpit_read_models_generated
+          ON journal_cockpit_read_models(generated_at DESC);
+      `),
+  },
 ];
 
 export type BriefCommentRow = {
@@ -639,6 +659,15 @@ export type JournalReviewCandidateRow = {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+};
+
+export type JournalCockpitReadModelRow = {
+  brief_id: string;
+  schema_version: number;
+  source_fingerprint: string;
+  model_json: string;
+  generated_at: number;
+  updated_at: number;
 };
 
 // Row types for the Hermes substrate. Kept here next to the rest of the
