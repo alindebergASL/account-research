@@ -1410,58 +1410,6 @@ export default function JournalSection({
         main brief chat when you want the brief itself edited.
       </p>
 
-      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
-              Brief baseline
-            </div>
-            <h3 className="mt-3 text-base font-semibold text-ink">
-              {briefContext.account_name}
-            </h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current brief priority
-                </div>
-                <p className="mt-1 line-clamp-3 text-sm text-slate-800">
-                  {briefContext.priority_summary || "Not set yet."}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current next action
-                </div>
-                <p className="mt-1 line-clamp-3 text-sm text-slate-800">
-                  {briefContext.next_action || "Not set yet."}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current brief sources
-                </div>
-                <p className="mt-1 text-sm text-slate-800">
-                  {briefContext.sources_count} saved source{briefContext.sources_count === 1 ? "" : "s"}
-                </p>
-              </div>
-            </div>
-            <p className="mt-3 max-w-3xl text-sm text-muted">
-              Use this workspace to reconcile new journal evidence with what the brief already says,
-              then send accepted changes through the main brief chat or brief editor.
-            </p>
-          </div>
-          {onViewBriefBaseline && (
-            <button
-              type="button"
-              onClick={onViewBriefBaseline}
-              className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              View brief baseline first
-            </button>
-          )}
-        </div>
-      </div>
-
       {error && (
         <div className="mb-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
@@ -1511,6 +1459,52 @@ export default function JournalSection({
           );
         })}
           </nav>
+          <div className="mt-3 rounded-2xl border border-[var(--line)] bg-white p-3 shadow-sm">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+              Brief baseline
+            </div>
+            <h3 className="mt-2 text-sm font-semibold text-ink">{briefContext.account_name}</h3>
+            <div className="mt-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Current brief priority
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
+                {briefContext.priority_summary || "Not set yet."}
+              </p>
+            </div>
+            <div className="mt-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Current next action
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
+                {briefContext.next_action || "Not set yet."}
+              </p>
+            </div>
+            <details className="mt-2">
+              <summary className="cursor-pointer list-none text-[11px] font-medium text-muted hover:text-ink">
+                Details
+              </summary>
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Current brief sources
+              </div>
+              <p className="text-xs text-slate-700">
+                {briefContext.sources_count} saved source{briefContext.sources_count === 1 ? "" : "s"}
+              </p>
+              <p className="mt-2 text-[11px] text-muted">
+                Use this workspace to reconcile new journal evidence with what the brief already says,
+                then send accepted changes through the main brief chat or brief editor.
+              </p>
+              {onViewBriefBaseline && (
+                <button
+                  type="button"
+                  onClick={onViewBriefBaseline}
+                  className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  View brief baseline first
+                </button>
+              )}
+            </details>
+          </div>
         </aside>
         <div className="min-w-0">
 
@@ -1962,8 +1956,8 @@ export default function JournalSection({
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-ink">Full Review Queue</h3>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <h3 className="whitespace-nowrap text-sm font-semibold text-ink">Full Review Queue</h3>
               <span className="text-xs text-muted">
                 Same human-review cards, shown ungrouped for status changes and brief-chat handoff.
               </span>

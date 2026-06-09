@@ -73,6 +73,23 @@ becomes a thin orchestrator (state + data loaders + handlers) wiring these toget
 5. **Polish pass.** Empty states, transitions, responsive (rails collapse), a11y
    (tab roles, focus), and remove dead styles.
 
+### Phase 1 preview feedback (incorporated / tracked)
+
+From the live Phase 1 preview:
+- **Empty space under the left rail + tall baseline band** → Phase 2 moves a
+  **compact** Brief baseline into the left rail (priority + next action visible;
+  sources count, explanatory copy, and the "View brief baseline first" action
+  behind a `Details` disclosure). Fills the rail's empty space and removes the
+  dominant top band.
+- **Left rail width** is good — keep ~as-is (two-line labels need room).
+- **Mobile "Full Review Queue" heading wrapped** to "Full / Review / Queue" →
+  Phase 2 stacks that header as a block on narrow widths.
+- **Composer as a repeated footer on long sections** → Phases 4–5 make it
+  contextual/collapsed (prominent in Timeline/Team Room; quiet elsewhere).
+- **Sources card density** still high inside the new shell → Phases 2/4 push
+  source actions into clearer hierarchy/overflow.
+- **Intelligence** is the strongest direction — keep building the cockpit feel.
+
 Behavior is preserved throughout (same endpoints, same handlers, same data flow);
 this is a presentation/IA change, not a feature change. Each phase keeps `npm run
 typecheck` + `npm run build` green and is independently reviewable.
