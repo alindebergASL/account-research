@@ -1,7 +1,7 @@
 # Next-Generation Journal Vision
 
 Status: product direction / living implementation guide
-Last updated: 2026-06-08
+Last updated: 2026-06-09
 
 This note captures the product research and brainstorming for evolving the account-research Journal from notes plus AI replies into a production-ready, next-generation team account-intelligence workspace.
 
@@ -13,15 +13,15 @@ The agreed starting path is:
 
 ## Current implementation status
 
-This document started as a product reference note in PR #81. Since then, PRs #82-#98 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, click-to-source citation context, source health controls, assistant-to-candidate drafting, evidence snippets, structured review boards, Journal search/source-scoped recall, and first-pass reviewed cockpit cards.
+This document started as a product reference note in PR #81. Since then, PRs #82-#100 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, click-to-source citation context, source health controls, assistant-to-candidate drafting, evidence snippets, structured review boards, Journal search/source-scoped recall, first-pass reviewed cockpit cards, and dedicated catch-up windows for recent account changes.
 
 Current production baseline on `main`:
 
 | Area | Status | Shipped in | Notes |
 | --- | --- | --- | --- |
 | Journal document uploads | Shipped | #78, #79 | Uploads extract text and can be used by Journal AI; workflow polish followed the first upload PR. |
-| Intelligence panel / advisory prompts | First production pass shipped | #80, #91, #96, #98 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, and reviewed cockpit summaries; dedicated catch-up and cached rollups remain future work. |
-| Product direction note | Shipped | #81, #90; updated by #95 | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
+| Intelligence panel / advisory prompts | First production pass shipped | #80, #91, #96, #98, #100 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, reviewed cockpit summaries, and dedicated catch-up windows. Cached/durable rollups remain future work. |
+| Product direction note | Shipped | #81, #90; updated by #95, #99 | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
 | Workspaces + source library | First production pass shipped | #82, #84, #86, #87, #93 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, and show first-pass health labels. |
 | Brief-grounded review queue | First production pass shipped | #83, #84, #85, #91, #94 | Review candidate cards exist for brief updates, actions, decisions, and open questions; assistant replies can draft candidates; structured board lanes now group candidate types. No automatic brief mutation. |
 | Team Room separation | Shipped | #86 | General teammate discussion is separated from source-grounded Timeline evidence and made the default workspace. |
@@ -46,30 +46,31 @@ Current production baseline on `main`:
 - Trusted source legend entries can produce evidence snippets/copyable source context for cited labels.
 - Journal search filters Timeline entries, uploaded sources, and Review Queue candidates, then supports source-scoped recall without leaking excluded uploads.
 - The first Account Intelligence Cockpit pass shows reviewed-only cards from accepted, sent-to-brief-chat, or applied candidates.
+- Dedicated Journal catch-up prompts cover 24-hour, 7-day, and all-history windows, pass `journal_context_since` into the assistant route, and preserve the advisory/no-brief-mutation boundary.
 
 ### Still partial / future
 
 - True passage-level highlighting and exact-quote extraction beyond trusted legend snippets.
 - Source health controls remain first-pass heuristics; no durable source-resolution lifecycle or user-confirmed conflict status yet.
 - Structured boards do not yet support owner, due-date, priority, CRM sync, reminders, or official decision/action lifecycle metadata.
-- Durable cached Account Intelligence cockpit/read model built from accepted evidence, actions, decisions, questions, and source changes.
-- Dedicated “what changed since…” summaries beyond the generic Catch me up advisory prompt and search-scoped recall.
+- Durable cached Account Intelligence cockpit/read model built from accepted evidence, actions, decisions, questions, source changes, and recent catch-up/cockpit synthesis.
 - Durable accepted-candidate rollups that distinguish draft/reviewed/applied account facts from general notes.
+- Catch-up remains advisory and request-time only; caching/invalidation of repeated catch-up summaries is still future work after the durable cockpit read model exists.
 
 ### Recommended next implementation slice
 
-Build a dedicated Journal catch-up / “what changed since…” flow next. Search/source-scoped recall (#96) and the first reviewed-only cockpit (#98) are now shipped, so the next bottleneck is synthesis over time: users should be able to ask what changed over a clear recent window without turning draft AI output into durable account facts.
+Build the durable Account Intelligence Cockpit read model next. Search/source-scoped recall (#96), the first reviewed-only cockpit (#98), and dedicated catch-up windows (#100) are now shipped. The next bottleneck is persistence and repeatability: users should see a stable cockpit projection derived from reviewed evidence and source changes, without treating draft assistant output as official account truth.
 
 Scope for that next slice:
 
-1. Add explicit catch-up windows such as 24 hours, 7 days, and all loaded Journal history, using the current brief baseline plus Journal entries, uploaded-source metadata/previews, and review candidates.
-2. Summarize new notes, assistant replies, newly uploaded sources and visible source-health changes from current heuristics, accepted/applied review candidates, pending review items, open questions, risks, and suggested next moves.
-3. Preserve the human-review-only boundary: catch-up must not edit the Brief, create candidates, mark actions official, or mutate source inclusion state.
-4. Respect source safety: excluded uploads must not leak into the catch-up prompt or source-scoped recall fallback.
-5. Keep the result advisory and source-grounded with `[J]`/`[D]` evidence labels where available.
-6. Add regression tests for time-window filtering, excluded-source omission, reviewed/draft status separation, and no durable mutation.
+1. Define a read model or cache layer for cockpit sections such as account update, what changed, risks, open questions, recommended next actions, accepted brief-update candidates, active decisions/actions, and recent source changes.
+2. Build the projection only from reviewed/accepted/applied evidence where facts become durable; preserve pending/reviewing candidates as advisory inputs, not official account state.
+3. Preserve provenance: every rollup item should retain candidate/source/journal references and evidence labels where available.
+4. Add invalidation rules for changed candidate status, new accepted/applied evidence, source include/exclude changes, new Journal entries, and brief baseline/version changes.
+5. Keep the human-review boundary: the cockpit read model must not edit the Brief, silently create candidates, mark actions official, or settle decisions.
+6. Add regression tests for status separation, provenance retention, invalidation behavior, source-exclusion safety, and no durable brief mutation.
 
-After catch-up, the following slice should turn the first cockpit into a durable/cacheable account-signal read model. That follow-up should summarize accepted brief-update candidates, active actions, decisions, open questions, recent source changes, and evidence snippets, while clearly separating reviewed facts from draft assistant suggestions. Candidate existence alone must not make an action official or a decision settled; cockpit rollups should preserve candidate status, provenance, and evidence labels.
+After the durable cockpit read model, the following slice should consider catch-up summary caching on top of that read model. Cached catch-up should reuse the same invalidation/provenance rules and remain advisory: it can save repeated 24-hour/7-day synthesis, but candidate existence alone must still not make an action official or a decision settled.
 
 ## High-level thesis
 
