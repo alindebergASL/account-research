@@ -14,6 +14,8 @@ export type JournalCockpitReadModelInvalidation = {
   briefUpdatedAt?: number | null;
   latestJournalEntryAt?: number | null;
   latestSourceUpdatedAt?: number | null;
+  journalEntryFingerprint?: string | null;
+  sourceFingerprint?: string | null;
 };
 
 export type JournalCockpitReadModelItem = {
@@ -58,6 +60,8 @@ const EMPTY_INVALIDATION: Required<JournalCockpitReadModelInvalidation> = {
   briefUpdatedAt: null,
   latestJournalEntryAt: null,
   latestSourceUpdatedAt: null,
+  journalEntryFingerprint: null,
+  sourceFingerprint: null,
 };
 
 function byMostRecent(a: JournalCockpitCandidate, b: JournalCockpitCandidate): number {

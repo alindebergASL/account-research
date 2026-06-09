@@ -603,6 +603,34 @@ const MIGRATIONS: Migration[] = [
           ON journal_cockpit_read_models(generated_at DESC);
       `),
   },
+  {
+    id: "021_journal_catch_up_cache",
+    // Advisory catch-up summary cache keyed by the durable cockpit fingerprint.
+    // Cache rows accelerate repeated catch-up prompts but never mutate briefs or
+    // review candidates.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_catch_up_cache (
+          id                         TEXT PRIMARY KEY,
+          brief_id                   TEXT NOT NULL,
+          window                     TEXT NOT NULL,
+          context_since              INTEGER NOT NULL DEFAULT -1,
+          excluded_document_key      TEXT NOT NULL DEFAULT '',
+          scoped_document_key        TEXT NOT NULL DEFAULT '',
+          cockpit_source_fingerprint TEXT NOT NULL,
+          summary_text               TEXT NOT NULL,
+          source_entry_id            TEXT,
+          created_at                 INTEGER NOT NULL,
+          updated_at                 INTEGER NOT NULL,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          UNIQUE (brief_id, window, context_since, excluded_document_key, scoped_document_key, cockpit_source_fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_catch_up_cache_brief_window
+          ON journal_catch_up_cache(brief_id, window, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_journal_catch_up_cache_updated
+          ON journal_catch_up_cache(updated_at DESC);
+      `),
+  },
 ];
 
 export type BriefCommentRow = {
@@ -667,6 +695,20 @@ export type JournalCockpitReadModelRow = {
   source_fingerprint: string;
   model_json: string;
   generated_at: number;
+  updated_at: number;
+};
+
+export type JournalCatchUpCacheRow = {
+  id: string;
+  brief_id: string;
+  window: "24h" | "7d" | "all";
+  context_since: number;
+  excluded_document_key: string;
+  scoped_document_key: string;
+  cockpit_source_fingerprint: string;
+  summary_text: string;
+  source_entry_id: string | null;
+  created_at: number;
   updated_at: number;
 };
 
