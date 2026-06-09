@@ -168,6 +168,19 @@ test("migration creates durable journal cockpit read model table and indexes", (
   ]);
 });
 
+test("migration creates journal catch-up cache table and indexes", () => {
+  const names = (db()
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type IN ('table','index') AND name IN ('journal_catch_up_cache','idx_journal_catch_up_cache_brief_window','idx_journal_catch_up_cache_updated')`,
+    )
+    .all() as Array<{ name: string }>).map((r) => r.name).sort();
+  assert.deepEqual(names, [
+    "idx_journal_catch_up_cache_brief_window",
+    "idx_journal_catch_up_cache_updated",
+    "journal_catch_up_cache",
+  ]);
+});
+
 test("review candidate API creates, lists, and updates human-review cards without editing the brief", async () => {
   const candidateRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/route");
   const candidateItemRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/[candidateId]/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/[candidateId]/route");
@@ -333,6 +346,229 @@ test("journal cockpit API requires readable brief access", async () => {
 
   assert.equal(unauthenticated.status, 401);
   assert.equal(outsider.status, 404);
+});
+
+test("journal catch-up cache is keyed by cockpit fingerprint window and source exclusions", () => {
+  const cache = require("../web/lib/journalCatchUpCache") as typeof import("../web/lib/journalCatchUpCache");
+  const now = Date.now();
+  cache.saveJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "24h",
+    contextSince: now - 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey(["source-b", "source-a", "source-a"]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey(["source-x"], true),
+    cockpitSourceFingerprint: "fingerprint-a",
+    summaryText: "Cached summary for fingerprint A.",
+    sourceEntryId: "assistant-cache-a",
+    now,
+  });
+
+  const hit = cache.loadJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "24h",
+    contextSince: now - 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey(["source-a", "source-b"]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey(["source-x"], true),
+    cockpitSourceFingerprint: "fingerprint-a",
+  });
+  const stale = cache.loadJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "24h",
+    contextSince: now - 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey(["source-a", "source-b"]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey(["source-x"], true),
+    cockpitSourceFingerprint: "fingerprint-b",
+  });
+  const differentWindow = cache.loadJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "7d",
+    contextSince: now - 7 * 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey(["source-a", "source-b"]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey(["source-x"], true),
+    cockpitSourceFingerprint: "fingerprint-a",
+  });
+  const differentScope = cache.loadJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "24h",
+    contextSince: now - 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey(["source-a", "source-b"]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey(["source-y"], true),
+    cockpitSourceFingerprint: "fingerprint-a",
+  });
+  cache.saveJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "all",
+    contextSince: null,
+    excludedDocumentKey: "",
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey([], false),
+    cockpitSourceFingerprint: "fingerprint-all",
+    summaryText: "All history cache v1",
+    now,
+  });
+  cache.saveJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "all",
+    contextSince: null,
+    excludedDocumentKey: "",
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey([], false),
+    cockpitSourceFingerprint: "fingerprint-all",
+    summaryText: "All history cache v2",
+    now: now + 1,
+  });
+  const allRows = db()
+    .prepare(`SELECT summary_text FROM journal_catch_up_cache WHERE brief_id = ? AND window = ? AND cockpit_source_fingerprint = ?`)
+    .all("brief-doc", "all", "fingerprint-all") as Array<{ summary_text: string }>;
+
+  assert.equal(hit?.summary_text, "Cached summary for fingerprint A.");
+  assert.equal(hit?.source_entry_id, "assistant-cache-a");
+  assert.equal(stale, null);
+  assert.equal(differentWindow, null);
+  assert.equal(differentScope, null);
+  assert.deepEqual(allRows.map((row) => row.summary_text), ["All history cache v2"]);
+});
+
+test("journal catch-up POST reuses cache keyed by current cockpit fingerprint", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+  const cache = require("../web/lib/journalCatchUpCache") as typeof import("../web/lib/journalCatchUpCache");
+  const now = Date.now();
+  const currentFingerprint = cache.refreshCockpitSourceFingerprint("brief-doc");
+  cache.saveJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "24h",
+    contextSince: now - 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey(["excluded-cache-doc"]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey([], false),
+    cockpitSourceFingerprint: currentFingerprint,
+    summaryText: "Cached catch-up answer should be reused.\n\n---\nSources for this reply:\n[J1] prior Journal note",
+    sourceEntryId: "assistant-cached-source",
+    now,
+  });
+
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create() {
+        throw new Error("model should not be called on catch-up cache hit");
+      },
+    },
+  } as any);
+  try {
+    const res = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "What changed in the last 24 hours?",
+          ask_ai: true,
+          journal_context_since: now - 24 * 60 * 60 * 1000,
+          journal_catch_up_window: "24h",
+          excluded_source_document_ids: ["excluded-cache-doc"],
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 200);
+    const payload = await jsonOf(res);
+    assert.equal(payload.ai_cache_hit, true);
+    assert.match(payload.entries[1].body, /Cached catch-up answer should be reused/);
+    assert.match(payload.entries[1].body, /Sources for this reply:/);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+});
+
+test("journal catch-up POST reuses cache saved by a previous catch-up response", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+  const now = Date.now();
+  let modelCalls = 0;
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create() {
+        modelCalls += 1;
+        return { content: [{ type: "text", text: "Route generated cacheable catch-up answer." }] };
+      },
+    },
+  } as any);
+  try {
+    const requestBody = {
+      body: "What changed in the last 24 hours for route-created cache?",
+      ask_ai: true,
+      journal_context_since: now - 24 * 60 * 60 * 1000,
+      journal_catch_up_window: "24h",
+    };
+    const first = await journalRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: requestBody }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(first.status, 200);
+    const firstPayload = await jsonOf(first);
+    assert.equal(firstPayload.ai_cache_hit, false);
+
+    const second = await journalRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: requestBody }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(second.status, 200);
+    const secondPayload = await jsonOf(second);
+    assert.equal(secondPayload.ai_cache_hit, true);
+    assert.equal(modelCalls, 1);
+    assert.match(secondPayload.entries[1].body, /Route generated cacheable catch-up answer/);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+});
+
+test("journal catch-up POST bypasses stale cache after Journal context changes", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+  const cache = require("../web/lib/journalCatchUpCache") as typeof import("../web/lib/journalCatchUpCache");
+  const now = Date.now();
+  const staleFingerprint = cache.refreshCockpitSourceFingerprint("brief-doc");
+  cache.saveJournalCatchUpCache({
+    briefId: "brief-doc",
+    window: "24h",
+    contextSince: now - 24 * 60 * 60 * 1000,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey([]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey([], false),
+    cockpitSourceFingerprint: staleFingerprint,
+    summaryText: "Stale cached answer must not be reused.",
+    sourceEntryId: "assistant-stale-cache",
+    now,
+  });
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, reply_to, created_at)
+       VALUES (?, ?, ?, 'user', ?, NULL, ?)`,
+    )
+    .run(`fresh-cache-invalidator-${now}`, "brief-doc", "owner-doc", "Fresh Journal note invalidates old catch-up cache.", now + 1000);
+
+  let modelCalls = 0;
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create() {
+        modelCalls += 1;
+        return { content: [{ type: "text", text: "Fresh model answer after cache invalidation." }] };
+      },
+    },
+  } as any);
+  try {
+    const res = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "What changed in the last 24 hours after fresh note?",
+          ask_ai: true,
+          journal_context_since: now - 24 * 60 * 60 * 1000,
+          journal_catch_up_window: "24h",
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 200);
+    const payload = await jsonOf(res);
+    assert.equal(payload.ai_cache_hit, false);
+    assert.equal(modelCalls, 1);
+    assert.match(payload.entries[1].body, /Fresh model answer after cache invalidation/);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
 });
 
 test("review candidate API only accepts assistant replies as source entries", async () => {
@@ -2206,6 +2442,8 @@ test("JournalSection exposes search UI, source-scoped recall, catch-up windows, 
   assert.match(journalSource, /Invalidated catch-up prompt after source exclusions changed/);
   assert.match(journalSource, /setComposeText\(""\)/);
   assert.match(journalSource, /journal_context_since/);
+  assert.match(journalSource, /journal_catch_up_window/);
+  assert.match(journalSource, /pendingCatchUpWindow/);
   assert.doesNotMatch(journalSource, /catch.*PATCH/i);
   assert.doesNotMatch(journalSource, /catch.*review-candidates/i);
   assert.doesNotMatch(journalSource, /catch.*PUT/i);

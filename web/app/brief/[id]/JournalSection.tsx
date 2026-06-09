@@ -560,6 +560,7 @@ export default function JournalSection({
   const [journalSearchQuery, setJournalSearchQuery] = useState("");
   const [catchUpWindow, setCatchUpWindow] = useState<JournalCatchUpWindow>("24h");
   const [pendingJournalContextSince, setPendingJournalContextSince] = useState<number | null>(null);
+  const [pendingCatchUpWindow, setPendingCatchUpWindow] = useState<JournalCatchUpWindow | null>(null);
   const [pendingCatchUpExcludedDocumentKey, setPendingCatchUpExcludedDocumentKey] = useState<string | null>(null);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -646,6 +647,7 @@ export default function JournalSection({
       setScopedDocumentIds([]);
       setRequireSourceDocumentScope(false);
       setPendingJournalContextSince(null);
+      setPendingCatchUpWindow(null);
       setPendingCatchUpExcludedDocumentKey(null);
       setUploadNotice("Invalidated catch-up prompt after source exclusions changed. Run catch-up again to rebuild it with the latest included sources.");
     }
@@ -657,6 +659,7 @@ export default function JournalSection({
     requireSourceDocumentScope = false,
     journalContextSince: number | null = null,
     catchUpExcludedDocumentKey: string | null = null,
+    journalCatchUpWindow: JournalCatchUpWindow | null = null,
   ) {
     if (
       composeText.trim() &&
@@ -669,6 +672,7 @@ export default function JournalSection({
     setRequireSourceDocumentScope(requireSourceDocumentScope);
     setScopedDocumentIds(filteredSourceDocumentIds(sourceDocumentIds));
     setPendingJournalContextSince(journalContextSince);
+    setPendingCatchUpWindow(journalCatchUpWindow);
     setPendingCatchUpExcludedDocumentKey(catchUpExcludedDocumentKey);
     setComposeText(text);
     window.setTimeout(() => composeRef.current?.focus(), 0);
@@ -681,6 +685,7 @@ export default function JournalSection({
     additionalAvailableDocumentIds: string[] = [],
     forceSourceDocumentScope = false,
     journalContextSince: number | null = null,
+    journalCatchUpWindow: JournalCatchUpWindow | null = null,
   ) {
     const trimmed = text.trim();
     if (!trimmed || posting) return false;
@@ -705,6 +710,9 @@ export default function JournalSection({
           ...(askAssistant && journalContextSince !== null
             ? { journal_context_since: journalContextSince }
             : {}),
+          ...(askAssistant && journalCatchUpWindow !== null
+            ? { journal_catch_up_window: journalCatchUpWindow }
+            : {}),
         }),
       });
       if (!r.ok) {
@@ -716,6 +724,7 @@ export default function JournalSection({
       setRequireSourceDocumentScope(false);
       setScopedDocumentIds([]);
       setPendingJournalContextSince(null);
+      setPendingCatchUpWindow(null);
       setPendingCatchUpExcludedDocumentKey(null);
       if (data.ai_error) setAiError(data.ai_error);
       await load();
@@ -730,7 +739,7 @@ export default function JournalSection({
   }
 
   async function submit() {
-    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope, pendingJournalContextSince);
+    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope, pendingJournalContextSince, pendingCatchUpWindow);
   }
 
   async function runIntelligenceAction(prompt: string) {
@@ -1630,6 +1639,7 @@ export default function JournalSection({
       true,
       journalCatchUpSince(window, now),
       excludedDocumentSnapshotKey,
+      window,
     );
   }
 

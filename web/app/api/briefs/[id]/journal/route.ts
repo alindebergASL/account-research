@@ -23,6 +23,14 @@ import {
   listDocumentsForEntries,
   listRecentDocumentsForBrief,
 } from "@/lib/journalDocuments";
+import {
+  isJournalCatchUpWindow,
+  journalCatchUpExcludedDocumentKey,
+  journalCatchUpScopedDocumentKey,
+  loadJournalCatchUpCache,
+  refreshCockpitSourceFingerprint,
+  saveJournalCatchUpCache,
+} from "@/lib/journalCatchUpCache";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -117,6 +125,7 @@ export async function POST(
     source_document_ids?: unknown;
     excluded_source_document_ids?: unknown;
     journal_context_since?: unknown;
+    journal_catch_up_window?: unknown;
   };
   try {
     body = await req.json();
@@ -139,6 +148,12 @@ export async function POST(
     : null;
   if (journalContextSince !== null && (!Number.isFinite(journalContextSince) || journalContextSince < 0)) {
     return NextResponse.json({ error: "journal_context_since must be a timestamp" }, { status: 400 });
+  }
+  const catchUpWindow = askAi && body.journal_catch_up_window !== undefined
+    ? body.journal_catch_up_window
+    : null;
+  if (catchUpWindow !== null && !isJournalCatchUpWindow(catchUpWindow)) {
+    return NextResponse.json({ error: "journal_catch_up_window must be 24h, 7d, or all" }, { status: 400 });
   }
   const hasScopedDocumentScope = askAi && body.source_document_ids !== undefined;
   let scopedDocumentIds: string[] = [];
@@ -183,6 +198,36 @@ export async function POST(
     }
   }
 
+  if (!askAi) {
+    const userEntryId = insertJournalEntry({
+      briefId: params.id,
+      userId: user.id,
+      authorType: "user",
+      body: text,
+      replyTo: null,
+    });
+    const userEntry = loadEntryDto(params.id, userEntryId);
+    return NextResponse.json({ entries: [userEntry] });
+  }
+
+  const catchUpCacheFingerprint = catchUpWindow ? refreshCockpitSourceFingerprint(params.id) : null;
+  const catchUpCacheExcludedKey = catchUpWindow
+    ? journalCatchUpExcludedDocumentKey(excludedDocumentIds)
+    : "";
+  const catchUpCacheScopedKey = catchUpWindow
+    ? journalCatchUpScopedDocumentKey(effectiveScopedDocumentIds, hasScopedDocumentScope)
+    : "";
+  const catchUpCacheHit = catchUpWindow && catchUpCacheFingerprint
+    ? loadJournalCatchUpCache({
+        briefId: params.id,
+        window: catchUpWindow,
+        contextSince: journalContextSince,
+        excludedDocumentKey: catchUpCacheExcludedKey,
+        scopedDocumentKey: catchUpCacheScopedKey,
+        cockpitSourceFingerprint: catchUpCacheFingerprint,
+      })
+    : null;
+
   const userEntryId = insertJournalEntry({
     briefId: params.id,
     userId: user.id,
@@ -192,8 +237,16 @@ export async function POST(
   });
   const userEntry = loadEntryDto(params.id, userEntryId);
 
-  if (!askAi) {
-    return NextResponse.json({ entries: [userEntry] });
+  if (catchUpCacheHit) {
+    const aiEntryId = insertJournalEntry({
+      briefId: params.id,
+      userId: user.id,
+      authorType: "assistant",
+      body: catchUpCacheHit.summary_text,
+      replyTo: userEntryId,
+    });
+    const aiEntry = loadEntryDto(params.id, aiEntryId);
+    return NextResponse.json({ entries: [userEntry, aiEntry], ai_cache_hit: true });
   }
 
   // AI participation path. A model failure must NOT lose the user's entry: we
@@ -264,22 +317,36 @@ export async function POST(
       documents,
     });
     const safeReplyText = sanitizeJournalAssistantText(result.text);
+    const assistantBody = `${safeReplyText}${formatJournalSourceLegend(
+      {
+        brief_json: briefJson,
+        entries: contextEntries,
+        documents,
+      },
+      safeReplyText,
+    )}`;
     const aiEntryId = insertJournalEntry({
       briefId: params.id,
       userId: user.id,
       authorType: "assistant",
-      body: `${safeReplyText}${formatJournalSourceLegend(
-        {
-          brief_json: briefJson,
-          entries: contextEntries,
-          documents,
-        },
-        safeReplyText,
-      )}`,
+      body: assistantBody,
       replyTo: userEntryId,
     });
     const aiEntry = loadEntryDto(params.id, aiEntryId);
-    return NextResponse.json({ entries: [userEntry, aiEntry] });
+    if (catchUpWindow) {
+      const catchUpSaveFingerprint = refreshCockpitSourceFingerprint(params.id);
+      saveJournalCatchUpCache({
+        briefId: params.id,
+        window: catchUpWindow,
+        contextSince: journalContextSince,
+        excludedDocumentKey: catchUpCacheExcludedKey,
+        scopedDocumentKey: catchUpCacheScopedKey,
+        cockpitSourceFingerprint: catchUpSaveFingerprint,
+        summaryText: assistantBody,
+        sourceEntryId: aiEntryId,
+      });
+    }
+    return NextResponse.json({ entries: [userEntry, aiEntry], ai_cache_hit: false });
   } catch (err) {
     return NextResponse.json({
       entries: [userEntry],
