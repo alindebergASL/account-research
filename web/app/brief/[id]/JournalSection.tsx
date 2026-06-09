@@ -38,458 +38,50 @@ import {
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
-
-type Author = {
-  id: string;
-  display_name: string | null;
-  email: string;
-};
-
-type JournalDocument = {
-  id: string;
-  filename: string;
-  mime_type: string;
-  byte_size: number;
-  created_at: number;
-  content_preview: string;
-};
-
-type Entry = {
-  id: string;
-  author_type: "user" | "assistant";
-  body: string | null;
-  reply_to: string | null;
-  created_at: number;
-  edited_at: number | null;
-  deleted_at: number | null;
-  author: Author | null;
-  documents?: JournalDocument[];
-};
-
-type JournalWorkspace = "timeline" | "sources" | "intelligence" | "review" | "team";
-type TimelineFilter = "all" | "notes" | "assistant" | "documents";
-
-type JournalSource = JournalDocument & {
-  entryId: string;
-  entryAuthor: string;
-  entryBody: string | null;
-  entryCreatedAt: number;
-};
-
-type SourceHealthStatus = "current" | "stale" | "duplicate" | "superseded" | "conflicting";
-
-type JournalBriefContext = {
-  account_name: string;
-  priority_summary: string;
-  next_action: string;
-  sources_count: number;
-  sources: Array<{ title: string; url: string; accessed: string }>;
-};
-
-type ReviewCandidateType = "brief_update" | "action_item" | "decision" | "open_question";
-type ReviewCandidateStatus =
-  | "new"
-  | "reviewing"
-  | "accepted"
-  | "sent_to_brief_chat"
-  | "applied"
-  | "dismissed";
-
-type ReviewCandidate = {
-  id: string;
-  candidate_type: ReviewCandidateType;
-  status: ReviewCandidateStatus;
-  title: string;
-  proposed_text: string;
-  target: string | null;
-  current_baseline: string | null;
-  evidence: string | null;
-  confidence: string | null;
-  risk: string | null;
-  source_entry_id: string | null;
-  created_at: number;
-  updated_at: number;
-};
-
-type CockpitDisplay = {
-  reviewedCount: number;
-  pendingCount: number;
-  dismissedCount: number;
-  refreshedAt: number | null;
-  cardsByType: Record<ReviewCandidateType, JournalCockpitReadModelItem[]>;
-  priorityCards: JournalCockpitReadModelItem[];
-};
-
-type SelectedCitationContext =
-  | {
-      kind: "journal";
-      label: string;
-      title: string;
-      body: string | null;
-      meta: string;
-      evidenceSnippet: string | null;
-    }
-  | {
-      kind: "document";
-      label: string;
-      title: string;
-      preview: string | null;
-      evidenceSnippet: string | null;
-    }
-  | {
-      kind: "brief_source";
-      label: string;
-      title: string;
-      url: string;
-      accessed: string;
-      evidenceSnippet: string | null;
-    }
-  | {
-      kind: "unresolved";
-      label: string;
-      message: string;
-    };
-
-const timelineFilterLabels: Record<TimelineFilter, string> = {
-  all: "All entries",
-  notes: "Notes",
-  assistant: "Assistant",
-  documents: "Documents",
-};
-
-const candidateTypeLabels: Record<ReviewCandidateType, string> = {
-  brief_update: "Brief update",
-  action_item: "Action item",
-  decision: "Decision",
-  open_question: "Open question",
-};
-
-const candidateStatusLabels: Record<ReviewCandidateStatus, string> = {
-  new: "New",
-  reviewing: "Reviewing",
-  accepted: "Accepted",
-  sent_to_brief_chat: "Sent to brief chat",
-  applied: "Applied",
-  dismissed: "Dismissed",
-};
-
-const STRUCTURED_REVIEW_BOARDS: Array<{
-  type: ReviewCandidateType;
-  title: string;
-  description: string;
-  empty: string;
-}> = [
-  {
-    type: "action_item",
-    title: "Actions board",
-    description: "Follow-ups, owners, deliverables, and next moves that need human review.",
-    empty: "No action item candidates yet.",
-  },
-  {
-    type: "decision",
-    title: "Decisions log",
-    description: "Accepted or pending decisions with evidence before they become account truth.",
-    empty: "No decision candidates yet.",
-  },
-  {
-    type: "open_question",
-    title: "Open questions",
-    description: "Unknowns and follow-up questions that still need evidence or owner input.",
-    empty: "No open question candidates yet.",
-  },
-  {
-    type: "brief_update",
-    title: "Brief updates",
-    description: "Field-level account brief changes to send through the normal versioned brief flow.",
-    empty: "No brief update candidates yet.",
-  },
-];
-
-function groupReviewCandidatesByType(candidates: ReviewCandidate[]): Record<ReviewCandidateType, ReviewCandidate[]> {
-  return {
-    brief_update: candidates.filter((candidate) => candidate.candidate_type === "brief_update"),
-    action_item: candidates.filter((candidate) => candidate.candidate_type === "action_item"),
-    decision: candidates.filter((candidate) => candidate.candidate_type === "decision"),
-    open_question: candidates.filter((candidate) => candidate.candidate_type === "open_question"),
-  };
-}
-
-function emptyCockpitCards(): Record<ReviewCandidateType, JournalCockpitReadModelItem[]> {
-  return {
-    brief_update: [],
-    action_item: [],
-    decision: [],
-    open_question: [],
-  };
-}
-
-function cockpitDisplayFromModel(model: JournalCockpitReadModel | null): CockpitDisplay {
-  if (!model) {
-    return {
-      reviewedCount: 0,
-      pendingCount: 0,
-      dismissedCount: 0,
-      refreshedAt: null,
-      cardsByType: emptyCockpitCards(),
-      priorityCards: [],
-    };
-  }
-  const cardsByType: Record<ReviewCandidateType, JournalCockpitReadModelItem[]> = {
-    brief_update: model.sections.brief_updates,
-    action_item: model.sections.actions,
-    decision: model.sections.decisions,
-    open_question: model.sections.open_questions,
-  };
-  return {
-    reviewedCount: model.reviewed_candidate_ids.length,
-    pendingCount: model.advisory_counts.pending,
-    dismissedCount: model.advisory_counts.dismissed,
-    refreshedAt: model.generated_at,
-    cardsByType,
-    priorityCards: [
-      ...cardsByType.action_item,
-      ...cardsByType.decision,
-      ...cardsByType.open_question,
-      ...cardsByType.brief_update,
-    ].sort((a, b) => b.updated_at - a.updated_at || b.created_at - a.created_at || a.candidate_id.localeCompare(b.candidate_id)).slice(0, 6),
-  };
-}
-
-const EDIT_WINDOW_MS = 15 * 60 * 1000;
-
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return "just now";
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
-}
-
-function authorName(e: Entry): string {
-  if (e.author_type === "assistant") return "Assistant";
-  return e.author?.display_name || e.author?.email || "Unknown";
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${Math.ceil(kb)} KB`;
-  return `${(kb / 1024).toFixed(1)} MB`;
-}
-
-function documentIdSnapshotKey(ids: string[]): string {
-  return Array.from(new Set(ids)).sort().join("\u0000");
-}
-
-function summarizeDocumentPrompt(filename: string): string {
-  return `Summarize the uploaded document "${filename}" for this account. Call out: 1) what changed or is being requested, 2) why it matters for the account brief, and 3) recommended next actions. Use the document as evidence and name it in your answer.`;
-}
-
-function briefUpdatePrompt(filename: string): string {
-  return `Review the uploaded document "${filename}" and tell me what should be added or changed in the account brief. Be specific about fields or sections, and cite the uploaded document by filename.`;
-}
-
-function compareWithBriefPrompt(filename: string): string {
-  return `Compare the uploaded document "${filename}" with the current account brief. Identify supported updates, contradictions, stale assumptions, and open questions. Cite the document by filename and do not claim you edited the brief.`;
-}
-
-function askAboutSourcePrompt(filename: string): string {
-  return `Answer questions using the uploaded document "${filename}" as the primary source. Start with a concise summary of what this source is useful for, then list the highest-value questions the account team should ask next. Cite the document by filename.`;
-}
-
-type IntelligenceAction = {
-  label: string;
-  description: string;
-  prompt: string;
-  primary?: boolean;
-};
-
-const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
-  {
-    label: "Catch me up",
-    description: "Concise account catch-up grounded in recent evidence.",
-    primary: true,
-    prompt:
-      "Catch me up on this account using the current brief baseline plus recent journal notes and uploaded documents. Use sections: Current state, What changed, What needs attention, Suggested next move, Evidence. Cite source labels like [J1] and [D1].",
-  },
-  {
-    label: "What changed since the last brief version",
-    description: "New evidence, challenged assumptions, and stale fields.",
-    prompt:
-      "Explain what changed since the last brief version based on recent journal notes and uploaded documents. Identify new facts, changed assumptions, stale brief fields, unresolved questions, and recommended brief-update candidates. Cite source labels like [J1] and [D1].",
-  },
-  {
-    label: "What needs attention",
-    description: "Prioritized risks, blockers, and next actions.",
-    prompt:
-      "Identify what needs attention for this account now. Rank the highest-priority risks, blockers, open questions, and next actions. For each item include why it matters, evidence source labels like [J1] or [D1], and whether it should become a review candidate.",
-  },
-  {
-    label: "Generate account update",
-    description: "What changed, why it matters, and recommended moves.",
-    primary: true,
-    prompt:
-      "Generate an account update from the recent journal notes and uploaded documents, explicitly comparing it to the current brief baseline. Use sections: What changed, Current brief baseline, Evidence, Recommended next moves. Cite source labels like [J1] and [D1] for factual claims.",
-  },
-  {
-    label: "Extract action items",
-    description: "Owners, deliverables, dates, and evidence.",
-    prompt:
-      "Extract action items from the recent journal notes and uploaded documents. For each action item include owner if stated, deliverable, due date or trigger if stated, and supporting source labels like [J1] or [D1]. If ownership or dates are missing, say so explicitly.",
-  },
-  {
-    label: "Find brief update candidates",
-    description: "Field-level suggestions to send to brief chat.",
-    prompt:
-      "Find brief update candidates supported by the recent journal notes and uploaded documents. For each candidate include the target brief section or field, which current brief claim it supports, contradicts, or updates, proposed change, confidence, and evidence source labels like [J1] or [D1]. Do not claim you edited the brief.",
-  },
-  {
-    label: "Draft follow-up",
-    description: "A concise stakeholder-ready note.",
-    prompt:
-      "Draft a concise follow-up message for the account team based on recent journal notes and uploaded documents. Include key context, next steps, and source labels like [J1] or [D1] in a short evidence section.",
-  },
-  {
-    label: "Open questions",
-    description: "Gaps to resolve before outreach or brief edits.",
-    prompt:
-      "Identify open questions and evidence gaps from the recent journal notes and uploaded documents. Group by account strategy, stakeholders, technical fit, procurement, and next action. Cite source labels where a gap is based on a specific note or document.",
-  },
-];
-
-const REVIEW_QUEUE_ACTIONS: IntelligenceAction[] = [
-  {
-    label: "Review brief update candidates",
-    description: "Proposed brief changes with target fields, confidence, and evidence.",
-    primary: true,
-    prompt:
-      "Create a review queue of brief update candidates from recent journal notes and uploaded documents. For each candidate include: target brief section or field, current brief baseline or claim, proposed text, evidence source labels like [J1] or [D1], confidence, risk of applying, and suggested reviewer action. Do not claim you edited the brief; this is a human-review queue only.",
-  },
-  {
-    label: "Review action items",
-    description: "Suggested tasks that need owner/date review before becoming durable.",
-    prompt:
-      "Create a human-review queue of action item candidates from recent journal notes and uploaded documents. For each candidate include: task, owner if stated, due date or trigger if stated, evidence source labels like [J1] or [D1], missing fields, confidence, and suggested reviewer action. Do not assign anyone or create durable tasks.",
-  },
-  {
-    label: "Review decisions",
-    description: "Potential decisions, rationale, reversals, and contradictions.",
-    prompt:
-      "Create a human-review queue of decision candidates from recent journal notes and uploaded documents. For each candidate include: decision statement, date or timing if known, decider or owner if stated, rationale, evidence source labels like [J1] or [D1], alternatives or reversal conditions if present, confidence, and suggested reviewer action. Do not mark anything official.",
-  },
-  {
-    label: "Review open questions",
-    description: "Unresolved account questions to ask, answer, or convert to brief updates.",
-    prompt:
-      "Create a human-review queue of open questions from recent journal notes and uploaded documents. Group by account strategy, stakeholders, technical fit, procurement, budget/timing, competitors, and next meeting prep. For each question include evidence source labels like [J1] or [D1], why it matters, whether it blocks outreach or brief edits, and suggested reviewer action.",
-  },
-];
-
-function trustedLegendStart(entry: Entry): number {
-  if (entry.author_type !== "assistant" || !entry.reply_to || !entry.body) {
-    return -1;
-  }
-  return findSourceLegendBlockStart(entry.body);
-}
-
-function extractCitationLabels(entry: Entry): string[] {
-  const legendStart = trustedLegendStart(entry);
-  if (legendStart < 0 || !entry.body) return [];
-  const answerText = entry.body.slice(0, legendStart);
-  const legendText = entry.body.slice(legendStart);
-  const validLabels = new Set<string>();
-  for (const match of legendText.matchAll(/\[(?:J|D)\d+\]/g)) {
-    validLabels.add(match[0]);
-  }
-  const citedLabels = new Set<string>();
-  for (const match of answerText.matchAll(/\[(?:J|D)\d+\]/g)) {
-    if (validLabels.has(match[0])) citedLabels.add(match[0]);
-  }
-  return Array.from(citedLabels);
-}
-
-function displayEntryBody(entry: Entry): string | null {
-  const legendStart = trustedLegendStart(entry);
-  if (legendStart < 0 || !entry.body) return entry.body;
-  return entry.body.slice(0, legendStart).trimEnd();
-}
-
-function collectJournalSources(entries: Entry[] | null): JournalSource[] {
-  if (!entries) return [];
-  return entries
-    .flatMap((entry) =>
-      (entry.documents ?? []).map((doc) => ({
-        ...doc,
-        entryId: entry.id,
-        entryAuthor: authorName(entry),
-        entryBody: displayEntryBody(entry),
-        entryCreatedAt: entry.created_at,
-      })),
-    )
-    .sort((a, b) => b.created_at - a.created_at);
-}
-
-function sourceFingerprint(source: JournalSource): string {
-  return `${source.filename.trim().toLowerCase()}::${source.byte_size}`;
-}
-
-function sourceHealthBadges(
-  source: JournalSource,
-  allSources: JournalSource[],
-): Array<{ status: SourceHealthStatus; label: string; description: string }> {
-  const badges: Array<{ status: SourceHealthStatus; label: string; description: string }> = [];
-  const sameFingerprint = allSources.filter((candidate) =>
-    sourceFingerprint(candidate) === sourceFingerprint(source),
-  );
-  const newestDuplicate = sameFingerprint.reduce<JournalSource | null>(
-    (newest, candidate) => !newest || candidate.created_at > newest.created_at ? candidate : newest,
-    null,
-  );
-  const searchableText = `${source.filename} ${source.entryBody ?? ""} ${source.content_preview ?? ""}`.toLowerCase();
-
-  if (sameFingerprint.length > 1) {
-    badges.push({
-      status: "duplicate",
-      label: "duplicate",
-      description: "Another uploaded source has the same filename and size.",
-    });
-  }
-  if (newestDuplicate && newestDuplicate.id !== source.id) {
-    badges.push({
-      status: "superseded",
-      label: "superseded",
-      description: "A newer duplicate upload exists; prefer the latest copy unless review says otherwise.",
-    });
-  }
-  if (Date.now() - source.created_at > 1000 * 60 * 60 * 24 * 45) {
-    badges.push({
-      status: "stale",
-      label: "stale",
-      description: "This source is older than 45 days and may need a freshness check.",
-    });
-  }
-  if (/\b(conflict|conflicting|contradict|contradiction|dispute|disputed)\b/.test(searchableText)) {
-    badges.push({
-      status: "conflicting",
-      label: "conflicting",
-      description: "This source mentions conflict or contradiction and needs reconciliation.",
-    });
-  }
-  if (badges.length === 0) {
-    badges.push({
-      status: "current",
-      label: "current",
-      description: "No freshness, duplicate, superseded, or conflict signal detected.",
-    });
-  }
-  return badges;
-}
+import type {
+  Author,
+  CockpitDisplay,
+  Entry,
+  IntelligenceAction,
+  JournalBriefContext,
+  JournalDocument,
+  JournalSource,
+  JournalWorkspace,
+  ReviewCandidate,
+  ReviewCandidateStatus,
+  ReviewCandidateType,
+  SelectedCitationContext,
+  SourceHealthStatus,
+  TimelineFilter,
+} from "./journal/types";
+import {
+  EDIT_WINDOW_MS,
+  INTELLIGENCE_ACTIONS,
+  REVIEW_QUEUE_ACTIONS,
+  STRUCTURED_REVIEW_BOARDS,
+  candidateStatusLabels,
+  candidateTypeLabels,
+  timelineFilterLabels,
+} from "./journal/constants";
+import {
+  askAboutSourcePrompt,
+  authorName,
+  briefUpdatePrompt,
+  cockpitDisplayFromModel,
+  collectJournalSources,
+  compareWithBriefPrompt,
+  displayEntryBody,
+  documentIdSnapshotKey,
+  emptyCockpitCards,
+  extractCitationLabels,
+  formatFileSize,
+  groupReviewCandidatesByType,
+  relativeTime,
+  sourceFingerprint,
+  sourceHealthBadges,
+  summarizeDocumentPrompt,
+  trustedLegendStart,
+} from "./journal/helpers";
 
 function renderCitationChips(
   entry: Entry,
