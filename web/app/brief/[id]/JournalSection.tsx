@@ -82,6 +82,7 @@ import {
   summarizeDocumentPrompt,
   trustedLegendStart,
 } from "./journal/helpers";
+import { Badge, Card, SectionHeader } from "./journal/ui";
 
 function renderCitationChips(
   entry: Entry,
@@ -1420,7 +1421,7 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[248px_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_320px]">
         <aside className="lg:sticky lg:top-4 lg:self-start">
           <nav
             className="flex flex-col gap-1 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm"
@@ -2342,6 +2343,75 @@ export default function JournalSection({
         </div>
       </div>
         </div>
+        <aside className="hidden xl:flex xl:flex-col gap-4 xl:sticky xl:top-4 xl:self-start">
+          <Card className="p-4">
+            <SectionHeader
+              icon={<Sparkles className="size-4 text-violet-600" />}
+              title="Account intelligence"
+              actions={
+                <button
+                  type="button"
+                  onClick={() => setActiveWorkspace("intelligence")}
+                  className="text-xs font-medium text-accent hover:underline"
+                >
+                  Open
+                </button>
+              }
+            />
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Badge tone="accepted">{cockpitDisplay.reviewedCount} reviewed</Badge>
+              <Badge tone="review">{cockpitDisplay.pendingCount} pending</Badge>
+              <Badge tone="neutral">{cockpitDisplay.dismissedCount} dismissed</Badge>
+            </div>
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              What changed
+            </p>
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              {INTELLIGENCE_ACTIONS.slice(0, 3).map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={() => runIntelligenceAction(action.prompt)}
+                  disabled={posting || loading}
+                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-left text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Catch up
+            </p>
+            <div className="mt-1.5 inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-xs">
+              {(["24h", "7d", "all"] as const).map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => runCatchUpPrompt(w)}
+                  disabled={posting || loading}
+                  className={`rounded-md px-2.5 py-1 transition disabled:opacity-50 ${
+                    catchUpWindow === w ? "bg-ink text-white" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {w === "all" ? "All" : w}
+                </button>
+              ))}
+            </div>
+          </Card>
+          {cockpitDisplay.priorityCards.length > 0 && (
+            <Card className="p-4">
+              <SectionHeader title="Priority signals" count={cockpitDisplay.priorityCards.length} />
+              <div className="mt-3 flex flex-col gap-2">
+                {cockpitDisplay.priorityCards.slice(0, 4).map((item) => (
+                  <div key={item.candidate_id} className="rounded-lg border border-[var(--line)] bg-white p-2.5">
+                    <Badge tone="neutral">{candidateTypeLabels[item.type]}</Badge>
+                    <p className="mt-1 line-clamp-2 text-xs font-medium text-ink">{item.title}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </aside>
       </div>
     </section>
   );
