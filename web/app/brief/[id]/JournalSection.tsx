@@ -1434,7 +1434,7 @@ export default function JournalSection({
       <div className="grid gap-4 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_320px]">
         <aside className="lg:sticky lg:top-4 lg:self-start">
           <nav
-            className="flex flex-col gap-1 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm"
+            className="flex gap-1 overflow-x-auto rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm lg:flex-col lg:overflow-visible"
             aria-label="Journal sections"
           >
         {workspaceTabs.map((tab) => {
@@ -1445,7 +1445,7 @@ export default function JournalSection({
               type="button"
               onClick={() => setActiveWorkspace(tab.id)}
               aria-pressed={active}
-              className={`rounded-xl px-3 py-2 text-left transition ${
+              className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-left transition lg:whitespace-normal ${
                 active
                   ? "bg-ink text-white shadow-sm"
                   : "text-ink hover:bg-slate-50"
@@ -1463,7 +1463,7 @@ export default function JournalSection({
                   </span>
                 )}
               </span>
-              <span className={`mt-0.5 block text-xs ${active ? "text-white/75" : "text-muted"}`}>
+              <span className={`mt-0.5 hidden text-xs lg:block ${active ? "text-white/75" : "text-muted"}`}>
                 {tab.description}
               </span>
             </button>
