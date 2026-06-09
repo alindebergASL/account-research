@@ -534,6 +534,7 @@ export default function JournalSection({
   const [activeWorkspace, setActiveWorkspace] =
     useState<JournalWorkspace>("team");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
+  const [showDeletedEntries, setShowDeletedEntries] = useState(false);
   const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
   const [cockpitModel, setCockpitModel] = useState<JournalCockpitReadModel | null>(null);
   const [cockpitLoading, setCockpitLoading] = useState(false);
@@ -1049,25 +1050,14 @@ export default function JournalSection({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {/* Primary source actions */}
             <button
               type="button"
-              onClick={() => toggleSourceSelection(source.id)}
               disabled={isExcluded}
-              aria-pressed={isSelected && !isExcluded}
-              className={`rounded-md border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
-                isSelected && !isExcluded
-                  ? "border-violet-300 bg-violet-600 text-white"
-                  : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
-              }`}
+              onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id], true)}
+              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isSelected && !isExcluded ? "Selected for AI" : "Select for AI"}
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleSourceExclusion(source)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {isExcluded ? "Include source" : "Exclude source"}
+              <Sparkles className="size-3" /> Ask about this source
             </button>
             <button
               type="button"
@@ -1078,36 +1068,56 @@ export default function JournalSection({
             </button>
             <button
               type="button"
-              disabled={isExcluded}
-              onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id])}
-              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => toggleSourceExclusion(source)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
-              <Sparkles className="size-3" /> Summarize
+              {isExcluded ? "Include source" : "Exclude source"}
             </button>
-            <button
-              type="button"
-              disabled={isExcluded}
-              onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id])}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Brief updates
-            </button>
-            <button
-              type="button"
-              disabled={isExcluded}
-              onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id])}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Compare with brief
-            </button>
-            <button
-              type="button"
-              disabled={isExcluded}
-              onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id])}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Ask about this
-            </button>
+            <details className="group relative">
+              <summary className="list-none rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                More source actions
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 sm:absolute sm:right-0 sm:z-10 sm:w-64 sm:shadow-lg">
+                {/* Secondary source actions */}
+                <button
+                  type="button"
+                  onClick={() => toggleSourceSelection(source.id)}
+                  disabled={isExcluded}
+                  aria-pressed={isSelected && !isExcluded}
+                  className={`rounded-md border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                    isSelected && !isExcluded
+                      ? "border-violet-300 bg-violet-600 text-white"
+                      : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+                  }`}
+                >
+                  {isSelected && !isExcluded ? "Selected for batch AI" : "Select for batch AI"}
+                </button>
+                <button
+                  type="button"
+                  disabled={isExcluded}
+                  onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id], true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Sparkles className="size-3" /> Summarize
+                </button>
+                <button
+                  type="button"
+                  disabled={isExcluded}
+                  onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id], true)}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Find supported brief updates
+                </button>
+                <button
+                  type="button"
+                  disabled={isExcluded}
+                  onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id], true)}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Compare with brief
+                </button>
+              </div>
+            </details>
           </div>
         </div>
         <p className="mt-3 line-clamp-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
@@ -1174,7 +1184,7 @@ export default function JournalSection({
           <button
             type="button"
             disabled={isSelectedSourceExcluded}
-            onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(selectedSource.filename), [selectedSource.id])}
+            onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(selectedSource.filename), [selectedSource.id], true)}
             className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Sparkles className="size-3" /> Summarize
@@ -1182,7 +1192,7 @@ export default function JournalSection({
           <button
             type="button"
             disabled={isSelectedSourceExcluded}
-            onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(selectedSource.filename), [selectedSource.id])}
+            onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(selectedSource.filename), [selectedSource.id], true)}
             className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Compare with brief
@@ -1610,7 +1620,7 @@ export default function JournalSection({
                       <button
                         type="button"
                         disabled={isDocExcluded}
-                        onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename), [doc.id])}
+                        onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename), [doc.id], true)}
                         className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Sparkles className="size-3" /> Summarize with AI
@@ -1618,7 +1628,7 @@ export default function JournalSection({
                       <button
                         type="button"
                         disabled={isDocExcluded}
-                        onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename), [doc.id])}
+                        onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename), [doc.id], true)}
                         className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Find brief updates
@@ -1641,6 +1651,7 @@ export default function JournalSection({
   const sources = collectJournalSources(entries);
   const currentBriefSources = briefContext.sources ?? [];
   const totalSourceCount = currentBriefSources.length + sources.length;
+  const totalIncludedSourceCount = currentBriefSources.length + sources.length - excludedDocumentIds.length;
   const activeScopedDocumentIds = filteredSourceDocumentIds(scopedDocumentIds);
   const journalSearchResult = useMemo(
     () => searchJournalWorkspace({
@@ -1742,18 +1753,20 @@ export default function JournalSection({
     );
   }
 
+  const deletedEntryCount = entries?.filter((entry) => entry.deleted_at !== null).length ?? 0;
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
+    const visibleAuditEntries = entries.filter((entry) => entry.deleted_at === null || showDeletedEntries);
     const timelineEntries = (() => {
-      if (timelineFilter === "notes") return entries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
-      if (timelineFilter === "assistant") return entries.filter((e) => e.author_type === "assistant");
-      if (timelineFilter === "documents") return entries.filter((e) => (e.documents?.length ?? 0) > 0);
-      return entries;
+      if (timelineFilter === "notes") return visibleAuditEntries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
+      if (timelineFilter === "assistant") return visibleAuditEntries.filter((e) => e.author_type === "assistant");
+      if (timelineFilter === "documents") return visibleAuditEntries.filter((e) => (e.documents?.length ?? 0) > 0);
+      return visibleAuditEntries;
     })();
     return journalSearchResult.isActive
       ? timelineEntries.filter((entry) => searchEntryIds.has(entry.id))
       : timelineEntries;
-  }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds]);
+  }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
   const workspaceTabs: Array<{
     id: JournalWorkspace;
     label: string;
@@ -2335,6 +2348,17 @@ export default function JournalSection({
               documents, compare against the brief, or find supported brief update
               candidates without directly editing the brief.
             </p>
+            <div className="mt-3 grid gap-2 text-xs text-sky-950 sm:grid-cols-3">
+              <div className="rounded-lg border border-sky-100 bg-white/80 px-3 py-2">
+                Brief baseline sources: {currentBriefSources.length}
+              </div>
+              <div className="rounded-lg border border-sky-100 bg-white/80 px-3 py-2">
+                Journal uploads: {sources.length}
+              </div>
+              <div className="rounded-lg border border-sky-100 bg-white/80 px-3 py-2 font-medium">
+                Total available to Journal AI: {totalIncludedSourceCount}
+              </div>
+            </div>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2459,22 +2483,39 @@ export default function JournalSection({
       )}
 
       {activeWorkspace === "timeline" && entries && (
-        <div className="mb-3 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
-          {(Object.keys(timelineFilterLabels) as TimelineFilter[]).map((filter) => (
+        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(timelineFilterLabels) as TimelineFilter[]).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                aria-pressed={timelineFilter === filter}
+                onClick={() => setTimelineFilter(filter)}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  timelineFilter === filter
+                    ? "bg-ink text-white"
+                    : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {timelineFilterLabels[filter]}
+              </button>
+            ))}
+          </div>
+          {deletedEntryCount > 0 && (
             <button
-              key={filter}
               type="button"
-              aria-pressed={timelineFilter === filter}
-              onClick={() => setTimelineFilter(filter)}
-              className={`rounded-full px-3 py-1 text-xs font-medium ${
-                timelineFilter === filter
-                  ? "bg-ink text-white"
-                  : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-              }`}
+              aria-pressed={showDeletedEntries}
+              onClick={() => setShowDeletedEntries((value) => !value)}
+              className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
             >
-              {timelineFilterLabels[filter]}
+              {showDeletedEntries ? "Hide audit entries" : "Show audit entries"}
+              <span className="ml-1 text-slate-500">
+                {showDeletedEntries
+                  ? `(${deletedEntryCount} deleted audit entr${deletedEntryCount === 1 ? "y is" : "ies are"} visible)`
+                  : `(${deletedEntryCount} deleted entries hidden from the main Timeline)`}
+              </span>
             </button>
-          ))}
+          )}
         </div>
       )}
 
