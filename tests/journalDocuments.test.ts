@@ -1684,7 +1684,7 @@ test("JournalSection renders assistant review suggestions as cards with explicit
   assert.match(journalSource, /Edit before adding/);
   assert.match(journalSource, /saveReviewCandidateDraft/);
   assert.match(journalSource, /buildReviewCandidateDraftsFromAssistantEntry/);
-  assert.match(journalSource, /No review candidate cards yet\. Assistant replies with suggested cards can be promoted here/);
+  assert.match(journalSource, /Promote assistant suggestions here/);
 });
 
 test("candidate draft extraction ignores spoofed user-authored legend labels", () => {
@@ -2047,7 +2047,7 @@ test("JournalSection exposes source controls, source health, and source-scoped a
   assert.match(journalSource, /uploadedDocumentId \? \[uploadedDocumentId\] : \[\]/);
   assert.match(journalSource, /excluded_source_document_ids/);
   assert.match(journalSource, /activeScopedDocumentIds/);
-  assert.match(journalSource, /Included in AI context/);
+  assert.match(journalSource, /In AI context/);
   assert.match(journalSource, /Excluded from AI context/);
   assert.match(journalSource, /setScopedDocumentIds\(\(ids\) => ids\.filter\(\(id\) => id !== source\.id\)\)/);
   assert.match(journalSource, /Ask about selected sources/);

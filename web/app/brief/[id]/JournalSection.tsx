@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
+  ClipboardList,
   FileText,
   Loader2,
   MessageSquare,
   Paperclip,
   Pencil,
+  Search,
   Sparkles,
   Trash2,
   X,
@@ -82,7 +84,7 @@ import {
   summarizeDocumentPrompt,
   trustedLegendStart,
 } from "./journal/helpers";
-import { Badge, Card, SectionHeader } from "./journal/ui";
+import { Badge, Card, EmptyState, SectionHeader } from "./journal/ui";
 
 function renderCitationChips(
   entry: Entry,
@@ -596,26 +598,30 @@ export default function JournalSection({
     return (
       <div
         key={`${source.entryId}-${source.id}`}
-        className={`rounded-xl border p-4 shadow-sm ${
-          isExcluded ? "border-slate-200 bg-slate-50 opacity-75" : "border-slate-200 bg-white"
+        className={`rounded-xl border p-4 transition-colors ${
+          isExcluded
+            ? "border-slate-200 bg-slate-50 opacity-75"
+            : "border-slate-200 bg-white hover:border-slate-300"
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
                 <FileText className="size-3" /> Source
               </span>
               <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
                 Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
               </span>
-              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-                isExcluded
-                  ? "border-rose-200 bg-rose-50 text-rose-800"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
-              }`}>
-                {isExcluded ? "Excluded from AI context" : "Included in AI context"}
-              </span>
+              {isExcluded ? (
+                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">
+                  Excluded from AI context
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                  <CheckCircle2 className="size-3" /> In AI context
+                </span>
+              )}
             </div>
             <h3 className="mt-2 truncate text-sm font-semibold text-ink">
               {source.filename}
@@ -655,7 +661,7 @@ export default function JournalSection({
             <button
               type="button"
               onClick={() => setSelectedSource(source)}
-              className="rounded-md border border-sky-200 bg-white px-2 py-1 text-xs font-medium text-sky-800 hover:bg-sky-50"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
             >
               Preview source
             </button>
@@ -1964,11 +1970,15 @@ export default function JournalSection({
               </span>
             </div>
             {displayedReviewCandidates.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-amber-200 bg-white p-6 text-sm text-muted">
-                {journalSearchResult.isActive
-                  ? "No review candidate cards match this search. Clear search to see the full Review Queue."
-                  : "No review candidate cards yet. Assistant replies with suggested cards can be promoted here using Add to Review Queue, or edited first before saving for team follow-up."}
-              </div>
+              <EmptyState
+                icon={<ClipboardList className="size-5" />}
+                title={journalSearchResult.isActive ? "No matching review cards" : "Review Queue is empty"}
+                description={
+                  journalSearchResult.isActive
+                    ? "Clear the search to see the full Review Queue."
+                    : "Promote assistant suggestions here with \u201CAdd to Review Queue\u201D, or edit them first before saving for team follow-up."
+                }
+              />
             ) : (
               displayedReviewCandidates.map((candidate) => renderReviewCandidate(candidate))
             )}
@@ -2086,14 +2096,19 @@ export default function JournalSection({
               </div>
             )}
             {sources.length === 0 ? (
-              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-                No uploaded sources yet. Choose a document in the composer below to
-                make extracted evidence available to the Journal assistant.
-              </div>
+              <EmptyState
+                className="mt-3"
+                icon={<FileText className="size-5" />}
+                title="No sources uploaded yet"
+                description="Choose a document in the composer below to make its extracted evidence available to the Journal assistant."
+              />
             ) : displayedSources.length === 0 ? (
-              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-                No uploaded sources match this search. Clear search to see all uploaded sources.
-              </div>
+              <EmptyState
+                className="mt-3"
+                icon={<Search className="size-5" />}
+                title="No sources match this search"
+                description="Clear the search to see all uploaded sources."
+              />
             ) : (
               <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="grid gap-3 xl:grid-cols-2">
@@ -2162,15 +2177,35 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "timeline" && filteredEntries && filteredEntries.length === 0 && (
-        <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-          {entries?.length === 0
-            ? "No journal entries yet. Add a note, upload a document, or switch to Ask assistant to ask a question grounded in this brief."
-            : journalSearchResult.isActive
-              ? "No Timeline entries match this search. Clear search or try another query."
-              : "No entries match this Timeline filter."}
-        </div>
-      )}
+      {activeWorkspace === "timeline" &&
+        filteredEntries &&
+        filteredEntries.length === 0 &&
+        (entries?.length === 0 ? (
+          <EmptyState
+            icon={<BookOpen className="size-5" />}
+            title="No journal entries yet"
+            description="Post an update, upload a document, or switch to Ask assistant to ask a question grounded in this brief."
+            action={
+              <button
+                type="button"
+                onClick={() => composeRef.current?.focus()}
+                className="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800"
+              >
+                Add your first note
+              </button>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={<Search className="size-5" />}
+            title={journalSearchResult.isActive ? "No matching entries" : "No entries match this filter"}
+            description={
+              journalSearchResult.isActive
+                ? "Clear the search or try another query."
+                : "Try a different Timeline filter."
+            }
+          />
+        ))}
 
       {activeWorkspace === "timeline" && filteredEntries && filteredEntries.map((e) => renderEntry(e))}
 

@@ -90,3 +90,37 @@ export function Badge({
     </span>
   );
 }
+
+// Calm, actionable empty state: icon + why-it's-empty + what-to-do, with an
+// optional primary action. Replaces the ad-hoc dashed-box one-liners so blank
+// surfaces read as a deliberate next step rather than a dead end.
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className = "",
+}: {
+  icon?: ReactNode;
+  title: ReactNode;
+  description?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--line)] bg-white px-6 py-10 text-center ${className}`}
+    >
+      {icon && (
+        <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+          {icon}
+        </div>
+      )}
+      <p className="text-sm font-semibold text-ink">{title}</p>
+      {description && (
+        <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted">{description}</p>
+      )}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
