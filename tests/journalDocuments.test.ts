@@ -1934,6 +1934,69 @@ test("JournalSection opens with Team Room before Timeline and counts current bri
   assert.ok(tabsBlock.indexOf("count: totalSourceCount") >= 0);
 });
 
+test("JournalSection clarifies source counts and hides dense source actions behind progressive disclosure", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /Total available to Journal AI/);
+  assert.match(journalSource, /const totalIncludedSourceCount = currentBriefSources\.length \+ sources\.length - excludedDocumentIds\.length/);
+  assert.match(journalSource, /Brief baseline sources: \{currentBriefSources\.length\}/);
+  assert.match(journalSource, /Journal uploads: \{sources\.length\}/);
+  assert.match(journalSource, /Total available to Journal AI: \{totalIncludedSourceCount\}/);
+  assert.match(journalSource, /Ask about this source/);
+  assert.match(journalSource, /More source actions/);
+  assert.match(journalSource, /Secondary source actions/);
+  assert.match(journalSource, /Find supported brief updates/);
+  const primaryActionStart = journalSource.indexOf("Primary source actions");
+  const secondaryActionStart = journalSource.indexOf("Secondary source actions");
+  assert.ok(primaryActionStart >= 0);
+  assert.ok(secondaryActionStart > primaryActionStart);
+  const primaryBlock = journalSource.slice(primaryActionStart, secondaryActionStart);
+  assert.match(primaryBlock, /Ask about this source/);
+  assert.match(primaryBlock, /Preview source/);
+  assert.match(primaryBlock, /Exclude source|Include source/);
+  assert.doesNotMatch(primaryBlock, /Summarize/);
+  assert.doesNotMatch(primaryBlock, /Compare with brief/);
+});
+
+test("JournalSection forces strict source scope for every per-source prompt action", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(
+    journalSource,
+    /prepareAssistantPrompt\([^\n]+, \[(?:source|selectedSource|doc)\.id\]\)/,
+  );
+  assert.match(journalSource, /prepareAssistantPrompt\(askAboutSourcePrompt\(source\.filename\), \[source\.id\], true\)/);
+  assert.match(journalSource, /prepareAssistantPrompt\(summarizeDocumentPrompt\(selectedSource\.filename\), \[selectedSource\.id\], true\)/);
+  assert.match(journalSource, /prepareAssistantPrompt\(compareWithBriefPrompt\(selectedSource\.filename\), \[selectedSource\.id\], true\)/);
+  assert.match(journalSource, /prepareAssistantPrompt\(summarizeDocumentPrompt\(doc\.filename\), \[doc\.id\], true\)/);
+  assert.match(journalSource, /prepareAssistantPrompt\(briefUpdatePrompt\(doc\.filename\), \[doc\.id\], true\)/);
+});
+
+test("JournalSection keeps deleted timeline entries behind an audit toggle by default", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /showDeletedEntries/);
+  assert.match(journalSource, /entry\.deleted_at === null \|\| showDeletedEntries/);
+  assert.match(journalSource, /deleted entries hidden from the main Timeline/);
+  assert.match(journalSource, /Show audit entries/);
+  assert.match(journalSource, /Hide audit entries/);
+});
+
 test("JournalSection exposes source controls, source health, and source-scoped actions", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
