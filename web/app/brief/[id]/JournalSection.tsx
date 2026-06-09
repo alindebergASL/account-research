@@ -1472,7 +1472,12 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-5">
+      <div className="grid gap-4 lg:grid-cols-[248px_minmax(0,1fr)]">
+        <aside className="lg:sticky lg:top-4 lg:self-start">
+          <nav
+            className="flex flex-col gap-1 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm"
+            aria-label="Journal sections"
+          >
         {workspaceTabs.map((tab) => {
           const active = activeWorkspace === tab.id;
           return (
@@ -1505,7 +1510,9 @@ export default function JournalSection({
             </button>
           );
         })}
-      </div>
+          </nav>
+        </aside>
+        <div className="min-w-0">
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -2338,6 +2345,8 @@ export default function JournalSection({
               {posting && <Loader2 className="size-3.5 animate-spin" />}
               {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
             </button>
+        </div>
+      </div>
         </div>
       </div>
     </section>
