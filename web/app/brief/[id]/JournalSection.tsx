@@ -2011,6 +2011,45 @@ export default function JournalSection({
           </div>
           </div>
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-indigo-800">
+                  Account intelligence loop
+                </div>
+                <h3 className="mt-3 text-base font-semibold text-ink">Catch up, review, then promote durable signals</h3>
+                <p className="mt-1 max-w-3xl text-sm text-muted">
+                  Use advisory prompts to find what changed, promote only the useful suggestions into human review, then let accepted/sent/applied cards feed the cockpit.
+                </p>
+              </div>
+              <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+                Official only after human review
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <div className="rounded-xl border border-violet-100 bg-violet-50/70 p-3">
+                <div className="text-sm font-semibold text-violet-950">1. Catch up</div>
+                <p className="mt-1 text-xs text-violet-900">Run a windowed catch-up or a focused intelligence action against included sources.</p>
+              </div>
+              <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-3">
+                <div className="text-sm font-semibold text-amber-950">2. Review suggestions</div>
+                <p className="mt-1 text-xs text-amber-900">Assistant suggestions stay advisory until you add or edit them as Review Queue cards.</p>
+              </div>
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3">
+                <div className="text-sm font-semibold text-indigo-950">3. Promote cockpit signals</div>
+                <p className="mt-1 text-xs text-indigo-900">Accepted, sent-to-brief-chat, or applied cards become durable cockpit signals with provenance.</p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 text-xs md:grid-cols-2">
+              <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sky-950">
+                <span className="font-semibold">Current source scope:</span> {totalIncludedSourceCount} included for AI; {excludedDocumentIds.length} excluded from AI.
+              </div>
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-emerald-950">
+                <span className="font-semibold">Catch-up freshness:</span> cached catch-ups refresh when Journal entries, source scope, or reviewed cockpit signals change.
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -2102,8 +2141,18 @@ export default function JournalSection({
             <div className="mt-4 space-y-2">
               <h4 className="text-sm font-semibold text-ink">Priority reviewed cards</h4>
               {cockpitDisplay.priorityCards.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-muted">
-                  No accepted, sent, or applied review candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
+                <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/60 p-4 text-sm text-indigo-950">
+                  <div className="font-semibold">No reviewed cockpit signals yet</div>
+                  <p className="mt-1 text-indigo-900/80">
+                    No accepted, sent, or applied review candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveWorkspace("review")}
+                    className="mt-3 rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-800 hover:bg-indigo-50"
+                  >
+                    Review suggested candidates
+                  </button>
                 </div>
               ) : (
                 cockpitDisplay.priorityCards.map((card) => (
