@@ -1872,6 +1872,28 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /Replace your current draft with this intelligence action/);
 });
 
+test("JournalSection presents Intelligence as a guided cockpit workflow with provenance polish", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const source = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /Account intelligence loop/);
+  assert.match(source, /1\. Catch up/);
+  assert.match(source, /2\. Review suggestions/);
+  assert.match(source, /3\. Promote cockpit signals/);
+  assert.match(source, /Current source scope/);
+  assert.match(source, /included for AI/);
+  assert.match(source, /excluded from AI/);
+  assert.match(source, /Catch-up freshness/);
+  assert.match(source, /cached catch-ups refresh when Journal entries, source scope, or reviewed cockpit signals change/);
+  assert.match(source, /No reviewed cockpit signals yet/);
+  assert.match(source, /Review suggested candidates/);
+  assert.match(source, /Official only after human review/);
+});
+
 test("JournalSection grounds workspaces in the current brief baseline", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
