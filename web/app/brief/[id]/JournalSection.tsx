@@ -275,6 +275,10 @@ export default function JournalSection({
     setPendingCatchUpWindow(journalCatchUpWindow);
     setPendingCatchUpExcludedDocumentKey(catchUpExcludedDocumentKey);
     setComposeText(text);
+    // The composer only renders in Timeline/Team Room, so staging a prompt
+    // anywhere else must bring the user to it — otherwise the action looks
+    // like it silently did nothing.
+    setActiveWorkspace("timeline");
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
 
@@ -494,6 +498,8 @@ export default function JournalSection({
     } catch {
       setComposeText(prompt);
       setAskAi(false);
+      setActiveWorkspace("timeline");
+      window.setTimeout(() => composeRef.current?.focus(), 0);
       setUploadNotice("Clipboard was unavailable, so the brief-chat prompt was copied into the Journal composer.");
     }
   }
@@ -604,119 +610,47 @@ export default function JournalSection({
             : "border-slate-200 bg-white hover:border-slate-300"
         }`}
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
-                <FileText className="size-3" /> Source
-              </span>
-              <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
-                Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
-              </span>
-              {isExcluded ? (
-                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">
-                  Excluded from AI context
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
-                  <CheckCircle2 className="size-3" /> In AI context
-                </span>
-              )}
-            </div>
-            <h3 className="mt-2 truncate text-sm font-semibold text-ink">
-              {source.filename}
-            </h3>
-            <p className="mt-1 text-xs text-muted">
-              {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source health</span>
-              {healthBadges.map((badge) => (
-                <span
-                  key={badge.status}
-                  title={badge.description}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
-                    badge.status === "current"
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                      : badge.status === "conflicting"
-                        ? "border-rose-200 bg-rose-50 text-rose-800"
-                        : "border-amber-200 bg-amber-50 text-amber-800"
-                  }`}
-                >
-                  {badge.label}
-                </span>
-              ))}
-            </div>
-          </div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            {/* Primary source actions */}
-            <button
-              type="button"
-              disabled={isExcluded}
-              onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id], true)}
-              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Sparkles className="size-3" /> Ask about this source
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedSource(source)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Preview source
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleSourceExclusion(source)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {isExcluded ? "Include source" : "Exclude source"}
-            </button>
-            <details className="group relative">
-              <summary className="list-none rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-                More source actions
-              </summary>
-              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 sm:absolute sm:right-0 sm:z-10 sm:w-64 sm:shadow-lg">
-                {/* Secondary source actions */}
-                <button
-                  type="button"
-                  onClick={() => toggleSourceSelection(source.id)}
-                  disabled={isExcluded}
-                  aria-pressed={isSelected && !isExcluded}
-                  className={`rounded-md border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
-                    isSelected && !isExcluded
-                      ? "border-violet-300 bg-violet-600 text-white"
-                      : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
-                  }`}
-                >
-                  {isSelected && !isExcluded ? "Selected for batch AI" : "Select for batch AI"}
-                </button>
-                <button
-                  type="button"
-                  disabled={isExcluded}
-                  onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id], true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Sparkles className="size-3" /> Summarize
-                </button>
-                <button
-                  type="button"
-                  disabled={isExcluded}
-                  onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id], true)}
-                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Find supported brief updates
-                </button>
-                <button
-                  type="button"
-                  disabled={isExcluded}
-                  onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id], true)}
-                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Compare with brief
-                </button>
-              </div>
-            </details>
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+              <FileText className="size-3" /> Source
+            </span>
+            <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
+              Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
+            </span>
+            {isExcluded ? (
+              <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">
+                Excluded from AI context
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                <CheckCircle2 className="size-3" /> In AI context
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 truncate text-sm font-semibold text-ink">
+            {source.filename}
+          </h3>
+          <p className="mt-1 text-xs text-muted">
+            {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source health</span>
+            {healthBadges.map((badge) => (
+              <span
+                key={badge.status}
+                title={badge.description}
+                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                  badge.status === "current"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : badge.status === "conflicting"
+                      ? "border-rose-200 bg-rose-50 text-rose-800"
+                      : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                {badge.label}
+              </span>
+            ))}
           </div>
         </div>
         <p className="mt-3 line-clamp-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
@@ -727,6 +661,76 @@ export default function JournalSection({
             Attached to journal note: {source.entryBody}
           </p>
         )}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          {/* Primary source actions */}
+          <button
+            type="button"
+            disabled={isExcluded}
+            onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id], true)}
+            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Sparkles className="size-3" /> Ask about this source
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedSource(source)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+          >
+            Preview source
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleSourceExclusion(source)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+          >
+            {isExcluded ? "Include source" : "Exclude source"}
+          </button>
+          <details className="group relative ml-auto">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+              More source actions
+            </summary>
+            <div className="absolute right-0 z-10 mt-2 flex w-60 flex-col gap-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+              {/* Secondary source actions */}
+              <button
+                type="button"
+                onClick={() => toggleSourceSelection(source.id)}
+                disabled={isExcluded}
+                aria-pressed={isSelected && !isExcluded}
+                className={`rounded-md border px-2 py-1 text-left text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  isSelected && !isExcluded
+                    ? "border-violet-300 bg-violet-600 text-white"
+                    : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+                }`}
+              >
+                {isSelected && !isExcluded ? "Selected for batch AI" : "Select for batch AI"}
+              </button>
+              <button
+                type="button"
+                disabled={isExcluded}
+                onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id], true)}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Sparkles className="size-3 text-violet-600" /> Summarize
+              </button>
+              <button
+                type="button"
+                disabled={isExcluded}
+                onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id], true)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Find supported brief updates
+              </button>
+              <button
+                type="button"
+                disabled={isExcluded}
+                onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id], true)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Compare with brief
+              </button>
+            </div>
+          </details>
+        </div>
       </div>
     );
   }
@@ -2100,7 +2104,19 @@ export default function JournalSection({
                 className="mt-3"
                 icon={<FileText className="size-5" />}
                 title="No sources uploaded yet"
-                description="Choose a document in the composer below to make its extracted evidence available to the Journal assistant."
+                description="Upload a document from the Timeline composer to make its extracted evidence available to the Journal assistant."
+                action={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveWorkspace("timeline");
+                      window.setTimeout(() => composeRef.current?.focus(), 0);
+                    }}
+                    className="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800"
+                  >
+                    Add a source
+                  </button>
+                }
               />
             ) : displayedSources.length === 0 ? (
               <EmptyState
@@ -2385,9 +2401,12 @@ export default function JournalSection({
             setActiveWorkspace("timeline");
             window.setTimeout(() => composeRef.current?.focus(), 0);
           }}
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted hover:border-slate-300 hover:text-ink"
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted transition-colors hover:border-slate-300 hover:text-ink"
         >
-          <BookOpen className="size-4" /> Add a note or ask the assistant in Timeline
+          <BookOpen className="size-4" />
+          {activeWorkspace === "sources"
+            ? "Upload a source or add a note in Timeline"
+            : "Add a note or ask the assistant in Timeline"}
         </button>
       )}
         </div>
