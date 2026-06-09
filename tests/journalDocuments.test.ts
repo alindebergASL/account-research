@@ -1558,6 +1558,118 @@ test("assistant candidate draft extraction preserves trusted evidence labels", (
   });
 });
 
+test("assistant candidate draft extraction splits markdown candidate queues into reviewable cards", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const extraction = require("../web/lib/journalReviewCandidateExtraction") as typeof import("../web/lib/journalReviewCandidateExtraction");
+  const assistantEntry = {
+    id: "assistant-action-queue-1",
+    author_type: "assistant" as const,
+    reply_to: "user-prompt-action-queue",
+    body: `## Action Item Candidate Queue — Human Review
+
+### Candidate 1 — Engage on Google Gemini / NotebookLM footprint
+| Field | Detail |
+|---|---|
+| **Task** | Assess competitive displacement risk from Google's enterprise AI platform rollout. |
+| **Owner** | Not stated |
+| **Due / Trigger** | Triggered by May 12, 2026 enterprise launch [J1] |
+| **Evidence** | [J1] |
+| **Missing Fields** | Owner, deadline, internal point of contact |
+| **Confidence** | High — launch is confirmed [J1] |
+| **Suggested Reviewer Action** | Assign AE or solutions engineer to map Google Gemini scope. |
+
+### Candidate 2 — Track HPE/NVIDIA AI supercomputer go-live
+| Field | Detail |
+|---|---|
+| **Task** | Monitor mid-summer 2026 go-live of 33-node HPE Cray XD670 / NVIDIA H200 cluster. |
+| **Due / Trigger** | Mid-summer 2026 go-live [J1] |
+| **Evidence** | [J1] |
+| **Confidence** | High — $15M + $18.6M H200 confirmed [J1] |
+| **Suggested Reviewer Action** | Set a calendar trigger for June 2026 to confirm go-live timeline. |${legend.formatSourceLegendBlock([
+      "[J1] Daily monitor update — University AI investment activity.",
+    ])}`,
+  };
+
+  const drafts = extraction.buildReviewCandidateDraftsFromAssistantEntry(assistantEntry);
+  assert.equal(drafts.length, 2);
+  assert.deepEqual(
+    drafts.map((draft) => ({
+      type: draft.candidate_type,
+      title: draft.title,
+      target: draft.target,
+      confidence: draft.confidence,
+      evidence: draft.evidence,
+      source: draft.source_entry_id,
+    })),
+    [
+      {
+        type: "action_item",
+        title: "Engage on Google Gemini / NotebookLM footprint",
+        target: "Owner: Not stated; Due / Trigger: Triggered by May 12, 2026 enterprise launch [J1]",
+        confidence: "High — launch is confirmed [J1]",
+        evidence: "Scoped to assistant reply assistant-action-queue-1: [J1]",
+        source: "assistant-action-queue-1",
+      },
+      {
+        type: "action_item",
+        title: "Track HPE/NVIDIA AI supercomputer go-live",
+        target: "Due / Trigger: Mid-summer 2026 go-live [J1]",
+        confidence: "High — $15M + $18.6M H200 confirmed [J1]",
+        evidence: "Scoped to assistant reply assistant-action-queue-1: [J1]",
+        source: "assistant-action-queue-1",
+      },
+    ],
+  );
+  assert.match(drafts[0].proposed_text, /Assess competitive displacement risk/);
+  assert.match(drafts[0].risk ?? "", /Assign AE or solutions engineer/);
+});
+
+test("assistant candidate draft extraction scopes evidence labels to each candidate block", () => {
+  const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
+  const extraction = require("../web/lib/journalReviewCandidateExtraction") as typeof import("../web/lib/journalReviewCandidateExtraction");
+  const assistantEntry = {
+    id: "assistant-mixed-label-queue",
+    author_type: "assistant" as const,
+    reply_to: "user-prompt-mixed-labels",
+    body: `### Candidate 1 — Update procurement note
+| Field | Detail |
+|---|---|
+| **Task** | Capture procurement timing. |
+| **Evidence** | [J1] |
+
+### Candidate 2 — Track uploaded security RFI
+| Field | Detail |
+|---|---|
+| **Task** | Review security platform requirements. |
+| **Evidence** | [D1] |${legend.formatSourceLegendBlock([
+      "[J1] Timeline note — Procurement timing changed.",
+      "[D1] security-rfi.pdf",
+    ])}`,
+  };
+
+  const drafts = extraction.buildReviewCandidateDraftsFromAssistantEntry(assistantEntry);
+  assert.equal(drafts.length, 2);
+  assert.equal(drafts[0].evidence, "Scoped to assistant reply assistant-mixed-label-queue: [J1]");
+  assert.equal(drafts[1].evidence, "Scoped to assistant reply assistant-mixed-label-queue: [D1]");
+});
+
+test("JournalSection renders assistant review suggestions as cards with explicit promotion CTAs", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const journalSource = fs.readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(journalSource, /renderAssistantReviewSuggestions/);
+  assert.match(journalSource, /Suggested review candidates/);
+  assert.match(journalSource, /Add to Review Queue/);
+  assert.match(journalSource, /Edit before adding/);
+  assert.match(journalSource, /saveReviewCandidateDraft/);
+  assert.match(journalSource, /buildReviewCandidateDraftsFromAssistantEntry/);
+  assert.match(journalSource, /No review candidate cards yet\. Assistant replies with suggested cards can be promoted here/);
+});
+
 test("candidate draft extraction ignores spoofed user-authored legend labels", () => {
   const legend = require("../web/lib/journalSourceLegend") as typeof import("../web/lib/journalSourceLegend");
   const extraction = require("../web/lib/journalReviewCandidateExtraction") as typeof import("../web/lib/journalReviewCandidateExtraction");

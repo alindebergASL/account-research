@@ -19,7 +19,11 @@ import {
   resolveCitedJournalEntry,
 } from "@/lib/journalCitationResolution";
 import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
-import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
+import {
+  buildReviewCandidateDraftFromAssistantEntry,
+  buildReviewCandidateDraftsFromAssistantEntry,
+  type ReviewCandidateDraft,
+} from "@/lib/journalReviewCandidateExtraction";
 import type { JournalCockpitReadModel, JournalCockpitReadModelItem } from "@/lib/journalCockpitReadModel";
 import {
   buildJournalCatchUpContext,
@@ -800,13 +804,42 @@ export default function JournalSection({
     }
   }
 
-  function draftReviewCandidateFromAssistant(entry: Entry) {
-    const draft = buildReviewCandidateDraftFromAssistantEntry(entry);
-    if (!draft) {
-      setReviewError("Only saved assistant replies can be converted into review candidates.");
+  async function saveReviewCandidateDraft(draft: ReviewCandidateDraft) {
+    setReviewLoading(true);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/journal/review-candidates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate_type: draft.candidate_type,
+          title: draft.title,
+          proposed_text: draft.proposed_text,
+          target: draft.target ?? "",
+          current_baseline: briefContext.priority_summary,
+          evidence: draft.evidence ?? "",
+          confidence: draft.confidence ?? "",
+          risk: draft.risk ?? "Review before applying; this card was promoted from an assistant reply.",
+          source_entry_id: draft.source_entry_id,
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      setReviewError(null);
+      setUploadNotice("Added suggested review card to the Review Queue. Review status before sending anything to the brief.");
+      await loadReviewCandidates();
+      await loadCockpitModel();
       setActiveWorkspace("review");
-      return;
+    } catch (e: any) {
+      setReviewError(e?.message || "Failed to save suggested review card");
+      setActiveWorkspace("review");
+    } finally {
+      setReviewLoading(false);
     }
+  }
+
+  function editReviewCandidateDraft(draft: ReviewCandidateDraft) {
     setNewCandidateType(draft.candidate_type);
     setNewCandidateTitle(draft.title);
     setNewCandidateTarget(draft.target ?? "");
@@ -817,6 +850,16 @@ export default function JournalSection({
     setNewCandidateSourceEntryId(draft.source_entry_id);
     setReviewError(null);
     setActiveWorkspace("review");
+  }
+
+  function draftReviewCandidateFromAssistant(entry: Entry) {
+    const draft = buildReviewCandidateDraftFromAssistantEntry(entry);
+    if (!draft) {
+      setReviewError("Only saved assistant replies can be converted into review candidates.");
+      setActiveWorkspace("review");
+      return;
+    }
+    editReviewCandidateDraft(draft);
   }
 
   async function updateCandidateStatus(candidateId: string, status: ReviewCandidateStatus) {
@@ -1368,6 +1411,61 @@ export default function JournalSection({
     setActiveWorkspace("timeline");
   }
 
+  function renderAssistantReviewSuggestions(entry: Entry) {
+    const drafts = buildReviewCandidateDraftsFromAssistantEntry(entry).slice(0, 6);
+    if (drafts.length === 0) return null;
+    return (
+      <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+              Suggested review candidates
+            </p>
+            <p className="mt-1 text-xs text-amber-900">
+              Assistant output is advisory. Add only the cards you want humans to review; nothing edits the brief automatically.
+            </p>
+          </div>
+          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-amber-800">
+            {drafts.length} suggestion{drafts.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {drafts.map((draft, index) => (
+            <div key={`${entry.id}-${index}-${draft.title}`} className="rounded-lg border border-amber-200 bg-white p-3 text-xs shadow-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-medium text-amber-800">
+                  {candidateTypeLabels[draft.candidate_type]}
+                </span>
+                {draft.confidence && <span className="text-muted">Confidence: {draft.confidence}</span>}
+              </div>
+              <h4 className="mt-2 text-sm font-semibold text-ink">{draft.title}</h4>
+              {draft.target && <p className="mt-1 text-muted">Target: {draft.target}</p>}
+              <p className="mt-2 line-clamp-3 text-slate-800">{draft.proposed_text}</p>
+              {draft.evidence && <p className="mt-2 text-violet-800">Evidence: {draft.evidence}</p>}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => saveReviewCandidateDraft(draft)}
+                  disabled={reviewLoading}
+                  className="rounded-md bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  Add to Review Queue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => editReviewCandidateDraft(draft)}
+                  className="rounded-md border border-amber-200 bg-white px-2 py-1 font-medium text-amber-800 hover:bg-amber-50"
+                >
+                  Edit before adding
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   function renderEntry(e: Entry) {
     const deleted = e.deleted_at !== null;
     const isAssistant = e.author_type === "assistant";
@@ -1472,6 +1570,7 @@ export default function JournalSection({
           )}
 
           {isAssistant && !editing && !deleted && renderCitationChips(e, openCitationContext)}
+          {isAssistant && !editing && !deleted && renderAssistantReviewSuggestions(e)}
 
           {isAssistant && !editing && !deleted && (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -2212,7 +2311,7 @@ export default function JournalSection({
               <div className="rounded-xl border border-dashed border-amber-200 bg-white p-6 text-sm text-muted">
                 {journalSearchResult.isActive
                   ? "No review candidate cards match this search. Clear search to see the full Review Queue."
-                  : "No review candidate cards yet. Use the assistant actions above to draft candidates, then save the reviewed items here for team follow-up."}
+                  : "No review candidate cards yet. Assistant replies with suggested cards can be promoted here using Add to Review Queue, or edited first before saving for team follow-up."}
               </div>
             ) : (
               displayedReviewCandidates.map((candidate) => renderReviewCandidate(candidate))
