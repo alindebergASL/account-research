@@ -22,6 +22,12 @@ import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
 import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
 import { buildJournalCockpitSummary } from "@/lib/journalCockpitSummary";
 import {
+  buildJournalCatchUpContext,
+  buildJournalCatchUpPrompt,
+  journalCatchUpSince,
+  type JournalCatchUpWindow,
+} from "@/lib/journalCatchUp";
+import {
   buildJournalSearchRecallPrompt,
   searchJournalWorkspace,
 } from "@/lib/journalSearch";
@@ -221,6 +227,10 @@ function formatFileSize(bytes: number): string {
   const kb = bytes / 1024;
   if (kb < 1024) return `${Math.ceil(kb)} KB`;
   return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function documentIdSnapshotKey(ids: string[]): string {
+  return Array.from(new Set(ids)).sort().join("\u0000");
 }
 
 function summarizeDocumentPrompt(filename: string): string {
@@ -495,6 +505,9 @@ export default function JournalSection({
   const [requireSourceDocumentScope, setRequireSourceDocumentScope] = useState(false);
   const [excludedDocumentIds, setExcludedDocumentIds] = useState<string[]>([]);
   const [journalSearchQuery, setJournalSearchQuery] = useState("");
+  const [catchUpWindow, setCatchUpWindow] = useState<JournalCatchUpWindow>("24h");
+  const [pendingJournalContextSince, setPendingJournalContextSince] = useState<number | null>(null);
+  const [pendingCatchUpExcludedDocumentKey, setPendingCatchUpExcludedDocumentKey] = useState<string | null>(null);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -545,10 +558,31 @@ export default function JournalSection({
     loadReviewCandidates();
   }, [load, loadReviewCandidates]);
 
+  const excludedDocumentSnapshotKey = useMemo(
+    () => documentIdSnapshotKey(excludedDocumentIds),
+    [excludedDocumentIds],
+  );
+
+  useEffect(() => {
+    if (
+      pendingCatchUpExcludedDocumentKey !== null
+      && pendingCatchUpExcludedDocumentKey !== excludedDocumentSnapshotKey
+    ) {
+      setComposeText("");
+      setScopedDocumentIds([]);
+      setRequireSourceDocumentScope(false);
+      setPendingJournalContextSince(null);
+      setPendingCatchUpExcludedDocumentKey(null);
+      setUploadNotice("Invalidated catch-up prompt after source exclusions changed. Run catch-up again to rebuild it with the latest included sources.");
+    }
+  }, [excludedDocumentSnapshotKey, pendingCatchUpExcludedDocumentKey]);
+
   function prepareAssistantPrompt(
     text: string,
     sourceDocumentIds: string[] = [],
     requireSourceDocumentScope = false,
+    journalContextSince: number | null = null,
+    catchUpExcludedDocumentKey: string | null = null,
   ) {
     if (
       composeText.trim() &&
@@ -560,6 +594,8 @@ export default function JournalSection({
     setAskAi(true);
     setRequireSourceDocumentScope(requireSourceDocumentScope);
     setScopedDocumentIds(filteredSourceDocumentIds(sourceDocumentIds));
+    setPendingJournalContextSince(journalContextSince);
+    setPendingCatchUpExcludedDocumentKey(catchUpExcludedDocumentKey);
     setComposeText(text);
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
@@ -570,6 +606,7 @@ export default function JournalSection({
     sourceDocumentIds = scopedDocumentIds,
     additionalAvailableDocumentIds: string[] = [],
     forceSourceDocumentScope = false,
+    journalContextSince: number | null = null,
   ) {
     const trimmed = text.trim();
     if (!trimmed || posting) return false;
@@ -591,6 +628,9 @@ export default function JournalSection({
           ...(askAssistant && excludedDocumentIds.length > 0
             ? { excluded_source_document_ids: excludedDocumentIds }
             : {}),
+          ...(askAssistant && journalContextSince !== null
+            ? { journal_context_since: journalContextSince }
+            : {}),
         }),
       });
       if (!r.ok) {
@@ -601,6 +641,8 @@ export default function JournalSection({
       setComposeText("");
       setRequireSourceDocumentScope(false);
       setScopedDocumentIds([]);
+      setPendingJournalContextSince(null);
+      setPendingCatchUpExcludedDocumentKey(null);
       if (data.ai_error) setAiError(data.ai_error);
       await load();
       if (askAssistant) setActiveWorkspace("timeline");
@@ -614,7 +656,7 @@ export default function JournalSection({
   }
 
   async function submit() {
-    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope);
+    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope, pendingJournalContextSince);
   }
 
   async function runIntelligenceAction(prompt: string) {
@@ -1489,6 +1531,32 @@ export default function JournalSection({
     prepareAssistantPrompt(prompt, sourceIds, true);
   }
 
+  function runCatchUpPrompt(window: JournalCatchUpWindow = catchUpWindow) {
+    const now = Date.now();
+    const context = buildJournalCatchUpContext({
+      window,
+      now,
+      entries: entries ?? [],
+      sources,
+      reviewCandidates,
+      excludedDocumentIds,
+    });
+    const prompt = buildJournalCatchUpPrompt({
+      context,
+      entries: entries ?? [],
+      sources,
+      reviewCandidates,
+    });
+    setCatchUpWindow(window);
+    prepareAssistantPrompt(
+      prompt,
+      context.recallSourceDocumentIds,
+      true,
+      journalCatchUpSince(window, now),
+      excludedDocumentSnapshotKey,
+    );
+  }
+
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
     const timelineEntries = (() => {
@@ -1743,6 +1811,42 @@ export default function JournalSection({
               ))}
             </div>
           </div>
+          </div>
+
+          <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  What changed since
+                </div>
+                <h3 className="mt-1 text-sm font-semibold text-ink">Time-windowed Journal catch-up</h3>
+                <p className="mt-1 max-w-3xl text-sm text-muted">
+                  Generate an advisory catch-up over a clear recent window. The prompt includes matching Journal entries, included uploaded sources, and reviewed versus pending review cards without editing durable account data.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ["24h", "Last 24h"],
+                  ["7d", "Last 7d"],
+                  ["all", "All loaded"],
+                ] as Array<[JournalCatchUpWindow, string]>).map(([window, label]) => (
+                  <button
+                    key={window}
+                    type="button"
+                    aria-pressed={catchUpWindow === window}
+                    onClick={() => runCatchUpPrompt(window)}
+                    disabled={posting || loading || !entries}
+                    className={`rounded-lg border px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                      catchUpWindow === window
+                        ? "border-emerald-300 bg-emerald-600 text-white"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">

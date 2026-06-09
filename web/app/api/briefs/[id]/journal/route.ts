@@ -116,6 +116,7 @@ export async function POST(
     ask_ai?: unknown;
     source_document_ids?: unknown;
     excluded_source_document_ids?: unknown;
+    journal_context_since?: unknown;
   };
   try {
     body = await req.json();
@@ -133,6 +134,12 @@ export async function POST(
     );
   }
   const askAi = body.ask_ai === true;
+  const journalContextSince = askAi && body.journal_context_since !== undefined
+    ? Number(body.journal_context_since)
+    : null;
+  if (journalContextSince !== null && (!Number.isFinite(journalContextSince) || journalContextSince < 0)) {
+    return NextResponse.json({ error: "journal_context_since must be a timestamp" }, { status: 400 });
+  }
   const hasScopedDocumentScope = askAi && body.source_document_ids !== undefined;
   let scopedDocumentIds: string[] = [];
   let excludedDocumentIds: string[] = [];
@@ -156,6 +163,15 @@ export async function POST(
   const excludedDocumentLegendTexts = new Set(
     excludedDocuments.map((doc) => sanitizeInlinePromptField(doc.filename)),
   );
+  const excludedDocumentNeedles = excludedDocuments
+    .flatMap((doc) => [doc.id, doc.filename])
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const entryMentionsExcludedDocument = (row: JournalListRow): boolean => {
+    if (excludedDocumentNeedles.length === 0) return false;
+    const bodyText = (row.body ?? "").toLowerCase();
+    return excludedDocumentNeedles.some((needle) => bodyText.includes(needle));
+  };
   const effectiveScopedDocumentIds = scopedDocumentIds.filter((id) => !excludedDocumentSet.has(id));
   if (effectiveScopedDocumentIds.length > 0) {
     const scopedDocuments = listDocumentsForBriefByIds(params.id, effectiveScopedDocumentIds);
@@ -221,6 +237,8 @@ export async function POST(
   };
   const contextEntries: JournalContextEntry[] = recentEntryRows
     .filter((row) => {
+      if (journalContextSince !== null && row.created_at < journalContextSince) return false;
+      if (entryMentionsExcludedDocument(row)) return false;
       if (entryUsesExcludedDocumentLegend(row)) return false;
       const attachedDocuments = documentsByRecentEntry.get(row.id) ?? [];
       return !attachedDocuments.some((doc) => excludedDocumentSet.has(doc.id));

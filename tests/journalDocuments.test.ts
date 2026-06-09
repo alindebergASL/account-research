@@ -586,6 +586,73 @@ test("journal assistant excludes prior assistant source legends tied to excluded
   assert.doesNotMatch(capturedSystem, /Earlier summary from prior excluded source/);
 });
 
+test("journal catch-up assistant context respects requested since window and excluded uploads", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+  const now = Date.now();
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run("catchup-old-entry", "brief-doc", "owner-doc", "user", "Old catch-up context must not reach model.", now - 10 * 24 * 60 * 60 * 1000);
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run("catchup-recent-entry", "brief-doc", "owner-doc", "user", "Recent catch-up context should reach model.", now + 60 * 1000);
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, author_type, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run("catchup-excluded-mention", "brief-doc", "owner-doc", "user", "Recent unattached note mentions excluded-catch-up.md and must not reach model.", now + 120 * 1000);
+
+  const form = new FormData();
+  form.set("body", "Excluded catch-up upload note should not reach model.");
+  form.set(
+    "file",
+    new File(["Excluded catch-up upload content should not reach model."], "excluded-catch-up.md", { type: "text/markdown" }),
+  );
+  const uploadRes = await documentsRoute.POST(makeFormReq({ sessionId: ownerSession, form }), { params: { id: "brief-doc" } });
+  assert.equal(uploadRes.status, 200);
+  const uploaded = await jsonOf(uploadRes);
+
+  let capturedSystem = "";
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create(args) {
+        capturedSystem = args.system;
+        return { content: [{ type: "text", text: "Catch-up answer." }] };
+      },
+    },
+  });
+  try {
+    const askRes = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "What changed in the last 24 hours?",
+          ask_ai: true,
+          source_document_ids: [],
+          excluded_source_document_ids: [uploaded.document.id],
+          journal_context_since: now - 24 * 60 * 60 * 1000,
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(askRes.status, 200);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+
+  assert.match(capturedSystem, /Recent catch-up context should reach model/);
+  assert.doesNotMatch(capturedSystem, /Old catch-up context must not reach model/);
+  assert.doesNotMatch(capturedSystem, /Recent unattached note mentions excluded-catch-up\.md/);
+  assert.doesNotMatch(capturedSystem, /excluded-catch-up\.md/);
+  assert.doesNotMatch(capturedSystem, /Excluded catch-up upload/);
+});
+
 test("source-scoped journal assistant rejects deleted document scope before writing entries", async () => {
   const form = new FormData();
   form.set("body", "Uploading soon-deleted scoped source.");
@@ -1668,7 +1735,184 @@ test("journal cockpit summary uses reviewed candidates only", () => {
   assert.match(summary.priorityCards[0].evidence ?? "", /procurement-plan\.pdf/);
 });
 
-test("JournalSection exposes search UI, source-scoped recall, and reviewed cockpit cards without durable mutations", () => {
+test("journal catch-up windows omit old entries excluded sources and unreviewed-only official claims", () => {
+  const catchUp = require("../web/lib/journalCatchUp") as typeof import("../web/lib/journalCatchUp");
+  const now = Date.UTC(2026, 5, 8, 12, 0, 0);
+  const entries = [
+    {
+      id: "recent-note",
+      author_type: "user",
+      body: "Procurement committee asked for a security pilot update.",
+      created_at: now - 2 * 60 * 60 * 1000,
+      author: { display_name: "Owner", email: "owner@example.com" },
+      documents: [],
+    },
+    {
+      id: "excluded-entry",
+      author_type: "user",
+      body: "Excluded upload metadata mentions excluded-rumor.pdf and must not reach catch-up.",
+      created_at: now - 70 * 60 * 1000,
+      author: null,
+      documents: [{ id: "excluded-source", filename: "excluded-rumor.pdf" }],
+    },
+    {
+      id: "excluded-assistant-entry",
+      author_type: "assistant",
+      body: `Assistant summary from excluded source [D1].${require("../web/lib/journalSourceLegend").formatSourceLegendBlock([
+        "[D1] excluded-rumor.pdf",
+      ])}`,
+      created_at: now - 50 * 60 * 1000,
+      author: null,
+      documents: [],
+    },
+    {
+      id: "old-note",
+      author_type: "user",
+      body: "Old renewal note outside the catch-up window.",
+      created_at: now - 10 * 24 * 60 * 60 * 1000,
+      author: null,
+      documents: [],
+    },
+  ];
+  const sources = [
+    {
+      id: "recent-source",
+      filename: "security-pilot.pdf",
+      content_preview: "New pilot evidence and committee dates.",
+      created_at: now - 90 * 60 * 1000,
+      entryBody: "Uploaded the new pilot plan.",
+    },
+    {
+      id: "excluded-source",
+      filename: "excluded-rumor.pdf",
+      content_preview: "Excluded acquisition rumor.",
+      created_at: now - 60 * 60 * 1000,
+      entryBody: "Should not appear.",
+    },
+    {
+      id: "old-excluded-source",
+      filename: "old-excluded-rumor.pdf",
+      content_preview: "Older excluded acquisition rumor.",
+      created_at: now - 10 * 24 * 60 * 60 * 1000,
+      entryBody: "Should not appear even when a recent candidate mentions it.",
+    },
+  ];
+  const reviewCandidates = [
+    {
+      id: "accepted-action",
+      candidate_type: "action_item",
+      status: "accepted",
+      title: "Schedule security pilot",
+      proposed_text: "Schedule the security pilot with procurement.",
+      evidence: "[D1] security-pilot.pdf",
+      updated_at: now - 30 * 60 * 1000,
+    },
+    {
+      id: "excluded-candidate",
+      candidate_type: "brief_update",
+      status: "accepted",
+      title: "Excluded source-backed update",
+      proposed_text: "Do not include excluded source evidence.",
+      evidence: "excluded-rumor.pdf",
+      updated_at: now - 10 * 60 * 1000,
+    },
+    {
+      id: "old-excluded-candidate",
+      candidate_type: "brief_update",
+      status: "accepted",
+      title: "Old excluded source-backed update",
+      proposed_text: "Do not include old excluded source evidence.",
+      evidence: "old-excluded-rumor.pdf",
+      updated_at: now - 5 * 60 * 1000,
+    },
+    {
+      id: "draft-decision",
+      candidate_type: "decision",
+      status: "new",
+      title: "Draft unreviewed decision",
+      proposed_text: "Do not treat as official.",
+      evidence: "draft only",
+      updated_at: now - 20 * 60 * 1000,
+    },
+  ];
+
+  const context = catchUp.buildJournalCatchUpContext({
+    window: "24h",
+    now,
+    entries,
+    sources,
+    reviewCandidates,
+    excludedDocumentIds: ["excluded-source", "old-excluded-source"],
+  });
+  assert.equal(context.windowLabel, "last 24 hours");
+  assert.deepEqual(context.entryIds, ["recent-note"]);
+  assert.deepEqual(context.sourceIds, ["recent-source"]);
+  assert.deepEqual(context.reviewedCandidateIds, ["accepted-action"]);
+  assert.deepEqual(context.pendingCandidateIds, ["draft-decision"]);
+  assert.deepEqual(context.recallSourceDocumentIds, ["recent-source"]);
+
+  const prompt = catchUp.buildJournalCatchUpPrompt({
+    context,
+    entries,
+    sources,
+    reviewCandidates,
+  });
+  assert.match(prompt, /What changed in the last 24 hours/);
+  assert.match(prompt, /Procurement committee asked/);
+  assert.match(prompt, /security-pilot\.pdf/);
+  assert.match(prompt, /Accepted\/applied review candidates/);
+  assert.match(prompt, /Pending review candidates/);
+  assert.doesNotMatch(prompt, /Old renewal note/);
+  assert.doesNotMatch(prompt, /excluded-rumor\.pdf/);
+  assert.doesNotMatch(prompt, /old-excluded-rumor\.pdf/);
+  assert.doesNotMatch(prompt, /Assistant summary from excluded source/);
+  assert.doesNotMatch(prompt, /Excluded acquisition rumor/);
+  assert.match(prompt, /Do not edit the brief/);
+});
+
+test("journal catch-up caps prompt body and source scope to server request limits", () => {
+  const catchUp = require("../web/lib/journalCatchUp") as typeof import("../web/lib/journalCatchUp");
+  const now = Date.UTC(2026, 5, 8, 12, 0, 0);
+  const entries = Array.from({ length: 20 }, (_, i) => ({
+    id: `entry-${i}`,
+    author_type: "user",
+    body: `Long catch-up entry ${i} ${"x".repeat(500)}`,
+    created_at: now - i * 1000,
+    author: null,
+    documents: [],
+  }));
+  const sources = Array.from({ length: 8 }, (_, i) => ({
+    id: `doc-${i}`,
+    filename: `doc-${i}.md`,
+    content_preview: `Long source preview ${i} ${"y".repeat(500)}`,
+    created_at: now - i * 1000,
+    entryBody: null,
+  }));
+  const reviewCandidates = Array.from({ length: 20 }, (_, i) => ({
+    id: `candidate-${i}`,
+    candidate_type: "action_item",
+    status: i % 2 === 0 ? "accepted" : "new",
+    title: `Candidate ${i}`,
+    proposed_text: `Long candidate text ${i} ${"z".repeat(500)}`,
+    evidence: `doc-${i % 8}.md`,
+    updated_at: now - i * 1000,
+  }));
+
+  const context = catchUp.buildJournalCatchUpContext({
+    window: "all",
+    now,
+    entries,
+    sources,
+    reviewCandidates,
+    excludedDocumentIds: [],
+  });
+  const prompt = catchUp.buildJournalCatchUpPrompt({ context, entries, sources, reviewCandidates });
+
+  assert.equal(context.recallSourceDocumentIds.length, 5);
+  assert.ok(prompt.length <= 3900, `prompt length ${prompt.length} should fit under server body limit`);
+});
+
+test("JournalSection exposes search UI, source-scoped recall, catch-up windows, and reviewed cockpit cards without durable mutations", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const journalSource = fs.readFileSync(
@@ -1689,8 +1933,22 @@ test("JournalSection exposes search UI, source-scoped recall, and reviewed cockp
     journalSource.indexOf("Use recent sources instead") - 400,
     journalSource.indexOf("Use recent sources instead"),
   );
-  assert.match(useRecentBlock, /setRequireSourceDocumentScope\(false\)/);
-  assert.doesNotMatch(journalSource, /search.*PATCH/i);  assert.match(journalSource, /buildJournalCockpitSummary/);
+  assert.match(journalSource, /buildJournalCatchUpContext/);
+  assert.match(journalSource, /buildJournalCatchUpPrompt/);
+  assert.match(journalSource, /What changed since/);
+  assert.match(journalSource, /Last 24h/);
+  assert.match(journalSource, /Last 7d/);
+  assert.match(journalSource, /All loaded/);
+  assert.match(journalSource, /pendingCatchUpExcludedDocumentKey/);
+  assert.match(journalSource, /Invalidated catch-up prompt after source exclusions changed/);
+  assert.match(journalSource, /setComposeText\(""\)/);
+  assert.match(journalSource, /journal_context_since/);
+  assert.doesNotMatch(journalSource, /catch.*PATCH/i);
+  assert.doesNotMatch(journalSource, /catch.*review-candidates/i);
+  assert.doesNotMatch(journalSource, /catch.*PUT/i);
+  assert.doesNotMatch(journalSource, /catch.*DELETE/i);
+  assert.doesNotMatch(journalSource, /search.*PATCH/i);
+  assert.match(journalSource, /buildJournalCockpitSummary/);
   assert.match(journalSource, /Account Intelligence Cockpit/);
   assert.match(journalSource, /Reviewed account signals/);
   assert.match(journalSource, /reviewedCount/);
