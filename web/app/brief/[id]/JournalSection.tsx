@@ -2312,21 +2312,21 @@ export default function JournalSection({
             <button
               type="button"
               onClick={() => prepareAssistantPrompt("Summarize the most recent uploaded document and explain why it matters for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
             >
               Summarize latest document
             </button>
             <button
               type="button"
               onClick={() => prepareAssistantPrompt("What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
             >
               Suggest brief updates
             </button>
             <button
               type="button"
               onClick={() => prepareAssistantPrompt("Turn the recent journal notes and documents into recommended next actions for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
             >
               Draft next actions
             </button>
@@ -2351,7 +2351,7 @@ export default function JournalSection({
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink hover:bg-slate-50">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink transition-colors hover:bg-slate-50">
               <Paperclip className="size-3.5" />
               <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
               <input
@@ -2365,7 +2365,7 @@ export default function JournalSection({
               type="button"
               onClick={() => uploadDocument()}
               disabled={uploading || posting || !selectedFile}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
             >
               {uploading && <Loader2 className="size-3.5 animate-spin" />}
               {uploading ? "Uploading…" : "Upload document"}
@@ -2374,7 +2374,7 @@ export default function JournalSection({
               type="button"
               onClick={() => uploadDocument({ summarizeAfterUpload: true })}
               disabled={uploading || posting || !selectedFile}
-              className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 transition-colors hover:bg-violet-100 disabled:opacity-50"
             >
               {uploading && <Loader2 className="size-3.5 animate-spin" />}
               Upload + summarize
@@ -2387,7 +2387,7 @@ export default function JournalSection({
               type="button"
               onClick={submit}
               disabled={posting || !composeText.trim()}
-              className="inline-flex items-center gap-1.5 rounded-md bg-ink text-white px-3 py-1.5 text-sm disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
             >
               {posting && <Loader2 className="size-3.5 animate-spin" />}
               {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
