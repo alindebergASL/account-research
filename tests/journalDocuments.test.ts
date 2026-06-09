@@ -130,6 +130,26 @@ seedBrief("brief-doc", "owner-doc");
 const ownerSession = makeSessionFor("owner-doc");
 const outsiderSession = makeSessionFor("outsider-doc");
 
+
+function readJournalSectionSource(): string {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const base = path.join(__dirname, "../web/app/brief/[id]");
+  // PR-A moved stable substrate (types, constants, pure helpers) out of
+  // JournalSection.tsx into the journal/ module folder. Characterization tests
+  // that assert on that substrate read this composite so they survive the
+  // extraction; tests that assert JSX ordering or local component blocks keep
+  // reading JournalSection.tsx directly.
+  return [
+    "JournalSection.tsx",
+    "journal/types.ts",
+    "journal/constants.ts",
+    "journal/helpers.ts",
+  ]
+    .map((rel) => fs.readFileSync(path.join(base, rel), "utf8"))
+    .join("\n\n");
+}
+
 test("migration creates journal_documents table and indexes", () => {
   const names = (db()
     .prepare(
@@ -1340,10 +1360,7 @@ test("document upload persistence is atomic when document insert fails", async (
 test("JournalSection exposes document upload controls with text, PDF accept, and AI follow-up affordances", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
-  const source = fs.readFileSync(
-    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
-    "utf8",
-  );
+  const source = readJournalSectionSource();
   assert.match(source, /type=\"file\"/);
   assert.match(source, /\/journal\/documents/);
   assert.match(source, /Upload document/);
@@ -1354,7 +1371,7 @@ test("JournalSection exposes document upload controls with text, PDF accept, and
   assert.match(source, /it does not edit the brief automatically/);
   assert.match(source, /application\/pdf/);
   assert.match(source, /\.pdf/);
-  assert.match(source, /type JournalWorkspace = "timeline" \| "sources" \| "intelligence" \| "review"/);
+  assert.match(source, /type JournalWorkspace =[\s\S]*?"timeline"[\s\S]*?"team"/);
   assert.match(source, /Source Library/);
   assert.match(source, /Review Queue/);
   assert.match(source, /collectJournalSources/);
@@ -1818,10 +1835,7 @@ test("journal source legend can be restricted to labels cited in the assistant a
 test("JournalSection exposes intelligence panel actions and citation chips", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
-  const source = fs.readFileSync(
-    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
-    "utf8",
-  );
+  const source = readJournalSectionSource();
   assert.match(source, /Journal Intelligence/);
   assert.match(source, /Generate account update/);
   assert.match(source, /Extract action items/);
@@ -1897,10 +1911,7 @@ test("JournalSection presents Intelligence as a guided cockpit workflow with pro
 test("JournalSection grounds workspaces in the current brief baseline", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
-  const journalSource = fs.readFileSync(
-    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
-    "utf8",
-  );
+  const journalSource = readJournalSectionSource();
   const pageSource = fs.readFileSync(
     path.join(__dirname, "../web/app/brief/[id]/page.tsx"),
     "utf8",
@@ -2022,10 +2033,7 @@ test("JournalSection keeps deleted timeline entries behind an audit toggle by de
 test("JournalSection exposes source controls, source health, and source-scoped actions", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
-  const journalSource = fs.readFileSync(
-    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
-    "utf8",
-  );
+  const journalSource = readJournalSectionSource();
 
   assert.match(journalSource, /type SourceHealthStatus/);
   assert.match(journalSource, /function sourceHealthBadges/);
@@ -2050,10 +2058,7 @@ test("JournalSection exposes source controls, source health, and source-scoped a
 test("JournalSection exposes concrete review workflow, timeline filters, source preview, catch-up, and team room", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
-  const journalSource = fs.readFileSync(
-    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
-    "utf8",
-  );
+  const journalSource = readJournalSectionSource();
 
   assert.match(journalSource, /type ReviewCandidate/);
   assert.match(journalSource, /reviewCandidates/);
@@ -2088,10 +2093,7 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
 test("JournalSection exposes structured action decision and question boards over review candidates", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
-  const journalSource = fs.readFileSync(
-    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
-    "utf8",
-  );
+  const journalSource = readJournalSectionSource();
 
   assert.match(journalSource, /STRUCTURED_REVIEW_BOARDS/);
   assert.match(journalSource, /groupReviewCandidatesByType/);
