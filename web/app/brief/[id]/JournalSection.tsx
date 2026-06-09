@@ -2187,6 +2187,7 @@ export default function JournalSection({
         </div>
       )}
 
+      {activeWorkspace === "timeline" || activeWorkspace === "team" ? (
       <div className="mt-6 rounded-xl border border-[var(--line)] bg-white p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div
@@ -2342,6 +2343,18 @@ export default function JournalSection({
             </button>
         </div>
       </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setActiveWorkspace("timeline");
+            window.setTimeout(() => composeRef.current?.focus(), 0);
+          }}
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted hover:border-slate-300 hover:text-ink"
+        >
+          <BookOpen className="size-4" /> Add a note or ask the assistant in Timeline
+        </button>
+      )}
         </div>
         <aside className="hidden xl:flex xl:flex-col gap-4 xl:sticky xl:top-4 xl:self-start">
           <Card className="p-4">
