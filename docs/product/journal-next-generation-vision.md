@@ -13,31 +13,31 @@ The agreed starting path is:
 
 ## Current implementation status
 
-This document started as a product reference note in PR #81. Since then, PRs #82-#104 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, click-to-source citation context, source health controls, assistant-to-candidate drafting, evidence snippets, structured review boards, Journal search/source-scoped recall, reviewed durable cockpit cards, and cached dedicated catch-up windows for recent account changes.
+This document started as a product reference note in PR #81. Since then, PRs #82-#108 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, click-to-source citation context, source health controls, assistant-to-review-card drafting, evidence snippets, structured review boards, Journal search/source-scoped recall, reviewed durable cockpit cards, cached dedicated catch-up windows for recent account changes, clearer source-action hierarchy, and a guided Intelligence cockpit loop.
 
 Current production baseline on `main`:
 
 | Area | Status | Shipped in | Notes |
 | --- | --- | --- | --- |
 | Journal document uploads | Shipped | #78, #79 | Uploads extract text and can be used by Journal AI; workflow polish followed the first upload PR. |
-| Intelligence panel / advisory prompts | Production pass shipped; cached catch-up now deployed | #80, #91, #96, #98, #100, #104 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, reviewed cockpit summaries, and dedicated catch-up windows. Repeated catch-up summaries can now reuse durable advisory cache entries keyed by window, source scope, exclusions, and cockpit/source fingerprint. |
-| Product direction note | Shipped | #81, #90; updated by #95, #99, #101 | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
-| Workspaces + source library | First production pass shipped | #82, #84, #86, #87, #93 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, and show first-pass health labels. |
-| Brief-grounded review queue | First production pass shipped | #83, #84, #85, #91, #94 | Review candidate cards exist for brief updates, actions, decisions, and open questions; assistant replies can draft candidates; structured board lanes now group candidate types. No automatic brief mutation. |
+| Intelligence panel / advisory prompts | Production pass shipped; cached catch-up and guided cockpit loop now deployed | #80, #91, #96, #98, #100, #104, #108 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, reviewed cockpit summaries, and dedicated catch-up windows. Repeated catch-up summaries can now reuse durable advisory cache entries keyed by window, source scope, exclusions, and cockpit/source fingerprint, and the Intelligence workspace explains the catch-up → review → promote loop with source-scope/freshness provenance. |
+| Product direction note | Shipped | #81, #90; updated by #95, #99, #101 and post-#108 alignment | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
+| Workspaces + source library | First production pass shipped; density polish shipped | #82, #84, #86, #87, #93, #107 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, show first-pass health labels, separate included/excluded source counts, and keep secondary source actions behind progressive disclosure. |
+| Brief-grounded review queue | First production pass shipped; reviewable assistant cards shipped | #83, #84, #85, #91, #94, #106 | Review candidate cards exist for brief updates, actions, decisions, and open questions; assistant replies can now split multi-candidate suggestions into reviewable cards with Add to Review Queue / edit-before-adding affordances; structured board lanes group candidate types. No automatic brief mutation. |
 | Team Room separation | Shipped | #86 | General teammate discussion is separated from source-grounded Timeline evidence and made the default workspace. |
 | Citation/source trust layer | First production pass shipped | #78-#89, #92 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, source link rendering is hardened, spoofed legend blocks are ignored, citation chips open source context, and trusted legend entries can produce evidence snippets. True passage-level highlighting and exact-quote extraction are still future polish. |
-| Account Intelligence Cockpit | Durable projection foundation shipped | #80, #85, #94, #98, #102, #103, #104 | The UI has an Intelligence surface, review workflow, structured review boards, reviewed-only cockpit cards, a durable cockpit read model/API, UI consumption of that projection, and catch-up caching keyed to cockpit/source invalidation. Source-change rollups and richer lifecycle metadata remain future work. |
+| Account Intelligence Cockpit | Durable projection foundation shipped; guided Intelligence polish shipped | #80, #85, #94, #98, #102, #103, #104, #108 | The UI has an Intelligence surface, review workflow, structured review boards, reviewed-only cockpit cards, a durable cockpit read model/API, UI consumption of that projection, catch-up caching keyed to cockpit/source invalidation, and a clearer catch-up → review → promote cockpit workflow with source-scope/freshness provenance. Source-change rollups and richer lifecycle metadata remain future work. |
 
 ### Shipped foundation
 
 - Journal Workspaces: Team Room, Timeline, Sources, Intelligence, and Review Queue.
 - Team Room is the default collaboration space and is separate from evidence/timeline entries.
-- Source Library shows uploaded Journal documents plus Brief baseline sources.
+- Source Library shows uploaded Journal documents plus Brief baseline sources, separates included/excluded counts, and keeps secondary per-source actions behind progressive disclosure.
 - Source previews exist for uploaded documents.
 - Uploaded sources can scope assistant questions and can be excluded from assistant context.
 - Source Library shows first-pass source health labels for current, stale, duplicate, superseded, and conflicting uploads.
 - Review Queue stores human-review candidates without silently editing the Brief.
-- Assistant replies can draft review candidates while preserving trusted evidence labels.
+- Assistant replies can split multi-candidate output into reviewable cards while preserving trusted evidence labels.
 - Candidate status supports New, Reviewing, Accepted, Sent to brief chat, Applied, and Dismissed.
 - Structured Actions, Decisions, Open Questions, and Brief Updates boards group review candidates into human-reviewed lanes.
 - Safe source-link rendering is shared and rejects deceptive URLs containing username/password userinfo.
@@ -50,6 +50,7 @@ Current production baseline on `main`:
 - The cockpit UI/API now consumes that durable projection instead of deriving all cockpit cards from transient local candidate state.
 - Dedicated Journal catch-up prompts cover 24-hour, 7-day, and all-history windows, pass `journal_context_since` and `journal_catch_up_window` into the assistant route, and preserve the advisory/no-brief-mutation boundary.
 - Repeated catch-up summaries can be cached and reused when the window, context timestamp, scoped sources, excluded sources, and cockpit/source fingerprint match.
+- The Intelligence workspace now presents a guided catch-up → review suggestions → promote cockpit signals loop, with visible source-scope and catch-up freshness provenance.
 
 ### Still partial / future
 
@@ -58,11 +59,10 @@ Current production baseline on `main`:
 - Structured boards do not yet support owner, due-date, priority, CRM sync, reminders, or official decision/action lifecycle metadata.
 - Durable accepted-candidate rollups that distinguish draft/reviewed/applied account facts from general notes.
 - Account Intelligence cockpit synthesis still needs deeper source-change rollups, risk/why-it-matters cards, richer lifecycle metadata, and stronger account-fact grouping beyond the current reviewed candidate projection.
-- Catch-up caching is now present, but UI polish can still expose cache provenance/freshness more clearly to users.
 
 ### Recommended next implementation slice
 
-The durable cockpit read-model foundation (#102), cockpit UI/API adoption (#103), and catch-up summary cache (#104) are now shipped. The next bottleneck is turning the first-pass source and review surfaces into clearer durable lifecycle systems: source health should move beyond heuristics, and accepted action/decision/account facts should gain richer metadata without weakening the human-review boundary.
+The reviewable assistant-card flow (#106), source hierarchy/density pass (#107), and guided Intelligence cockpit polish (#108) are now shipped on top of the durable cockpit read-model foundation (#102), cockpit UI/API adoption (#103), and catch-up summary cache (#104). The next bottleneck is turning the first-pass source and review surfaces into clearer durable lifecycle systems: source health should move beyond heuristics, and accepted action/decision/account facts should gain richer metadata without weakening the human-review boundary.
 
 Recommended next slice: durable source-resolution lifecycle and source-change rollups.
 
@@ -1198,24 +1198,23 @@ Output:
 - Recommended mitigation
 - Owner/action
 
-## Concrete feature buckets after PR #90-#94
+## Concrete feature buckets after PR #106-#108
 
 ### First-pass shipped; remaining polish
 
 - Journal filters by entry type: shipped for Timeline notes/assistant/documents; monitor-specific filtering remains future.
-- Better assistant reply grouping: partially addressed through citation chips, evidence snippets, and candidate drafting; richer threading remains future.
-- Catch me up action: shipped as an advisory prompt; durable “what changed since…” recall remains future.
+- Better assistant reply grouping: shipped as reviewable assistant suggestion cards for multi-candidate output; richer conversational threading remains future.
+- Catch me up action: shipped as dedicated advisory catch-up windows with durable cache reuse and visible freshness provenance; deeper source-change rollups remain future.
 - Source preview drawer/card: first pass shipped for uploaded documents and citation context; deeper extracted-text browsing remains future.
 - Citation click-to-source: first pass shipped for trusted `[J]`/`[D]` legends; true passage highlighting remains future.
-- Open questions/action/decision extraction: first pass shipped as assistant-to-review-candidate drafting and structured boards; lifecycle metadata remains future.
-- Source library panel: first pass shipped as the Sources workspace with baseline plus uploaded sources, health badges, and include/exclude controls.
+- Open questions/action/decision extraction: first pass shipped as reviewable assistant suggestion cards and structured boards; lifecycle metadata remains future.
+- Source library panel: first pass shipped as the Sources workspace with baseline plus uploaded sources, health badges, include/exclude controls, clarified counts, and progressive source actions.
 - Brief update candidate queue: first pass shipped as human-review Review Queue cards and brief-chat handoff.
 
 ### Next high-leverage PRs
 
-- Dedicated “what changed since…” catch-up summaries over recent Journal windows.
-- Durable cached Account Intelligence cockpit/read-model cards built from accepted/reviewed data only.
 - Source-change rollups inside the cockpit.
+- Durable source-resolution lifecycle with user-confirmed health/conflict states.
 - Pin important entries.
 - Mark entry as decision/action/question directly from Timeline where appropriate.
 - Owner, due date, priority, and status lifecycle metadata for structured board cards.
