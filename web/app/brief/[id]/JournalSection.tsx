@@ -20,7 +20,7 @@ import {
 } from "@/lib/journalCitationResolution";
 import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
 import { buildReviewCandidateDraftFromAssistantEntry } from "@/lib/journalReviewCandidateExtraction";
-import { buildJournalCockpitSummary } from "@/lib/journalCockpitSummary";
+import type { JournalCockpitReadModel, JournalCockpitReadModelItem } from "@/lib/journalCockpitReadModel";
 import {
   buildJournalCatchUpContext,
   buildJournalCatchUpPrompt,
@@ -105,6 +105,15 @@ type ReviewCandidate = {
   source_entry_id: string | null;
   created_at: number;
   updated_at: number;
+};
+
+type CockpitDisplay = {
+  reviewedCount: number;
+  pendingCount: number;
+  dismissedCount: number;
+  refreshedAt: number | null;
+  cardsByType: Record<ReviewCandidateType, JournalCockpitReadModelItem[]>;
+  priorityCards: JournalCockpitReadModelItem[];
 };
 
 type SelectedCitationContext =
@@ -198,6 +207,47 @@ function groupReviewCandidatesByType(candidates: ReviewCandidate[]): Record<Revi
     action_item: candidates.filter((candidate) => candidate.candidate_type === "action_item"),
     decision: candidates.filter((candidate) => candidate.candidate_type === "decision"),
     open_question: candidates.filter((candidate) => candidate.candidate_type === "open_question"),
+  };
+}
+
+function emptyCockpitCards(): Record<ReviewCandidateType, JournalCockpitReadModelItem[]> {
+  return {
+    brief_update: [],
+    action_item: [],
+    decision: [],
+    open_question: [],
+  };
+}
+
+function cockpitDisplayFromModel(model: JournalCockpitReadModel | null): CockpitDisplay {
+  if (!model) {
+    return {
+      reviewedCount: 0,
+      pendingCount: 0,
+      dismissedCount: 0,
+      refreshedAt: null,
+      cardsByType: emptyCockpitCards(),
+      priorityCards: [],
+    };
+  }
+  const cardsByType: Record<ReviewCandidateType, JournalCockpitReadModelItem[]> = {
+    brief_update: model.sections.brief_updates,
+    action_item: model.sections.actions,
+    decision: model.sections.decisions,
+    open_question: model.sections.open_questions,
+  };
+  return {
+    reviewedCount: model.reviewed_candidate_ids.length,
+    pendingCount: model.advisory_counts.pending,
+    dismissedCount: model.advisory_counts.dismissed,
+    refreshedAt: model.generated_at,
+    cardsByType,
+    priorityCards: [
+      ...cardsByType.action_item,
+      ...cardsByType.decision,
+      ...cardsByType.open_question,
+      ...cardsByType.brief_update,
+    ].sort((a, b) => b.updated_at - a.updated_at || b.created_at - a.created_at || a.candidate_id.localeCompare(b.candidate_id)).slice(0, 6),
   };
 }
 
@@ -481,6 +531,9 @@ export default function JournalSection({
     useState<JournalWorkspace>("team");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
+  const [cockpitModel, setCockpitModel] = useState<JournalCockpitReadModel | null>(null);
+  const [cockpitLoading, setCockpitLoading] = useState(false);
+  const [cockpitError, setCockpitError] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [newCandidateType, setNewCandidateType] = useState<ReviewCandidateType>("brief_update");
@@ -533,6 +586,26 @@ export default function JournalSection({
     }
   }, [briefId]);
 
+  const loadCockpitModel = useCallback(async () => {
+    setCockpitLoading(true);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/journal/cockpit`, {
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      setCockpitModel(data.model ?? null);
+      setCockpitError(null);
+    } catch (e: any) {
+      setCockpitError(e?.message || "Failed to load cockpit read model");
+    } finally {
+      setCockpitLoading(false);
+    }
+  }, [briefId]);
+
   const loadReviewCandidates = useCallback(async () => {
     setReviewLoading(true);
     try {
@@ -556,7 +629,8 @@ export default function JournalSection({
   useEffect(() => {
     load();
     loadReviewCandidates();
-  }, [load, loadReviewCandidates]);
+    loadCockpitModel();
+  }, [load, loadReviewCandidates, loadCockpitModel]);
 
   const excludedDocumentSnapshotKey = useMemo(
     () => documentIdSnapshotKey(excludedDocumentIds),
@@ -709,6 +783,7 @@ export default function JournalSection({
       setNewCandidateSourceEntryId(null);
       setReviewError(null);
       await loadReviewCandidates();
+      await loadCockpitModel();
     } catch (e: any) {
       setReviewError(e?.message || "Failed to create review candidate");
     } finally {
@@ -748,6 +823,7 @@ export default function JournalSection({
         throw new Error(data?.error || `HTTP ${r.status}`);
       }
       await loadReviewCandidates();
+      await loadCockpitModel();
     } catch (e: any) {
       setReviewError(e?.message || "Failed to update review candidate");
     } finally {
@@ -1483,7 +1559,7 @@ export default function JournalSection({
   const selectedPreviewMatchesSearch =
     !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
   const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
-  const cockpitSummary = buildJournalCockpitSummary(displayedReviewCandidates);
+  const cockpitDisplay = cockpitDisplayFromModel(cockpitModel);
 
   function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
     const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
@@ -1857,27 +1933,35 @@ export default function JournalSection({
                 </div>
                 <h3 className="mt-1 text-base font-semibold text-ink">Account Intelligence Cockpit</h3>
                 <p className="mt-1 max-w-3xl text-sm text-muted">
-                  First-pass cockpit cards are derived only from review candidates that are accepted, sent to brief chat, or applied. New, reviewing, and dismissed cards remain in the Review Queue until a human promotes them.
+                  Durable cockpit cards are loaded from the Journal read model and derived only from review candidates that are accepted, sent to brief chat, or applied. New, reviewing, and dismissed cards remain in the Review Queue until a human promotes them.
                 </p>
+                <p className="mt-1 text-xs text-muted">
+                  {cockpitLoading
+                    ? "Refreshing cockpit read model…"
+                    : cockpitDisplay.refreshedAt
+                      ? `read-model refreshed ${relativeTime(cockpitDisplay.refreshedAt)}`
+                      : "read-model not generated yet"}
+                </p>
+                {cockpitError && <p className="mt-1 text-xs text-rose-700">{cockpitError}</p>}
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2">
-                  <div className="text-lg font-semibold text-indigo-900">{cockpitSummary.reviewedCount}</div>
+                  <div className="text-lg font-semibold text-indigo-900">{cockpitDisplay.reviewedCount}</div>
                   <div className="text-indigo-700">reviewed</div>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                  <div className="text-lg font-semibold text-slate-800">{cockpitSummary.pendingCount}</div>
+                  <div className="text-lg font-semibold text-slate-800">{cockpitDisplay.pendingCount}</div>
                   <div className="text-muted">pending</div>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                  <div className="text-lg font-semibold text-slate-800">{cockpitSummary.dismissedCount}</div>
+                  <div className="text-lg font-semibold text-slate-800">{cockpitDisplay.dismissedCount}</div>
                   <div className="text-muted">dismissed</div>
                 </div>
               </div>
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-4">
               {STRUCTURED_REVIEW_BOARDS.map((board) => {
-                const reviewedCards = cockpitSummary.cardsByType[board.type];
+                const reviewedCards = cockpitDisplay.cardsByType[board.type];
                 return (
                   <div key={board.type} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -1895,18 +1979,18 @@ export default function JournalSection({
             </div>
             <div className="mt-4 space-y-2">
               <h4 className="text-sm font-semibold text-ink">Priority reviewed cards</h4>
-              {cockpitSummary.priorityCards.length === 0 ? (
+              {cockpitDisplay.priorityCards.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-muted">
                   No accepted, sent, or applied review candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
                 </div>
               ) : (
-                cockpitSummary.priorityCards.map((card) => (
-                  <div key={card.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                cockpitDisplay.priorityCards.map((card) => (
+                  <div key={card.candidate_id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium text-ink">{card.title}</span>
-                      <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{candidateStatusLabels[card.status]}</span>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{candidateStatusLabels[card.status as ReviewCandidateStatus]}</span>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-muted">{card.proposed_text}</p>
+                    <p className="mt-1 line-clamp-2 text-muted">{card.text}</p>
                     {card.evidence && <p className="mt-2 text-xs text-slate-600">Evidence: {card.evidence}</p>}
                   </div>
                 ))

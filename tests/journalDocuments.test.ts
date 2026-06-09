@@ -254,6 +254,87 @@ test("journal cockpit read model can be saved and loaded without mutating the br
   assert.equal(loaded?.sections.brief_updates[0].candidate_id, "accepted-update");
 });
 
+test("journal cockpit API returns and persists durable projection without mutating the brief", async () => {
+  const cockpitRoute = require("../web/app/api/briefs/[id]/journal/cockpit/route") as typeof import("../web/app/api/briefs/[id]/journal/cockpit/route");
+  const before = db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get("brief-doc") as { brief_json: string };
+  const now = Date.now();
+  db()
+    .prepare(
+      `INSERT INTO journal_review_candidates
+         (id, brief_id, user_id, source_entry_id, candidate_type, status, title,
+          proposed_text, target, current_baseline, evidence, confidence, risk,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "cockpit-api-accepted-action",
+      "brief-doc",
+      "owner-doc",
+      null,
+      "action_item",
+      "accepted",
+      "Confirm security pilot owner",
+      "Confirm the executive owner for the pilot.",
+      "Pilot owner",
+      null,
+      "[J7] Security pilot note",
+      "high",
+      null,
+      now - 3000,
+      now - 2000,
+    );
+  db()
+    .prepare(
+      `INSERT INTO journal_review_candidates
+         (id, brief_id, user_id, source_entry_id, candidate_type, status, title,
+          proposed_text, target, current_baseline, evidence, confidence, risk,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "cockpit-api-new-question",
+      "brief-doc",
+      "owner-doc",
+      null,
+      "open_question",
+      "new",
+      "Unreviewed stakeholder question",
+      "Do not make this official.",
+      null,
+      null,
+      "draft",
+      null,
+      null,
+      now - 1000,
+      now - 500,
+    );
+
+  const res = await cockpitRoute.GET(makeJsonReq({ sessionId: ownerSession }), { params: { id: "brief-doc" } });
+  assert.equal(res.status, 200);
+  const payload = await jsonOf(res);
+  const after = db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get("brief-doc") as { brief_json: string };
+  const row = db()
+    .prepare("SELECT source_fingerprint, model_json FROM journal_cockpit_read_models WHERE brief_id = ?")
+    .get("brief-doc") as { source_fingerprint: string; model_json: string } | undefined;
+
+  assert.equal(after.brief_json, before.brief_json);
+  assert.ok(row);
+  assert.equal(payload.model.source_fingerprint, row?.source_fingerprint);
+  assert.match(JSON.stringify(payload.model.sections), /Confirm security pilot owner/);
+  assert.doesNotMatch(JSON.stringify(payload.model.sections), /Unreviewed stakeholder question/);
+  assert.equal(payload.model.advisory_counts.pending >= 1, true);
+});
+
+test("journal cockpit API requires readable brief access", async () => {
+  const cockpitRoute = require("../web/app/api/briefs/[id]/journal/cockpit/route") as typeof import("../web/app/api/briefs/[id]/journal/cockpit/route");
+
+  const unauthenticated = await cockpitRoute.GET(makeJsonReq({}), { params: { id: "brief-doc" } });
+  const outsider = await cockpitRoute.GET(makeJsonReq({ sessionId: outsiderSession }), { params: { id: "brief-doc" } });
+
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(outsider.status, 404);
+});
+
 test("review candidate API only accepts assistant replies as source entries", async () => {
   const candidateRoute = require("../web/app/api/briefs/[id]/journal/review-candidates/route") as typeof import("../web/app/api/briefs/[id]/journal/review-candidates/route");
   const now = Date.now();
@@ -2130,14 +2211,18 @@ test("JournalSection exposes search UI, source-scoped recall, catch-up windows, 
   assert.doesNotMatch(journalSource, /catch.*PUT/i);
   assert.doesNotMatch(journalSource, /catch.*DELETE/i);
   assert.doesNotMatch(journalSource, /search.*PATCH/i);
-  assert.match(journalSource, /buildJournalCockpitSummary/);
+  assert.match(journalSource, /loadCockpitModel/);
+  assert.match(journalSource, /\/api\/briefs\/\$\{briefId\}\/journal\/cockpit/);
+  assert.match(journalSource, /setCockpitModel\(data\.model/);
+  assert.doesNotMatch(journalSource, /buildJournalCockpitSummary/);
   assert.match(journalSource, /Account Intelligence Cockpit/);
   assert.match(journalSource, /Reviewed account signals/);
-  assert.match(journalSource, /reviewedCount/);
-  assert.match(journalSource, /pendingCount/);
-  assert.match(journalSource, /dismissedCount/);
+  assert.match(journalSource, /read-model refreshed/);
+  assert.match(journalSource, /cockpitDisplay\.reviewedCount/);
+  assert.match(journalSource, /cockpitDisplay\.pendingCount/);
+  assert.match(journalSource, /cockpitDisplay\.dismissedCount/);
   assert.match(journalSource, /accepted, sent to brief chat, or applied/);
-  assert.match(journalSource, /cockpitSummary\.priorityCards/);
+  assert.match(journalSource, /cockpitDisplay\.priorityCards/);
   assert.doesNotMatch(journalSource, /cockpit.*PATCH/i);
 });
 
