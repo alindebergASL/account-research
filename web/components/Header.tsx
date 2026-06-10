@@ -82,14 +82,14 @@ export default function Header() {
 
   return (
     <header className="border-b border-[var(--line)] bg-white/60 backdrop-blur sticky top-0 z-20">
-      <div className="max-w-7xl mx-auto px-6 h-12 flex items-center gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-12 flex items-center gap-2 sm:gap-4">
         <Link
           href="/"
-          className="text-sm font-medium tracking-tight hover:text-accent transition-colors"
+          className="shrink-0 text-sm font-medium tracking-tight hover:text-accent transition-colors"
         >
           AccountBriefBuilder
         </Link>
-        <div className="ml-auto flex items-center gap-3 text-sm" ref={menuRef}>
+        <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3 text-sm" ref={menuRef}>
           {me && me.role !== "viewer" && <ResearchTray />}
           {me && (
             <div className="relative">
@@ -100,7 +100,7 @@ export default function Header() {
                 aria-haspopup="menu"
                 aria-expanded={open}
               >
-                <span className="max-w-[160px] truncate">{localPart}</span>
+                <span className="max-w-[96px] truncate sm:max-w-[160px]">{localPart}</span>
                 {me.role === "viewer" && (
                   <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg)] text-muted border border-[var(--line)]">
                     Read-only

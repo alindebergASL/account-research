@@ -168,6 +168,7 @@ export default function JournalSection({
   const [expandedEntries, setExpandedEntries] = useState<string[]>([]);
   const [showUpload, setShowUpload] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showAllEntries, setShowAllEntries] = useState(false);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
@@ -1456,6 +1457,14 @@ export default function JournalSection({
       cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
     );
   }
+  function dayGroupLabel(ts: number): string {
+    const now = new Date();
+    const d = new Date(ts);
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (ts >= startOfToday) return "Today";
+    if (ts >= startOfToday - 86_400_000) return "Yesterday";
+    return "Older";
+  }
   function recentResearchSummary(e: Entry): { title: string; badge: string; tone: BadgeTone } {
     const docName = e.documents && e.documents.length > 0 ? e.documents[0].filename : null;
     if (docName) return { title: `Uploaded document: ${docName}`, badge: "Evidence", tone: "source" };
@@ -2348,19 +2357,19 @@ export default function JournalSection({
         </div>
       )}
 
-      {!activeFullView && centerTab === "timeline" && entries && (
-        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
+      {!activeFullView && centerTab === "timeline" && entries && showAllEntries && (
+        <div className="mb-3 flex flex-col gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface)] p-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-1.5">
             {(Object.keys(timelineFilterLabels) as TimelineFilter[]).map((filter) => (
               <button
                 key={filter}
                 type="button"
                 aria-pressed={timelineFilter === filter}
                 onClick={() => setTimelineFilter(filter)}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                   timelineFilter === filter
-                    ? "bg-ink text-white"
-                    : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    ? "bg-[var(--active-dark)] text-white"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
                 }`}
               >
                 {timelineFilterLabels[filter]}
@@ -2372,14 +2381,12 @@ export default function JournalSection({
               type="button"
               aria-pressed={showDeletedEntries}
               onClick={() => setShowDeletedEntries((value) => !value)}
-              className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              title={`${deletedEntryCount} deleted entries hidden from the main Timeline`}
+              className="rounded-full px-3 py-1 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] hover:text-ink"
             >
-              {showDeletedEntries ? "Hide audit entries" : "Show audit entries"}
-              <span className="ml-1 text-slate-500">
-                {showDeletedEntries
-                  ? `(${deletedEntryCount} deleted audit entr${deletedEntryCount === 1 ? "y is" : "ies are"} visible)`
-                  : `(${deletedEntryCount} deleted entries hidden from the main Timeline)`}
-              </span>
+              {showDeletedEntries
+                ? `Hide audit entries (${deletedEntryCount})`
+                : `Show audit entries (${deletedEntryCount})`}
             </button>
           )}
         </div>
@@ -2419,32 +2426,61 @@ export default function JournalSection({
         centerTab === "timeline" &&
         filteredEntries &&
         filteredEntries.length > 0 && (
+          <>
           <div className="overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)]">
-            {filteredEntries.map((e) => {
-              const expanded = expandedEntries.includes(e.id);
-              const { title, badge, tone } = recentResearchSummary(e);
-              return (
-                <div key={e.id} className="border-b border-[var(--border-subtle)] last:border-0">
-                  <button
-                    type="button"
-                    onClick={() => toggleExpanded(e.id)}
-                    aria-expanded={expanded}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
-                  >
-                    <span className="w-14 shrink-0 text-xs text-[var(--text-muted)]">
-                      {relativeTime(e.created_at)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
-                    <Badge tone={tone}>{badge}</Badge>
-                    <ChevronDown
-                      className={`size-4 shrink-0 text-[var(--text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
-                    />
-                  </button>
-                  {expanded && <div className="px-3 pb-3">{renderEntry(e)}</div>}
-                </div>
-              );
-            })}
+            {(() => {
+              // Newest first for the collapsed activity stream, grouped by day.
+              const ordered = [...filteredEntries].sort((a, b) => b.created_at - a.created_at);
+              const visible = showAllEntries ? ordered : ordered.slice(0, 8);
+              let lastGroup: string | null = null;
+              return visible.map((e) => {
+                const expanded = expandedEntries.includes(e.id);
+                const { title, badge, tone } = recentResearchSummary(e);
+                const group = dayGroupLabel(e.created_at);
+                const showGroup = group !== lastGroup;
+                lastGroup = group;
+                return (
+                  <div key={e.id} className="border-b border-[var(--border-subtle)] last:border-0">
+                    {showGroup && (
+                      <div className="bg-[var(--surface-muted)] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                        {group}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(e.id)}
+                      aria-expanded={expanded}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
+                    >
+                      <span className="w-14 shrink-0 text-xs text-[var(--text-muted)]">
+                        {relativeTime(e.created_at)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
+                      <Badge tone={tone}>{badge}</Badge>
+                      <ChevronDown
+                        className={`size-4 shrink-0 text-[var(--text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    {expanded && <div className="px-3 pb-3">{renderEntry(e)}</div>}
+                  </div>
+                );
+              });
+            })()}
           </div>
+          {(filteredEntries.length > 8 || showAllEntries || deletedEntryCount > 0) && (
+            <div className="mt-2 text-center">
+              <button
+                type="button"
+                onClick={() => setShowAllEntries((v) => !v)}
+                className="text-sm font-medium text-[var(--text-secondary)] underline-offset-4 transition-colors hover:text-ink hover:underline"
+              >
+                {showAllEntries
+                  ? "Show recent only"
+                  : `View all entries (${filteredEntries.length})`}
+              </button>
+            </div>
+          )}
+          </>
         )}
 
       {aiError && (
@@ -2541,7 +2577,7 @@ export default function JournalSection({
           className="w-full resize-none rounded-xl border border-[var(--line)] bg-white p-3 text-sm text-ink placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none"
         />
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Journal compose mode">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto" role="group" aria-label="Journal compose mode">
             <button
               type="button"
               aria-pressed={askAi}
@@ -2549,7 +2585,7 @@ export default function JournalSection({
                 setAskAi(true);
                 setShowUpload(false);
               }}
-              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
                 askAi
                   ? "bg-[var(--ai-bg)] text-[var(--ai-text)]"
                   : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
@@ -2566,7 +2602,7 @@ export default function JournalSection({
                 setRequireSourceDocumentScope(false);
                 setScopedDocumentIds([]);
               }}
-              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
                 !askAi && !showUpload
                   ? "bg-[var(--surface-muted)] text-ink"
                   : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
@@ -2578,7 +2614,7 @@ export default function JournalSection({
               type="button"
               aria-pressed={showUpload}
               onClick={() => setShowUpload((v) => !v)}
-              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
                 showUpload
                   ? "bg-[var(--surface-muted)] text-ink"
                   : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
@@ -2589,7 +2625,7 @@ export default function JournalSection({
             <button
               type="button"
               onClick={() => setPaletteOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] hover:text-ink"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] hover:text-ink"
             >
               <Sparkles className="size-3.5" /> Draft
             </button>
@@ -2644,7 +2680,7 @@ export default function JournalSection({
       )}
       {paletteOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[10vh]"
+          className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-start sm:p-4 sm:pt-[10vh]"
           role="dialog"
           aria-modal="true"
           aria-label="AI command palette"
@@ -2654,7 +2690,7 @@ export default function JournalSection({
             onClick={() => setPaletteOpen(false)}
             aria-hidden="true"
           />
-          <div className="relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-2xl">
+          <div className="relative z-10 flex max-h-[60vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl sm:max-h-[70vh] sm:rounded-2xl">
             <div className="flex items-center gap-2 border-b border-[var(--line)] px-3 py-2">
               <Sparkles className="size-4 shrink-0 text-violet-600" />
               <input
