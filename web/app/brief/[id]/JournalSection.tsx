@@ -1210,15 +1210,15 @@ export default function JournalSection({
                   key={doc.id}
                   className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800"
                 >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2 font-medium text-ink">
-                      <FileText className="size-3.5" />
-                      <span>{doc.filename}</span>
-                      <span className="text-muted font-normal">
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2 font-medium text-ink">
+                      <FileText className="size-3.5 shrink-0" />
+                      <span className="min-w-0 truncate" title={doc.filename}>{doc.filename}</span>
+                      <span className="shrink-0 text-muted font-normal">
                         · {formatFileSize(doc.byte_size)}
                       </span>
                       {isDocExcluded && (
-                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800">
+                        <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800">
                           Excluded from AI context
                         </span>
                       )}
