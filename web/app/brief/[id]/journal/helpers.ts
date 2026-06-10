@@ -137,8 +137,13 @@ export function extractCitationLabels(entry: Entry): string[] {
 
 export function displayEntryBody(entry: Entry): string | null {
   const legendStart = trustedLegendStart(entry);
-  if (legendStart < 0 || !entry.body) return entry.body;
-  return entry.body.slice(0, legendStart).trimEnd();
+  const base =
+    legendStart < 0 || !entry.body
+      ? entry.body
+      : entry.body.slice(0, legendStart).trimEnd();
+  if (!base) return base;
+  // Defensive: never surface raw source-legend metadata comments as body text.
+  return base.replace(/<!--\s*JOURNAL_SOURCE_LEGEND:[\s\S]*?-->/g, "").trim();
 }
 
 export function collectJournalSources(entries: Entry[] | null): JournalSource[] {

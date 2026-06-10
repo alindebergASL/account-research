@@ -1922,8 +1922,6 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(journalSource, /Brief baseline/);
   assert.match(journalSource, /Current brief priority/);
   assert.match(journalSource, /Current next action/);
-  assert.match(journalSource, /Current brief sources/);
-  assert.match(journalSource, /Use this workspace to reconcile new journal evidence with what the brief already says/);
   assert.match(journalSource, /Compare evidence against the current brief baseline/);
   assert.match(journalSource, /Brief-grounded review/);
   assert.match(journalSource, /which current brief claim it supports, contradicts, or updates/);
@@ -1949,7 +1947,7 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(sourceLinkSource, /!parsed\.password/);
 });
 
-test("JournalSection opens with Team Room before Timeline and counts current brief sources in Sources", () => {
+test("JournalSection opens on the Timeline feed with Team Room as a sub-tab and counts current brief sources in Sources", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const journalSource = fs.readFileSync(
@@ -1957,14 +1955,13 @@ test("JournalSection opens with Team Room before Timeline and counts current bri
     "utf8",
   );
 
-  assert.match(journalSource, /useState<JournalWorkspace>\("team"\)/);
-  const tabsStart = journalSource.indexOf("const workspaceTabs");
-  assert.ok(tabsStart >= 0);
-  const tabsEnd = journalSource.indexOf("];", tabsStart);
-  const tabsBlock = journalSource.slice(tabsStart, tabsEnd);
-  assert.ok(tabsBlock.indexOf('id: "team"') >= 0);
-  assert.ok(tabsBlock.indexOf('id: "team"') < tabsBlock.indexOf('id: "timeline"'));
-  assert.ok(tabsBlock.indexOf("count: totalSourceCount") >= 0);
+  // NotebookLM model: the center "Chat" feed opens on Timeline; Team Room is a
+  // sub-tab of the feed rather than the default workspace.
+  assert.match(journalSource, /useState<"timeline" \| "team">\("timeline"\)/);
+  assert.match(journalSource, /centerTab === "team"/);
+  assert.match(journalSource, /Team Room/);
+  // Sources panel counts the combined brief + uploaded sources.
+  assert.match(journalSource, /count=\{totalSourceCount\}/);
 });
 
 test("JournalSection clarifies source counts and hides dense source actions behind progressive disclosure", () => {
@@ -2081,7 +2078,7 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
   assert.match(journalSource, /Preview source/);
   assert.match(journalSource, /openCitationContext/);
   assert.match(journalSource, /Open cited source context/);
-  assert.match(journalSource, /setActiveWorkspace\("sources"\)/);
+  assert.match(journalSource, /setActiveFullView\("sources"\)/);
   assert.match(journalSource, /Catch me up/);
   assert.match(journalSource, /What changed since the last brief version/);
   assert.match(journalSource, /What needs attention/);

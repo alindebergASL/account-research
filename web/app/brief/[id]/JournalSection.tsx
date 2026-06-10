@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   FileText,
   Loader2,
@@ -48,7 +50,6 @@ import type {
   JournalBriefContext,
   JournalDocument,
   JournalSource,
-  JournalWorkspace,
   ReviewCandidate,
   ReviewCandidateStatus,
   ReviewCandidateType,
@@ -126,8 +127,6 @@ export default function JournalSection({
   onViewBriefBaseline?: () => void;
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
-  const [activeWorkspace, setActiveWorkspace] =
-    useState<JournalWorkspace>("team");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [showDeletedEntries, setShowDeletedEntries] = useState(false);
   const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
@@ -167,6 +166,41 @@ export default function JournalSection({
   const [editText, setEditText] = useState("");
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
+  const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(false);
+  const [studioCollapsed, setStudioCollapsed] = useState(false);
+  const [activeFullView, setActiveFullView] = useState<
+    "sources" | "intelligence" | "review" | null
+  >(null);
+  function goToComposer() {
+    setActiveFullView(null);
+    setCenterTab("timeline");
+    window.setTimeout(() => composeRef.current?.focus(), 0);
+  }
+  // Side-peek: source preview and citation context open in a right-side panel
+  // over the current view rather than inline, keeping the feed calm.
+  function closePeek() {
+    setSelectedSource(null);
+    setSelectedCitationContext(null);
+  }
+  // ⌘K / Ctrl-K toggles the AI command palette; Escape closes it.
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
+        ev.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (ev.key === "Escape") {
+        setPaletteOpen(false);
+        setSelectedSource(null);
+        setSelectedCitationContext(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -279,7 +313,7 @@ export default function JournalSection({
     // The composer only renders in Timeline/Team Room, so staging a prompt
     // anywhere else must bring the user to it — otherwise the action looks
     // like it silently did nothing.
-    setActiveWorkspace("timeline");
+    goToComposer();
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
 
@@ -333,7 +367,7 @@ export default function JournalSection({
       setPendingCatchUpExcludedDocumentKey(null);
       if (data.ai_error) setAiError(data.ai_error);
       await load();
-      if (askAssistant) setActiveWorkspace("timeline");
+      if (askAssistant) goToComposer();
       return !data.ai_error;
     } catch (e: any) {
       setError(e?.message || "Failed to post entry");
@@ -431,10 +465,10 @@ export default function JournalSection({
       setUploadNotice("Added suggested review card to the Review Queue. Review status before sending anything to the brief.");
       await loadReviewCandidates();
       await loadCockpitModel();
-      setActiveWorkspace("review");
+      setActiveFullView("review");
     } catch (e: any) {
       setReviewError(e?.message || "Failed to save suggested review card");
-      setActiveWorkspace("review");
+      setActiveFullView("review");
     } finally {
       setReviewLoading(false);
     }
@@ -450,14 +484,15 @@ export default function JournalSection({
     setNewCandidateRisk(draft.risk ?? "Review before applying; this card was drafted from an assistant reply.");
     setNewCandidateSourceEntryId(draft.source_entry_id);
     setReviewError(null);
-    setActiveWorkspace("review");
+    setCreateFormOpen(true);
+    setActiveFullView("review");
   }
 
   function draftReviewCandidateFromAssistant(entry: Entry) {
     const draft = buildReviewCandidateDraftFromAssistantEntry(entry);
     if (!draft) {
       setReviewError("Only saved assistant replies can be converted into review candidates.");
-      setActiveWorkspace("review");
+      setActiveFullView("review");
       return;
     }
     editReviewCandidateDraft(draft);
@@ -499,7 +534,7 @@ export default function JournalSection({
     } catch {
       setComposeText(prompt);
       setAskAi(false);
-      setActiveWorkspace("timeline");
+      goToComposer();
       window.setTimeout(() => composeRef.current?.focus(), 0);
       setUploadNotice("Clipboard was unavailable, so the brief-chat prompt was copied into the Journal composer.");
     }
@@ -750,19 +785,19 @@ export default function JournalSection({
     return (
       <div ref={sourcePreviewRef} className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
               <FileText className="size-3.5" /> Source preview
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-ink">{selectedSource.filename}</h3>
+            <h3 className="mt-3 truncate text-sm font-semibold text-ink" title={selectedSource.filename}>{selectedSource.filename}</h3>
             <p className="mt-1 text-xs text-muted">
               Uploaded {relativeTime(selectedSource.created_at)} by {selectedSource.entryAuthor} · {formatFileSize(selectedSource.byte_size)}
             </p>
           </div>
           <button
             type="button"
-            onClick={() => setSelectedSource(null)}
-            className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
+            onClick={closePeek}
+            className="shrink-0 rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
             aria-label="Close source preview"
           >
             <X className="size-4" />
@@ -830,7 +865,7 @@ export default function JournalSection({
           </div>
           <button
             type="button"
-            onClick={() => setSelectedCitationContext(null)}
+            onClick={closePeek}
             className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
             aria-label="Close citation source context"
           >
@@ -979,7 +1014,6 @@ export default function JournalSection({
           preview: source.content_preview,
           evidenceSnippet,
         });
-        setActiveWorkspace("sources");
         return;
       }
       const briefSource = resolveCitedBriefSource(label, entry.body, currentBriefSources);
@@ -992,7 +1026,6 @@ export default function JournalSection({
           accessed: briefSource.accessed,
           evidenceSnippet,
         });
-        setActiveWorkspace("sources");
         return;
       }
     }
@@ -1007,8 +1040,6 @@ export default function JournalSection({
           meta: `${authorName(journalEntry)} · ${relativeTime(journalEntry.created_at)}`,
           evidenceSnippet,
         });
-        setTimelineFilter("all");
-        setActiveWorkspace("timeline");
         return;
       }
     }
@@ -1018,8 +1049,6 @@ export default function JournalSection({
       message:
         "This citation label was present in the assistant reply, but the current Journal data could not resolve it to a saved note, uploaded document, or brief source. No evidence was fabricated.",
     });
-    setTimelineFilter("all");
-    setActiveWorkspace("timeline");
   }
 
   function renderAssistantReviewSuggestions(entry: Entry) {
@@ -1169,7 +1198,7 @@ export default function JournalSection({
               </div>
             </div>
           ) : (
-            <p className="mt-2 text-sm whitespace-pre-wrap text-ink">
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-ink">
               {deleted ? (
                 <span className="italic text-muted">
                   This entry was deleted.
@@ -1204,15 +1233,15 @@ export default function JournalSection({
                   key={doc.id}
                   className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800"
                 >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2 font-medium text-ink">
-                      <FileText className="size-3.5" />
-                      <span>{doc.filename}</span>
-                      <span className="text-muted font-normal">
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2 font-medium text-ink">
+                      <FileText className="size-3.5 shrink-0" />
+                      <span className="min-w-0 truncate" title={doc.filename}>{doc.filename}</span>
+                      <span className="shrink-0 text-muted font-normal">
                         · {formatFileSize(doc.byte_size)}
                       </span>
                       {isDocExcluded && (
-                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800">
+                        <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800">
                           Excluded from AI context
                         </span>
                       )}
@@ -1280,6 +1309,55 @@ export default function JournalSection({
     !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
   const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
   const cockpitDisplay = cockpitDisplayFromModel(cockpitModel);
+  // Command-palette model: every AI action funnels through one on-demand list
+  // (⌘K) instead of always-visible button grids — each item dispatches an
+  // existing handler.
+  const paletteGroups: Array<{
+    label: string;
+    items: Array<{ label: string; run: () => void }>;
+  }> = [
+    {
+      label: "Catch up",
+      items: [
+        { label: "Catch me up — last 24h", run: () => runCatchUpPrompt("24h") },
+        { label: "Catch me up — last 7 days", run: () => runCatchUpPrompt("7d") },
+        { label: "Catch me up — all loaded", run: () => runCatchUpPrompt("all") },
+      ],
+    },
+    {
+      label: "Generate & analyze",
+      items: INTELLIGENCE_ACTIONS.map((a) => ({
+        label: a.label,
+        run: () => runIntelligenceAction(a.prompt),
+      })),
+    },
+    {
+      label: "Quick prompts",
+      items: [
+        {
+          label: "Summarize latest document",
+          run: () =>
+            prepareAssistantPrompt(
+              "Summarize the most recent uploaded document and explain why it matters for this account.",
+            ),
+        },
+        {
+          label: "Suggest brief updates",
+          run: () =>
+            prepareAssistantPrompt(
+              "What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.",
+            ),
+        },
+        {
+          label: "Draft next actions",
+          run: () =>
+            prepareAssistantPrompt(
+              "Turn the recent journal notes and documents into recommended next actions for this account.",
+            ),
+        },
+      ],
+    },
+  ];
 
   function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
     const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
@@ -1305,7 +1383,7 @@ export default function JournalSection({
     const selectedIds = filteredSourceDocumentIds(scopedDocumentIds);
     if (selectedIds.length === 0) {
       setUploadNotice("Select at least one included uploaded source before running a source-scoped prompt.");
-      setActiveWorkspace("sources");
+      setActiveFullView("sources");
       return;
     }
     prepareAssistantPrompt(prompt, selectedIds);
@@ -1368,41 +1446,20 @@ export default function JournalSection({
       ? timelineEntries.filter((entry) => searchEntryIds.has(entry.id))
       : timelineEntries;
   }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
-  const workspaceTabs: Array<{
-    id: JournalWorkspace;
-    label: string;
-    description: string;
-    count?: number;
-  }> = [
-    {
-      id: "team",
-      label: "Team Room",
-      description: "General discussion",
-    },
-    {
-      id: "timeline",
-      label: "Timeline",
-      description: "Canonical account history",
-      count: entries?.length,
-    },
-    {
-      id: "sources",
-      label: "Sources",
-      description: "Brief + uploaded evidence",
-      count: totalSourceCount,
-    },
-    {
-      id: "intelligence",
-      label: "Intelligence",
-      description: "Advisory AI actions",
-    },
-    {
-      id: "review",
-      label: "Review Queue",
-      description: "Brief, action, decision candidates",
-      count: reviewCandidates.length,
-    },
-  ];
+
+  const gridClass = [
+    "grid min-w-0 gap-4",
+    sourcesCollapsed
+      ? "lg:grid-cols-[56px_minmax(0,1fr)]"
+      : "lg:grid-cols-[280px_minmax(0,1fr)]",
+    sourcesCollapsed && studioCollapsed
+      ? "xl:grid-cols-[56px_minmax(0,1fr)_56px]"
+      : sourcesCollapsed
+        ? "xl:grid-cols-[56px_minmax(0,1fr)_340px]"
+        : studioCollapsed
+          ? "xl:grid-cols-[280px_minmax(0,1fr)_56px]"
+          : "xl:grid-cols-[280px_minmax(0,1fr)_340px]",
+  ].join(" ");
 
   return (
     <section className="max-w-7xl mx-auto px-6 mt-6 pb-24">
@@ -1429,93 +1486,121 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_320px]">
+      <div className={gridClass}>
         <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
-          <nav
-            className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm lg:flex-col lg:overflow-visible"
-            aria-label="Journal sections"
-          >
-        {workspaceTabs.map((tab) => {
-          const active = activeWorkspace === tab.id;
-          return (
+          {sourcesCollapsed ? (
             <button
-              key={tab.id}
               type="button"
-              onClick={() => setActiveWorkspace(tab.id)}
-              aria-pressed={active}
-              className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-left transition lg:whitespace-normal ${
-                active
-                  ? "bg-ink text-white shadow-sm"
-                  : "text-ink hover:bg-slate-50"
-              }`}
+              onClick={() => setSourcesCollapsed(false)}
+              title="Expand Sources"
+              aria-label="Expand Sources"
+              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 text-muted shadow-sm transition-colors hover:bg-slate-50"
             >
-              <span className="flex items-center justify-between gap-2 text-sm font-semibold">
-                {tab.label}
-                {tab.count !== undefined && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${
-                      active ? "bg-white/15 text-white" : "bg-slate-100 text-muted"
-                    }`}
-                  >
-                    {tab.count}
-                  </span>
-                )}
-              </span>
-              <span className={`mt-0.5 hidden text-xs lg:block ${active ? "text-white/75" : "text-muted"}`}>
-                {tab.description}
-              </span>
+              <FileText className="size-4 text-sky-600" />
+              <ChevronRight className="size-4" />
             </button>
-          );
-        })}
-          </nav>
-          <div className="mt-3 rounded-2xl border border-[var(--line)] bg-white p-3 shadow-sm">
+          ) : (
+            <>
+          <Card className="p-3">
+            <SectionHeader
+              icon={<FileText className="size-4 text-sky-600" />}
+              title="Sources"
+              count={totalSourceCount}
+              actions={
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={goToComposer}
+                    className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-ink transition-colors hover:bg-slate-50"
+                  >
+                    + Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSourcesCollapsed(true)}
+                    title="Collapse Sources"
+                    aria-label="Collapse Sources"
+                    className="rounded-md border border-[var(--line)] bg-white p-1 text-muted transition-colors hover:bg-slate-50"
+                  >
+                    <ChevronLeft className="size-3.5" />
+                  </button>
+                </div>
+              }
+            />
+            <p className="mt-1 text-[11px] text-muted">
+              {totalIncludedSourceCount} included for AI · {excludedDocumentIds.length} excluded
+            </p>
+            <div className="mt-3 flex flex-col gap-0.5">
+              {sources.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-[var(--line)] px-3 py-4 text-center text-xs text-muted">
+                  No uploaded sources yet.
+                </p>
+              ) : (
+                sources.map((source) => {
+                  const excluded = excludedDocumentIds.includes(source.id);
+                  return (
+                    <div
+                      key={source.id}
+                      className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-slate-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!excluded}
+                        onChange={() => toggleSourceExclusion(source)}
+                        aria-label={excluded ? "Include source in AI context" : "Exclude source from AI context"}
+                        className="size-3.5 shrink-0 accent-violet-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSource(source)}
+                        className="min-w-0 flex-1 truncate text-left text-xs font-medium text-ink transition-colors hover:text-violet-700"
+                        title={source.filename}
+                      >
+                        {source.filename}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("sources")}
+              className="mt-3 w-full rounded-md border border-[var(--line)] bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Open full Sources ({currentBriefSources.length} brief · {sources.length} uploaded)
+            </button>
+          </Card>
+          <Card className="mt-3 p-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
               Brief baseline
             </div>
             <h3 className="mt-2 text-sm font-semibold text-ink">{briefContext.account_name}</h3>
-            <div className="mt-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Current brief priority
-              </div>
-              <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
-                {briefContext.priority_summary || "Not set yet."}
-              </p>
+            <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Current brief priority
             </div>
-            <div className="mt-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Current next action
-              </div>
-              <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
-                {briefContext.next_action || "Not set yet."}
-              </p>
+            <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
+              {briefContext.priority_summary || "Not set yet."}
+            </p>
+            <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Current next action
             </div>
-            <details className="mt-2">
-              <summary className="cursor-pointer list-none text-[11px] font-medium text-muted hover:text-ink">
-                Details
-              </summary>
-              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Current brief sources
-              </div>
-              <p className="text-xs text-slate-700">
-                {briefContext.sources_count} saved source{briefContext.sources_count === 1 ? "" : "s"}
-              </p>
-              <p className="mt-2 text-[11px] text-muted">
-                Use this workspace to reconcile new journal evidence with what the brief already says,
-                then send accepted changes through the main brief chat or brief editor.
-              </p>
-              {onViewBriefBaseline && (
-                <button
-                  type="button"
-                  onClick={onViewBriefBaseline}
-                  className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  View brief baseline first
-                </button>
-              )}
-            </details>
-          </div>
-        </aside>
-        <div className="min-w-0">
+            <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
+              {briefContext.next_action || "Not set yet."}
+            </p>
+            {onViewBriefBaseline && (
+              <button
+                type="button"
+                onClick={onViewBriefBaseline}
+                className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                View brief baseline first
+              </button>
+            )}
+          </Card>
+            </>
+          )}
+        </aside>        <div className="order-first min-w-0 lg:order-none">
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -1566,9 +1651,85 @@ export default function JournalSection({
         )}
       </div>
 
-      {renderCitationContext()}
+      {activeFullView ? (
+        <div className="mb-4 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setActiveFullView(null)}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-slate-50"
+          >
+            ← Back to feed
+          </button>
+          <span className="text-sm font-semibold text-muted">
+            {activeFullView === "sources"
+              ? "Source Library"
+              : activeFullView === "review"
+                ? "Review Queue"
+                : "Journal Intelligence"}
+          </span>
+        </div>
+      ) : (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div
+            className="inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm"
+            role="tablist"
+            aria-label="Journal feed"
+          >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={centerTab === "timeline"}
+            onClick={() => setCenterTab("timeline")}
+            className={`rounded-md px-3 py-1.5 transition-colors ${
+              centerTab === "timeline" ? "bg-ink text-white" : "text-muted hover:text-ink"
+            }`}
+          >
+            Timeline
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={centerTab === "team"}
+            onClick={() => setCenterTab("team")}
+            className={`rounded-md px-3 py-1.5 transition-colors ${
+              centerTab === "team" ? "bg-ink text-white" : "text-muted hover:text-ink"
+            }`}
+          >
+            Team Room
+          </button>
+          </div>
+          {/* Below xl the Studio rail (which holds Intelligence/Review entry
+              points) is hidden, so surface the preserved full views here too. */}
+          <div className="flex flex-wrap items-center gap-1.5 xl:hidden">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Full views
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("sources")}
+              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Sources
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("intelligence")}
+              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Intelligence
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("review")}
+              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Review Queue
+            </button>
+          </div>
+        </div>
+      )}
 
-      {activeWorkspace === "intelligence" && (
+      {activeFullView === "intelligence" && (
         <div className="mb-4 space-y-4">
           <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1750,7 +1911,7 @@ export default function JournalSection({
                   </p>
                   <button
                     type="button"
-                    onClick={() => setActiveWorkspace("review")}
+                    onClick={() => setActiveFullView("review")}
                     className="mt-3 rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-800 hover:bg-indigo-50"
                   >
                     Review suggested candidates
@@ -1773,8 +1934,13 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "review" && (
+      {activeFullView === "review" && (
         <div className="mb-4 space-y-4">
+          {reviewError && (
+            <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+              {reviewError}
+            </div>
+          )}
           <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -1877,10 +2043,22 @@ export default function JournalSection({
           </div>
 
           <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
-            <p className="mt-1 text-xs text-muted">
-              Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
-            </p>
+            <button
+              type="button"
+              onClick={() => setCreateFormOpen((v) => !v)}
+              aria-expanded={createFormOpen}
+              className="flex w-full items-center justify-between gap-2 text-left"
+            >
+              <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
+              <span className="shrink-0 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+                {createFormOpen ? "Hide" : "+ New"}
+              </span>
+            </button>
+            {createFormOpen && (
+              <>
+                <p className="mt-2 text-xs text-muted">
+                  Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
+                </p>
             {newCandidateSourceEntryId && (
               <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
                 <div>
@@ -1946,11 +2124,6 @@ export default function JournalSection({
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
             </div>
-            {reviewError && (
-              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
-                {reviewError}
-              </div>
-            )}
             <div className="mt-3 flex justify-end">
               <button
                 type="button"
@@ -1962,6 +2135,8 @@ export default function JournalSection({
                 Save review candidate
               </button>
             </div>
+              </>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -1988,7 +2163,7 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "sources" && (
+      {activeFullView === "sources" && (
         <div className="mb-4 space-y-3">
           <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
@@ -2107,7 +2282,7 @@ export default function JournalSection({
                   <button
                     type="button"
                     onClick={() => {
-                      setActiveWorkspace("timeline");
+                      goToComposer();
                       window.setTimeout(() => composeRef.current?.focus(), 0);
                     }}
                     className="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800"
@@ -2125,14 +2300,6 @@ export default function JournalSection({
               />
             ) : (
               <div className="mt-3 flex flex-col gap-3">
-                {selectedSource &&
-                  (selectedPreviewMatchesSearch ? (
-                    renderSourcePreview()
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
-                      The selected source preview does not match this search. Clear search or open a matching source.
-                    </div>
-                  ))}
                 {displayedSources.map((source) => renderSourceCard(source))}
               </div>
             )}
@@ -2140,7 +2307,7 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "team" && (
+      {!activeFullView && centerTab === "team" && (
         <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
             <MessageSquare className="size-3.5" /> Team Room
@@ -2155,7 +2322,7 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "timeline" && entries && (
+      {!activeFullView && centerTab === "timeline" && entries && (
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {(Object.keys(timelineFilterLabels) as TimelineFilter[]).map((filter) => (
@@ -2192,7 +2359,7 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "timeline" &&
+      {!activeFullView && centerTab === "timeline" &&
         filteredEntries &&
         filteredEntries.length === 0 &&
         (entries?.length === 0 ? (
@@ -2222,7 +2389,7 @@ export default function JournalSection({
           />
         ))}
 
-      {activeWorkspace === "timeline" && filteredEntries && filteredEntries.map((e) => renderEntry(e))}
+      {!activeFullView && centerTab === "timeline" && filteredEntries && filteredEntries.map((e) => renderEntry(e))}
 
       {aiError && (
         <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -2237,7 +2404,7 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "timeline" || activeWorkspace === "team" ? (
+      {!activeFullView ? (
       <div className="mt-6 rounded-xl border border-[var(--line)] bg-white p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div
@@ -2306,31 +2473,18 @@ export default function JournalSection({
             </button>
           </div>
         )}
-        {askAi && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => prepareAssistantPrompt("Summarize the most recent uploaded document and explain why it matters for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-            >
-              Summarize latest document
-            </button>
-            <button
-              type="button"
-              onClick={() => prepareAssistantPrompt("What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-            >
-              Suggest brief updates
-            </button>
-            <button
-              type="button"
-              onClick={() => prepareAssistantPrompt("Turn the recent journal notes and documents into recommended next actions for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-            >
-              Draft next actions
-            </button>
-          </div>
-        )}
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
+          >
+            <Sparkles className="size-3" /> Ask / generate…
+            <span className="ml-1 rounded border border-violet-200 bg-white px-1 text-[10px] text-violet-500">
+              ⌘K
+            </span>
+          </button>
+        </div>
         <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -2397,49 +2551,59 @@ export default function JournalSection({
         <button
           type="button"
           onClick={() => {
-            setActiveWorkspace("timeline");
+            goToComposer();
             window.setTimeout(() => composeRef.current?.focus(), 0);
           }}
           className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted transition-colors hover:border-slate-300 hover:text-ink"
         >
           <BookOpen className="size-4" />
-          {activeWorkspace === "sources"
+          {activeFullView === "sources"
             ? "Upload a source or add a note in Timeline"
             : "Add a note or ask the assistant in Timeline"}
         </button>
       )}
         </div>
-        <aside className="hidden xl:flex xl:flex-col gap-4 xl:sticky xl:top-4 xl:self-start">
+        <aside className="hidden xl:flex xl:flex-col gap-3 xl:sticky xl:top-4 xl:self-start">
+          {studioCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setStudioCollapsed(false)}
+              title="Expand Studio"
+              aria-label="Expand Studio"
+              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 text-muted shadow-sm transition-colors hover:bg-slate-50"
+            >
+              <Sparkles className="size-4 text-violet-600" />
+              <ChevronLeft className="size-4" />
+            </button>
+          ) : (
+            <>
           <Card className="p-4">
             <SectionHeader
               icon={<Sparkles className="size-4 text-violet-600" />}
-              title="Account intelligence"
+              title="Studio"
               actions={
                 <button
                   type="button"
-                  onClick={() => setActiveWorkspace("intelligence")}
-                  className="text-xs font-medium text-accent hover:underline"
+                  onClick={() => setStudioCollapsed(true)}
+                  title="Collapse Studio"
+                  aria-label="Collapse Studio"
+                  className="rounded-md border border-[var(--line)] bg-white p-1 text-muted transition-colors hover:bg-slate-50"
                 >
-                  Open
+                  <ChevronRight className="size-3.5" />
                 </button>
               }
             />
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              <Badge tone="accepted">{cockpitDisplay.reviewedCount} reviewed</Badge>
-              <Badge tone="review">{cockpitDisplay.pendingCount} pending</Badge>
-              <Badge tone="neutral">{cockpitDisplay.dismissedCount} dismissed</Badge>
-            </div>
-            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">
-              What changed
+            <p className="mt-1 text-[11px] leading-relaxed text-muted">
+              Generate from your notes and sources. Advisory only — nothing edits the brief automatically.
             </p>
-            <div className="mt-1.5 flex flex-col gap-1.5">
-              {INTELLIGENCE_ACTIONS.slice(0, 3).map((action) => (
+            <div className="mt-3 flex flex-col gap-1.5">
+              {INTELLIGENCE_ACTIONS.slice(0, 4).map((action) => (
                 <button
                   key={action.label}
                   type="button"
                   onClick={() => runIntelligenceAction(action.prompt)}
                   disabled={posting || loading}
-                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-left text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-50"
+                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-left text-xs font-medium text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
                 >
                   {action.label}
                 </button>
@@ -2455,7 +2619,7 @@ export default function JournalSection({
                   type="button"
                   onClick={() => runCatchUpPrompt(w)}
                   disabled={posting || loading}
-                  className={`rounded-md px-2.5 py-1 transition disabled:opacity-50 ${
+                  className={`rounded-md px-2.5 py-1 transition-colors disabled:opacity-50 ${
                     catchUpWindow === w ? "bg-ink text-white" : "text-muted hover:text-ink"
                   }`}
                 >
@@ -2463,22 +2627,142 @@ export default function JournalSection({
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("intelligence")}
+              className="mt-4 w-full rounded-md border border-[var(--line)] bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Open full Intelligence
+            </button>
           </Card>
-          {cockpitDisplay.priorityCards.length > 0 && (
-            <Card className="p-4">
-              <SectionHeader title="Priority signals" count={cockpitDisplay.priorityCards.length} />
+          <Card className="p-4">
+            <SectionHeader
+              title="Review Queue"
+              count={reviewCandidates.length}
+              actions={
+                <button
+                  type="button"
+                  onClick={() => setActiveFullView("review")}
+                  className="text-xs font-medium text-accent hover:underline"
+                >
+                  Open
+                </button>
+              }
+            />
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Badge tone="accepted">{cockpitDisplay.reviewedCount} reviewed</Badge>
+              <Badge tone="review">{cockpitDisplay.pendingCount} pending</Badge>
+              <Badge tone="neutral">{cockpitDisplay.dismissedCount} dismissed</Badge>
+            </div>
+            {cockpitDisplay.priorityCards.length > 0 && (
               <div className="mt-3 flex flex-col gap-2">
                 {cockpitDisplay.priorityCards.slice(0, 4).map((item) => (
-                  <div key={item.candidate_id} className="rounded-lg border border-[var(--line)] bg-white p-2.5">
+                  <button
+                    key={item.candidate_id}
+                    type="button"
+                    onClick={() => setActiveFullView("review")}
+                    className="rounded-lg border border-[var(--line)] bg-white p-2.5 text-left transition-colors hover:bg-slate-50"
+                  >
                     <Badge tone="neutral">{candidateTypeLabels[item.type]}</Badge>
                     <p className="mt-1 line-clamp-2 text-xs font-medium text-ink">{item.title}</p>
-                  </div>
+                  </button>
                 ))}
               </div>
-            </Card>
+            )}
+          </Card>
+            </>
           )}
-        </aside>
-      </div>
+        </aside>      </div>
+      {(selectedSource || selectedCitationContext) && (
+        <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-slate-900/20"
+            onClick={closePeek}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-[var(--line)] bg-white p-4 shadow-xl">
+            {selectedCitationContext ? (
+              renderCitationContext()
+            ) : selectedPreviewMatchesSearch ? (
+              renderSourcePreview()
+            ) : (
+              <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
+                The selected source preview does not match this search. Clear search or open a matching source.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {paletteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[10vh]"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI command palette"
+        >
+          <div
+            className="absolute inset-0 bg-slate-900/30"
+            onClick={() => setPaletteOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-2xl">
+            <div className="flex items-center gap-2 border-b border-[var(--line)] px-3 py-2">
+              <Sparkles className="size-4 shrink-0 text-violet-600" />
+              <input
+                autoFocus
+                value={paletteQuery}
+                onChange={(e) => setPaletteQuery(e.target.value)}
+                placeholder="Ask or generate… (catch up, what changed, summarize, draft actions)"
+                className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-muted"
+              />
+              <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-muted">
+                Esc
+              </span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {(() => {
+                const q = paletteQuery.trim().toLowerCase();
+                const groups = paletteGroups
+                  .map((group) => ({
+                    label: group.label,
+                    items: group.items.filter((it) => it.label.toLowerCase().includes(q)),
+                  }))
+                  .filter((group) => group.items.length > 0);
+                if (groups.length === 0) {
+                  return (
+                    <p className="px-2 py-6 text-center text-sm text-muted">
+                      No matching actions.
+                    </p>
+                  );
+                }
+                return groups.map((group) => (
+                  <div key={group.label} className="mb-2">
+                    <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      {group.label}
+                    </div>
+                    {group.items.map((it) => (
+                      <button
+                        key={it.label}
+                        type="button"
+                        onClick={() => {
+                          it.run();
+                          setPaletteOpen(false);
+                          setPaletteQuery("");
+                        }}
+                        disabled={posting || loading}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        <Sparkles className="size-3 shrink-0 text-violet-500" />
+                        {it.label}
+                      </button>
+                    ))}
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
