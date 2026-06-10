@@ -173,6 +173,12 @@ export default function JournalSection({
     setCenterTab("timeline");
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
+  // Side-peek: source preview and citation context open in a right-side panel
+  // over the current view rather than inline, keeping the feed calm.
+  function closePeek() {
+    setSelectedSource(null);
+    setSelectedCitationContext(null);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1442,10 +1448,7 @@ export default function JournalSection({
                       />
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedSource(source);
-                          setActiveFullView("sources");
-                        }}
+                        onClick={() => setSelectedSource(source)}
                         className="min-w-0 flex-1 truncate text-left text-xs font-medium text-ink transition-colors hover:text-violet-700"
                         title={source.filename}
                       >
@@ -1619,7 +1622,6 @@ export default function JournalSection({
           </div>
         </div>
       )}
-      {renderCitationContext()}
 
       {activeFullView === "intelligence" && (
         <div className="mb-4 space-y-4">
@@ -2178,14 +2180,6 @@ export default function JournalSection({
               />
             ) : (
               <div className="mt-3 flex flex-col gap-3">
-                {selectedSource &&
-                  (selectedPreviewMatchesSearch ? (
-                    renderSourcePreview()
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
-                      The selected source preview does not match this search. Clear search or open a matching source.
-                    </div>
-                  ))}
                 {displayedSources.map((source) => renderSourceCard(source))}
               </div>
             )}
@@ -2546,6 +2540,26 @@ export default function JournalSection({
             )}
           </Card>
         </aside>      </div>
+      {(selectedSource || selectedCitationContext) && (
+        <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-slate-900/20"
+            onClick={closePeek}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-[var(--line)] bg-white p-4 shadow-xl">
+            {selectedCitationContext ? (
+              renderCitationContext()
+            ) : selectedPreviewMatchesSearch ? (
+              renderSourcePreview()
+            ) : (
+              <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
+                The selected source preview does not match this search. Clear search or open a matching source.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
