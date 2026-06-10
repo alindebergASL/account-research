@@ -195,6 +195,7 @@ export default function JournalSection({
         setPaletteOpen(false);
         setSelectedSource(null);
         setSelectedCitationContext(null);
+        setActiveFullView(null);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -1712,6 +1713,32 @@ export default function JournalSection({
         </div>
       )}
 
+      {activeFullView && (
+        <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-slate-900/20"
+            onClick={() => setActiveFullView(null)}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-[var(--line)] bg-[var(--surface)] shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--line)] bg-[var(--surface)] px-5 py-3">
+              <h2 className="font-editorial text-lg font-semibold text-ink">
+                {activeFullView === "sources"
+                  ? "Sources"
+                  : activeFullView === "review"
+                    ? "Review queue"
+                    : "Intelligence"}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setActiveFullView(null)}
+                aria-label="Close"
+                className="rounded-md border border-[var(--line)] bg-white p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)]"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="p-5">
       {activeFullView === "intelligence" && (
         <div className="mb-4 space-y-4">
           <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
@@ -2286,6 +2313,11 @@ export default function JournalSection({
                 {displayedSources.map((source) => renderSourceCard(source))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+            </div>
           </div>
         </div>
       )}
