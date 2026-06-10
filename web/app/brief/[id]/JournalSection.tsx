@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
+  ClipboardList,
   FileText,
   Loader2,
   MessageSquare,
   Paperclip,
   Pencil,
+  Search,
   Sparkles,
   Trash2,
   X,
@@ -82,6 +84,7 @@ import {
   summarizeDocumentPrompt,
   trustedLegendStart,
 } from "./journal/helpers";
+import { Badge, Card, EmptyState, SectionHeader } from "./journal/ui";
 
 function renderCitationChips(
   entry: Entry,
@@ -163,6 +166,7 @@ export default function JournalSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const composeRef = useRef<HTMLTextAreaElement>(null);
+  const sourcePreviewRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -272,6 +276,10 @@ export default function JournalSection({
     setPendingCatchUpWindow(journalCatchUpWindow);
     setPendingCatchUpExcludedDocumentKey(catchUpExcludedDocumentKey);
     setComposeText(text);
+    // The composer only renders in Timeline/Team Room, so staging a prompt
+    // anywhere else must bring the user to it — otherwise the action looks
+    // like it silently did nothing.
+    setActiveWorkspace("timeline");
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
 
@@ -491,6 +499,8 @@ export default function JournalSection({
     } catch {
       setComposeText(prompt);
       setAskAi(false);
+      setActiveWorkspace("timeline");
+      window.setTimeout(() => composeRef.current?.focus(), 0);
       setUploadNotice("Clipboard was unavailable, so the brief-chat prompt was copied into the Journal composer.");
     }
   }
@@ -595,121 +605,53 @@ export default function JournalSection({
     return (
       <div
         key={`${source.entryId}-${source.id}`}
-        className={`rounded-xl border p-4 shadow-sm ${
-          isExcluded ? "border-slate-200 bg-slate-50 opacity-75" : "border-slate-200 bg-white"
+        className={`rounded-xl border p-4 transition-colors ${
+          isExcluded
+            ? "border-slate-200 bg-slate-50 opacity-75"
+            : "border-slate-200 bg-white hover:border-slate-300"
         }`}
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">
-                <FileText className="size-3" /> Source
-              </span>
-              <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
-                Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
-              </span>
-              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-                isExcluded
-                  ? "border-rose-200 bg-rose-50 text-rose-800"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
-              }`}>
-                {isExcluded ? "Excluded from AI context" : "Included in AI context"}
-              </span>
-            </div>
-            <h3 className="mt-2 truncate text-sm font-semibold text-ink">
-              {source.filename}
-            </h3>
-            <p className="mt-1 text-xs text-muted">
-              {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source health</span>
-              {healthBadges.map((badge) => (
-                <span
-                  key={badge.status}
-                  title={badge.description}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
-                    badge.status === "current"
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                      : badge.status === "conflicting"
-                        ? "border-rose-200 bg-rose-50 text-rose-800"
-                        : "border-amber-200 bg-amber-50 text-amber-800"
-                  }`}
-                >
-                  {badge.label}
-                </span>
-              ))}
-            </div>
-          </div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            {/* Primary source actions */}
-            <button
-              type="button"
-              disabled={isExcluded}
-              onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id], true)}
-              className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Sparkles className="size-3" /> Ask about this source
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedSource(source)}
-              className="rounded-md border border-sky-200 bg-white px-2 py-1 text-xs font-medium text-sky-800 hover:bg-sky-50"
-            >
-              Preview source
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleSourceExclusion(source)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {isExcluded ? "Include source" : "Exclude source"}
-            </button>
-            <details className="group relative">
-              <summary className="list-none rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-                More source actions
-              </summary>
-              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 sm:absolute sm:right-0 sm:z-10 sm:w-64 sm:shadow-lg">
-                {/* Secondary source actions */}
-                <button
-                  type="button"
-                  onClick={() => toggleSourceSelection(source.id)}
-                  disabled={isExcluded}
-                  aria-pressed={isSelected && !isExcluded}
-                  className={`rounded-md border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
-                    isSelected && !isExcluded
-                      ? "border-violet-300 bg-violet-600 text-white"
-                      : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
-                  }`}
-                >
-                  {isSelected && !isExcluded ? "Selected for batch AI" : "Select for batch AI"}
-                </button>
-                <button
-                  type="button"
-                  disabled={isExcluded}
-                  onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id], true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Sparkles className="size-3" /> Summarize
-                </button>
-                <button
-                  type="button"
-                  disabled={isExcluded}
-                  onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id], true)}
-                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Find supported brief updates
-                </button>
-                <button
-                  type="button"
-                  disabled={isExcluded}
-                  onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id], true)}
-                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Compare with brief
-                </button>
-              </div>
-            </details>
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+              <FileText className="size-3" /> Source
+            </span>
+            <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
+              Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
+            </span>
+            {isExcluded ? (
+              <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">
+                Excluded from AI context
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                <CheckCircle2 className="size-3" /> In AI context
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 truncate text-sm font-semibold text-ink">
+            {source.filename}
+          </h3>
+          <p className="mt-1 text-xs text-muted">
+            {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source health</span>
+            {healthBadges.map((badge) => (
+              <span
+                key={badge.status}
+                title={badge.description}
+                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                  badge.status === "current"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : badge.status === "conflicting"
+                      ? "border-rose-200 bg-rose-50 text-rose-800"
+                      : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                {badge.label}
+              </span>
+            ))}
           </div>
         </div>
         <p className="mt-3 line-clamp-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
@@ -720,26 +662,93 @@ export default function JournalSection({
             Attached to journal note: {source.entryBody}
           </p>
         )}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          {/* Primary source actions */}
+          <button
+            type="button"
+            disabled={isExcluded}
+            onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id], true)}
+            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Sparkles className="size-3" /> Ask about this source
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedSource(source);
+              // Preview stacks above the source list; bring it into view when
+              // opened from a card further down.
+              window.setTimeout(
+                () => sourcePreviewRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
+                0,
+              );
+            }}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+          >
+            Preview source
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleSourceExclusion(source)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+          >
+            {isExcluded ? "Include source" : "Exclude source"}
+          </button>
+          <details className="group relative ml-auto">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+              More source actions
+            </summary>
+            <div className="absolute right-0 z-10 mt-2 flex w-60 flex-col gap-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+              {/* Secondary source actions */}
+              <button
+                type="button"
+                onClick={() => toggleSourceSelection(source.id)}
+                disabled={isExcluded}
+                aria-pressed={isSelected && !isExcluded}
+                className={`rounded-md border px-2 py-1 text-left text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  isSelected && !isExcluded
+                    ? "border-violet-300 bg-violet-600 text-white"
+                    : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+                }`}
+              >
+                {isSelected && !isExcluded ? "Selected for batch AI" : "Select for batch AI"}
+              </button>
+              <button
+                type="button"
+                disabled={isExcluded}
+                onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id], true)}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Sparkles className="size-3 text-violet-600" /> Summarize
+              </button>
+              <button
+                type="button"
+                disabled={isExcluded}
+                onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id], true)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Find supported brief updates
+              </button>
+              <button
+                type="button"
+                disabled={isExcluded}
+                onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id], true)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Compare with brief
+              </button>
+            </div>
+          </details>
+        </div>
       </div>
     );
   }
 
   function renderSourcePreview() {
-    if (!selectedSource) {
-      return (
-        <div className="hidden rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted shadow-sm xl:block">
-          <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
-            <FileText className="size-3.5" /> Source preview
-          </div>
-          <p className="mt-3">
-            Select “Preview source” on a source card to inspect extracted text and run source-scoped prompts without changing the brief.
-          </p>
-        </div>
-      );
-    }
+    if (!selectedSource) return null;
     const isSelectedSourceExcluded = excludedDocumentIds.includes(selectedSource.id);
     return (
-      <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+      <div ref={sourcePreviewRef} className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
@@ -1410,58 +1419,6 @@ export default function JournalSection({
         main brief chat when you want the brief itself edited.
       </p>
 
-      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
-              Brief baseline
-            </div>
-            <h3 className="mt-3 text-base font-semibold text-ink">
-              {briefContext.account_name}
-            </h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current brief priority
-                </div>
-                <p className="mt-1 line-clamp-3 text-sm text-slate-800">
-                  {briefContext.priority_summary || "Not set yet."}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current next action
-                </div>
-                <p className="mt-1 line-clamp-3 text-sm text-slate-800">
-                  {briefContext.next_action || "Not set yet."}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current brief sources
-                </div>
-                <p className="mt-1 text-sm text-slate-800">
-                  {briefContext.sources_count} saved source{briefContext.sources_count === 1 ? "" : "s"}
-                </p>
-              </div>
-            </div>
-            <p className="mt-3 max-w-3xl text-sm text-muted">
-              Use this workspace to reconcile new journal evidence with what the brief already says,
-              then send accepted changes through the main brief chat or brief editor.
-            </p>
-          </div>
-          {onViewBriefBaseline && (
-            <button
-              type="button"
-              onClick={onViewBriefBaseline}
-              className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              View brief baseline first
-            </button>
-          )}
-        </div>
-      </div>
-
       {error && (
         <div className="mb-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
@@ -1472,7 +1429,12 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm md:grid-cols-5">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_320px]">
+        <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
+          <nav
+            className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm lg:flex-col lg:overflow-visible"
+            aria-label="Journal sections"
+          >
         {workspaceTabs.map((tab) => {
           const active = activeWorkspace === tab.id;
           return (
@@ -1481,7 +1443,7 @@ export default function JournalSection({
               type="button"
               onClick={() => setActiveWorkspace(tab.id)}
               aria-pressed={active}
-              className={`rounded-xl px-3 py-2 text-left transition ${
+              className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-left transition lg:whitespace-normal ${
                 active
                   ? "bg-ink text-white shadow-sm"
                   : "text-ink hover:bg-slate-50"
@@ -1499,13 +1461,61 @@ export default function JournalSection({
                   </span>
                 )}
               </span>
-              <span className={`mt-0.5 block text-xs ${active ? "text-white/75" : "text-muted"}`}>
+              <span className={`mt-0.5 hidden text-xs lg:block ${active ? "text-white/75" : "text-muted"}`}>
                 {tab.description}
               </span>
             </button>
           );
         })}
-      </div>
+          </nav>
+          <div className="mt-3 rounded-2xl border border-[var(--line)] bg-white p-3 shadow-sm">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+              Brief baseline
+            </div>
+            <h3 className="mt-2 text-sm font-semibold text-ink">{briefContext.account_name}</h3>
+            <div className="mt-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Current brief priority
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
+                {briefContext.priority_summary || "Not set yet."}
+              </p>
+            </div>
+            <div className="mt-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Current next action
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
+                {briefContext.next_action || "Not set yet."}
+              </p>
+            </div>
+            <details className="mt-2">
+              <summary className="cursor-pointer list-none text-[11px] font-medium text-muted hover:text-ink">
+                Details
+              </summary>
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Current brief sources
+              </div>
+              <p className="text-xs text-slate-700">
+                {briefContext.sources_count} saved source{briefContext.sources_count === 1 ? "" : "s"}
+              </p>
+              <p className="mt-2 text-[11px] text-muted">
+                Use this workspace to reconcile new journal evidence with what the brief already says,
+                then send accepted changes through the main brief chat or brief editor.
+              </p>
+              {onViewBriefBaseline && (
+                <button
+                  type="button"
+                  onClick={onViewBriefBaseline}
+                  className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  View brief baseline first
+                </button>
+              )}
+            </details>
+          </div>
+        </aside>
+        <div className="min-w-0">
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -1955,18 +1965,22 @@ export default function JournalSection({
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-ink">Full Review Queue</h3>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <h3 className="whitespace-nowrap text-sm font-semibold text-ink">Full Review Queue</h3>
               <span className="text-xs text-muted">
                 Same human-review cards, shown ungrouped for status changes and brief-chat handoff.
               </span>
             </div>
             {displayedReviewCandidates.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-amber-200 bg-white p-6 text-sm text-muted">
-                {journalSearchResult.isActive
-                  ? "No review candidate cards match this search. Clear search to see the full Review Queue."
-                  : "No review candidate cards yet. Assistant replies with suggested cards can be promoted here using Add to Review Queue, or edited first before saving for team follow-up."}
-              </div>
+              <EmptyState
+                icon={<ClipboardList className="size-5" />}
+                title={journalSearchResult.isActive ? "No matching review cards" : "Review Queue is empty"}
+                description={
+                  journalSearchResult.isActive
+                    ? "Clear the search to see the full Review Queue."
+                    : "Promote assistant suggestions here with \u201CAdd to Review Queue\u201D, or edit them first before saving for team follow-up."
+                }
+              />
             ) : (
               displayedReviewCandidates.map((candidate) => renderReviewCandidate(candidate))
             )}
@@ -2084,24 +2098,42 @@ export default function JournalSection({
               </div>
             )}
             {sources.length === 0 ? (
-              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-                No uploaded sources yet. Choose a document in the composer below to
-                make extracted evidence available to the Journal assistant.
-              </div>
+              <EmptyState
+                className="mt-3"
+                icon={<FileText className="size-5" />}
+                title="No sources uploaded yet"
+                description="Upload a document from the Timeline composer to make its extracted evidence available to the Journal assistant."
+                action={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveWorkspace("timeline");
+                      window.setTimeout(() => composeRef.current?.focus(), 0);
+                    }}
+                    className="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800"
+                  >
+                    Add a source
+                  </button>
+                }
+              />
             ) : displayedSources.length === 0 ? (
-              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-                No uploaded sources match this search. Clear search to see all uploaded sources.
-              </div>
+              <EmptyState
+                className="mt-3"
+                icon={<Search className="size-5" />}
+                title="No sources match this search"
+                description="Clear the search to see all uploaded sources."
+              />
             ) : (
-              <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="grid gap-3 xl:grid-cols-2">
-                  {displayedSources.map((source) => renderSourceCard(source))}
-                </div>
-                {selectedPreviewMatchesSearch ? renderSourcePreview() : (
-                  <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
-                    The selected source preview does not match this search. Clear search or open a matching source.
-                  </div>
-                )}
+              <div className="mt-3 flex flex-col gap-3">
+                {selectedSource &&
+                  (selectedPreviewMatchesSearch ? (
+                    renderSourcePreview()
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
+                      The selected source preview does not match this search. Clear search or open a matching source.
+                    </div>
+                  ))}
+                {displayedSources.map((source) => renderSourceCard(source))}
               </div>
             )}
           </div>
@@ -2160,15 +2192,35 @@ export default function JournalSection({
         </div>
       )}
 
-      {activeWorkspace === "timeline" && filteredEntries && filteredEntries.length === 0 && (
-        <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-muted">
-          {entries?.length === 0
-            ? "No journal entries yet. Add a note, upload a document, or switch to Ask assistant to ask a question grounded in this brief."
-            : journalSearchResult.isActive
-              ? "No Timeline entries match this search. Clear search or try another query."
-              : "No entries match this Timeline filter."}
-        </div>
-      )}
+      {activeWorkspace === "timeline" &&
+        filteredEntries &&
+        filteredEntries.length === 0 &&
+        (entries?.length === 0 ? (
+          <EmptyState
+            icon={<BookOpen className="size-5" />}
+            title="No journal entries yet"
+            description="Post an update, upload a document, or switch to Ask assistant to ask a question grounded in this brief."
+            action={
+              <button
+                type="button"
+                onClick={() => composeRef.current?.focus()}
+                className="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800"
+              >
+                Add your first note
+              </button>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={<Search className="size-5" />}
+            title={journalSearchResult.isActive ? "No matching entries" : "No entries match this filter"}
+            description={
+              journalSearchResult.isActive
+                ? "Clear the search or try another query."
+                : "Try a different Timeline filter."
+            }
+          />
+        ))}
 
       {activeWorkspace === "timeline" && filteredEntries && filteredEntries.map((e) => renderEntry(e))}
 
@@ -2185,6 +2237,7 @@ export default function JournalSection({
         </div>
       )}
 
+      {activeWorkspace === "timeline" || activeWorkspace === "team" ? (
       <div className="mt-6 rounded-xl border border-[var(--line)] bg-white p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div
@@ -2258,21 +2311,21 @@ export default function JournalSection({
             <button
               type="button"
               onClick={() => prepareAssistantPrompt("Summarize the most recent uploaded document and explain why it matters for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
             >
               Summarize latest document
             </button>
             <button
               type="button"
               onClick={() => prepareAssistantPrompt("What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
             >
               Suggest brief updates
             </button>
             <button
               type="button"
               onClick={() => prepareAssistantPrompt("Turn the recent journal notes and documents into recommended next actions for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
             >
               Draft next actions
             </button>
@@ -2297,7 +2350,7 @@ export default function JournalSection({
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink hover:bg-slate-50">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink transition-colors hover:bg-slate-50">
               <Paperclip className="size-3.5" />
               <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
               <input
@@ -2311,7 +2364,7 @@ export default function JournalSection({
               type="button"
               onClick={() => uploadDocument()}
               disabled={uploading || posting || !selectedFile}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
             >
               {uploading && <Loader2 className="size-3.5 animate-spin" />}
               {uploading ? "Uploading…" : "Upload document"}
@@ -2320,7 +2373,7 @@ export default function JournalSection({
               type="button"
               onClick={() => uploadDocument({ summarizeAfterUpload: true })}
               disabled={uploading || posting || !selectedFile}
-              className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 transition-colors hover:bg-violet-100 disabled:opacity-50"
             >
               {uploading && <Loader2 className="size-3.5 animate-spin" />}
               Upload + summarize
@@ -2333,12 +2386,98 @@ export default function JournalSection({
               type="button"
               onClick={submit}
               disabled={posting || !composeText.trim()}
-              className="inline-flex items-center gap-1.5 rounded-md bg-ink text-white px-3 py-1.5 text-sm disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
             >
               {posting && <Loader2 className="size-3.5 animate-spin" />}
               {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
             </button>
         </div>
+      </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setActiveWorkspace("timeline");
+            window.setTimeout(() => composeRef.current?.focus(), 0);
+          }}
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted transition-colors hover:border-slate-300 hover:text-ink"
+        >
+          <BookOpen className="size-4" />
+          {activeWorkspace === "sources"
+            ? "Upload a source or add a note in Timeline"
+            : "Add a note or ask the assistant in Timeline"}
+        </button>
+      )}
+        </div>
+        <aside className="hidden xl:flex xl:flex-col gap-4 xl:sticky xl:top-4 xl:self-start">
+          <Card className="p-4">
+            <SectionHeader
+              icon={<Sparkles className="size-4 text-violet-600" />}
+              title="Account intelligence"
+              actions={
+                <button
+                  type="button"
+                  onClick={() => setActiveWorkspace("intelligence")}
+                  className="text-xs font-medium text-accent hover:underline"
+                >
+                  Open
+                </button>
+              }
+            />
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Badge tone="accepted">{cockpitDisplay.reviewedCount} reviewed</Badge>
+              <Badge tone="review">{cockpitDisplay.pendingCount} pending</Badge>
+              <Badge tone="neutral">{cockpitDisplay.dismissedCount} dismissed</Badge>
+            </div>
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              What changed
+            </p>
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              {INTELLIGENCE_ACTIONS.slice(0, 3).map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={() => runIntelligenceAction(action.prompt)}
+                  disabled={posting || loading}
+                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-left text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Catch up
+            </p>
+            <div className="mt-1.5 inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-xs">
+              {(["24h", "7d", "all"] as const).map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => runCatchUpPrompt(w)}
+                  disabled={posting || loading}
+                  className={`rounded-md px-2.5 py-1 transition disabled:opacity-50 ${
+                    catchUpWindow === w ? "bg-ink text-white" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {w === "all" ? "All" : w}
+                </button>
+              ))}
+            </div>
+          </Card>
+          {cockpitDisplay.priorityCards.length > 0 && (
+            <Card className="p-4">
+              <SectionHeader title="Priority signals" count={cockpitDisplay.priorityCards.length} />
+              <div className="mt-3 flex flex-col gap-2">
+                {cockpitDisplay.priorityCards.slice(0, 4).map((item) => (
+                  <div key={item.candidate_id} className="rounded-lg border border-[var(--line)] bg-white p-2.5">
+                    <Badge tone="neutral">{candidateTypeLabels[item.type]}</Badge>
+                    <p className="mt-1 line-clamp-2 text-xs font-medium text-ink">{item.title}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </aside>
       </div>
     </section>
   );

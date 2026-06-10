@@ -62,20 +62,19 @@ Current production baseline on `main`:
 
 ### Recommended next implementation slice
 
-The reviewable assistant-card flow (#106), source hierarchy/density pass (#107), and guided Intelligence cockpit polish (#108) are now shipped on top of the durable cockpit read-model foundation (#102), cockpit UI/API adoption (#103), and catch-up summary cache (#104). The next bottleneck is turning the first-pass source and review surfaces into clearer durable lifecycle systems: source health should move beyond heuristics, and accepted action/decision/account facts should gain richer metadata without weakening the human-review boundary.
+Two tracks are now in flight.
 
-Recommended next slice: durable source-resolution lifecycle and source-change rollups.
+**Track A — Journal UX decomposition + redesign (in progress).** `JournalSection.tsx` had grown to ~2,750 lines. PR-A (#110) extracts the stable substrate (domain types, prompt catalogs, pure helpers) into `app/brief/[id]/journal/` with no behavior change. PR-B follows with a bolder Intelligence-cockpit redesign that re-componentizes the five workspaces and their cards as they are restyled. Treat this as a prerequisite for sustainable feature work: new lifecycle / rollup UI should land in the redesigned, decomposed surface rather than deeper into the monolith.
 
-Scope for that next slice:
+**Track B — Durable source-resolution lifecycle, then source-change rollups.** The reviewable assistant-card flow (#106), source hierarchy/density pass (#107), and guided Intelligence cockpit polish (#108) are shipped on top of the durable cockpit read-model (#102/#103) and catch-up cache (#104). The next durable-systems bottleneck is moving source health beyond heuristics and giving accepted facts richer metadata without weakening the human-review boundary.
 
-1. Add reviewed source-health states for uploaded and brief-baseline sources, such as current, superseded, duplicate, conflicting, and excluded-with-reason.
-2. Preserve provenance for every source-health change: source ids, filenames, Journal entry references, reviewer, timestamps, and evidence labels where available.
-3. Surface source-change rollups in the cockpit as advisory/reviewed cards without treating source conflicts as settled until a user confirms them.
-4. Add invalidation rules so cockpit and catch-up caches refresh when source-health status, exclusions, source content, Journal entries, or brief baseline/version data change.
-5. Keep the human-review boundary: source lifecycle updates must not edit the Brief, create official tasks, settle decisions, or silently mark account facts as accepted.
-6. Add regression tests for source-exclusion safety, provenance retention, status separation, cache invalidation, and no durable brief mutation.
+**Sequencing correction (important).** A "source changes **since I last reviewed** this account" rollup has *no durable anchor today*. Catch-up windows are fixed and now-relative (24h / 7d / all); the cockpit read model and catch-up cache key on a content **source fingerprint**, not on a per-user / per-account review checkpoint. There is no `reviewed_at` / last-reviewed marker anywhere in the schema or UI. Therefore the durable source-resolution lifecycle — which should *also* persist a lightweight **review checkpoint** (reviewer, timestamp, and the cockpit source fingerprint at review time) — must land before, or as the foundation of, any "since last review" rollup. Building the rollup first would force a throwaway ad-hoc anchor. (This flips the earlier chat-proposed order of rollups-before-lifecycle.)
 
-After source lifecycle, the following slice should consider richer action/decision/account-fact metadata on reviewed candidates: owner, due date, priority, reminder status, decision owner/date, and eventual CRM/Linear handoff hooks.
+Recommended slice order:
+
+1. **Durable source-resolution lifecycle + review checkpoint.** Reviewed source-health states for uploaded and brief-baseline sources (current, superseded, duplicate, conflicting, excluded-with-reason) with full provenance (source ids, filenames, Journal entry references, reviewer, timestamps, evidence labels where available). Persist a per-account **review checkpoint** (reviewer, `reviewed_at`, cockpit source fingerprint). Cache-invalidation rules so cockpit and catch-up caches refresh when source-health status, exclusions, source content, Journal entries, or brief baseline/version data change. Keep the human-review boundary: no Brief edits, no official tasks, no settled conflicts until a user confirms. Regression tests in `tests/journalDocuments.test.ts` for exclusion safety, provenance retention, status separation, cache invalidation, checkpoint capture, and no durable brief mutation.
+2. **Source-change rollups in the Intelligence cockpit (advisory only),** anchored on the review checkpoint from (1): new uploaded documents, included/excluded source changes, sources that may make cached catch-up stale (fingerprint drift), and brief baseline/source-fingerprint changes — with a clear "refresh catch-up for changed sources" CTA and progressive-disclosure audit detail consistent with #107. No automatic brief mutation; no auto-accepted decisions/actions.
+3. **Richer reviewed-candidate lifecycle metadata** on action/decision/account-fact cards (owner, due date, priority, reminder status, decision owner/date), and eventual CRM/Linear handoff hooks.
 
 ## High-level thesis
 
@@ -757,6 +756,8 @@ Useful buttons:
 - What changed in uploaded docs?
 - What changed in stakeholder understanding?
 - What changed that affects outreach?
+
+Implementation note: the review-anchored variants ("since last visit", "since I last reviewed") depend on a durable per-user / per-account **review checkpoint** (reviewer, timestamp, cockpit source fingerprint) that does not exist yet — today's catch-up windows are now-relative, not review-anchored. These buttons should be built on the source-resolution lifecycle slice that introduces the checkpoint, not before it.
 
 Outputs:
 
