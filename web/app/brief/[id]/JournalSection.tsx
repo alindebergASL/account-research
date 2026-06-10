@@ -4,8 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   ClipboardList,
   FileText,
   Loader2,
@@ -170,8 +168,6 @@ export default function JournalSection({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [createFormOpen, setCreateFormOpen] = useState(false);
-  const [sourcesCollapsed, setSourcesCollapsed] = useState(false);
-  const [studioCollapsed, setStudioCollapsed] = useState(false);
   const [activeFullView, setActiveFullView] = useState<
     "sources" | "intelligence" | "review" | null
   >(null);
@@ -1447,22 +1443,9 @@ export default function JournalSection({
       : timelineEntries;
   }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
 
-  const gridClass = [
-    "grid min-w-0 gap-4",
-    sourcesCollapsed
-      ? "lg:grid-cols-[56px_minmax(0,1fr)]"
-      : "lg:grid-cols-[280px_minmax(0,1fr)]",
-    sourcesCollapsed && studioCollapsed
-      ? "xl:grid-cols-[56px_minmax(0,1fr)_56px]"
-      : sourcesCollapsed
-        ? "xl:grid-cols-[56px_minmax(0,1fr)_340px]"
-        : studioCollapsed
-          ? "xl:grid-cols-[280px_minmax(0,1fr)_56px]"
-          : "xl:grid-cols-[280px_minmax(0,1fr)_340px]",
-  ].join(" ");
 
   return (
-    <section className="max-w-7xl mx-auto px-6 mt-6 pb-24">
+    <section className="max-w-[1180px] mx-auto px-6 mt-6 pb-24">
       <header className="flex items-center gap-2 mb-1">
         <BookOpen className="size-5 text-muted" />
         <h2 className="text-lg font-semibold text-ink">Journal</h2>
@@ -1486,121 +1469,8 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className={gridClass}>
-        <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
-          {sourcesCollapsed ? (
-            <button
-              type="button"
-              onClick={() => setSourcesCollapsed(false)}
-              title="Expand Sources"
-              aria-label="Expand Sources"
-              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 text-muted shadow-sm transition-colors hover:bg-slate-50"
-            >
-              <FileText className="size-4 text-sky-600" />
-              <ChevronRight className="size-4" />
-            </button>
-          ) : (
-            <>
-          <Card className="p-3">
-            <SectionHeader
-              icon={<FileText className="size-4 text-sky-600" />}
-              title="Sources"
-              count={totalSourceCount}
-              actions={
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={goToComposer}
-                    className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-ink transition-colors hover:bg-slate-50"
-                  >
-                    + Add
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSourcesCollapsed(true)}
-                    title="Collapse Sources"
-                    aria-label="Collapse Sources"
-                    className="rounded-md border border-[var(--line)] bg-white p-1 text-muted transition-colors hover:bg-slate-50"
-                  >
-                    <ChevronLeft className="size-3.5" />
-                  </button>
-                </div>
-              }
-            />
-            <p className="mt-1 text-[11px] text-muted">
-              {totalIncludedSourceCount} included for AI · {excludedDocumentIds.length} excluded
-            </p>
-            <div className="mt-3 flex flex-col gap-0.5">
-              {sources.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-[var(--line)] px-3 py-4 text-center text-xs text-muted">
-                  No uploaded sources yet.
-                </p>
-              ) : (
-                sources.map((source) => {
-                  const excluded = excludedDocumentIds.includes(source.id);
-                  return (
-                    <div
-                      key={source.id}
-                      className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-slate-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!excluded}
-                        onChange={() => toggleSourceExclusion(source)}
-                        aria-label={excluded ? "Include source in AI context" : "Exclude source from AI context"}
-                        className="size-3.5 shrink-0 accent-violet-600"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setSelectedSource(source)}
-                        className="min-w-0 flex-1 truncate text-left text-xs font-medium text-ink transition-colors hover:text-violet-700"
-                        title={source.filename}
-                      >
-                        {source.filename}
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveFullView("sources")}
-              className="mt-3 w-full rounded-md border border-[var(--line)] bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Open full Sources ({currentBriefSources.length} brief · {sources.length} uploaded)
-            </button>
-          </Card>
-          <Card className="mt-3 p-3">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-              Brief baseline
-            </div>
-            <h3 className="mt-2 text-sm font-semibold text-ink">{briefContext.account_name}</h3>
-            <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Current brief priority
-            </div>
-            <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
-              {briefContext.priority_summary || "Not set yet."}
-            </p>
-            <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Current next action
-            </div>
-            <p className="mt-0.5 line-clamp-2 text-xs text-slate-700">
-              {briefContext.next_action || "Not set yet."}
-            </p>
-            {onViewBriefBaseline && (
-              <button
-                type="button"
-                onClick={onViewBriefBaseline}
-                className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-              >
-                View brief baseline first
-              </button>
-            )}
-          </Card>
-            </>
-          )}
-        </aside>        <div className="order-first min-w-0 lg:order-none">
+      <div className="mx-auto max-w-[1100px]">
+        <div className="min-w-0">
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -2563,116 +2433,7 @@ export default function JournalSection({
         </button>
       )}
         </div>
-        <aside className="hidden xl:flex xl:flex-col gap-3 xl:sticky xl:top-4 xl:self-start">
-          {studioCollapsed ? (
-            <button
-              type="button"
-              onClick={() => setStudioCollapsed(false)}
-              title="Expand Studio"
-              aria-label="Expand Studio"
-              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 text-muted shadow-sm transition-colors hover:bg-slate-50"
-            >
-              <Sparkles className="size-4 text-violet-600" />
-              <ChevronLeft className="size-4" />
-            </button>
-          ) : (
-            <>
-          <Card className="p-4">
-            <SectionHeader
-              icon={<Sparkles className="size-4 text-violet-600" />}
-              title="Studio"
-              actions={
-                <button
-                  type="button"
-                  onClick={() => setStudioCollapsed(true)}
-                  title="Collapse Studio"
-                  aria-label="Collapse Studio"
-                  className="rounded-md border border-[var(--line)] bg-white p-1 text-muted transition-colors hover:bg-slate-50"
-                >
-                  <ChevronRight className="size-3.5" />
-                </button>
-              }
-            />
-            <p className="mt-1 text-[11px] leading-relaxed text-muted">
-              Generate from your notes and sources. Advisory only — nothing edits the brief automatically.
-            </p>
-            <div className="mt-3 flex flex-col gap-1.5">
-              {INTELLIGENCE_ACTIONS.slice(0, 4).map((action) => (
-                <button
-                  key={action.label}
-                  type="button"
-                  onClick={() => runIntelligenceAction(action.prompt)}
-                  disabled={posting || loading}
-                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-left text-xs font-medium text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">
-              Catch up
-            </p>
-            <div className="mt-1.5 inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-xs">
-              {(["24h", "7d", "all"] as const).map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  onClick={() => runCatchUpPrompt(w)}
-                  disabled={posting || loading}
-                  className={`rounded-md px-2.5 py-1 transition-colors disabled:opacity-50 ${
-                    catchUpWindow === w ? "bg-ink text-white" : "text-muted hover:text-ink"
-                  }`}
-                >
-                  {w === "all" ? "All" : w}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveFullView("intelligence")}
-              className="mt-4 w-full rounded-md border border-[var(--line)] bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Open full Intelligence
-            </button>
-          </Card>
-          <Card className="p-4">
-            <SectionHeader
-              title="Review Queue"
-              count={reviewCandidates.length}
-              actions={
-                <button
-                  type="button"
-                  onClick={() => setActiveFullView("review")}
-                  className="text-xs font-medium text-accent hover:underline"
-                >
-                  Open
-                </button>
-              }
-            />
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              <Badge tone="accepted">{cockpitDisplay.reviewedCount} reviewed</Badge>
-              <Badge tone="review">{cockpitDisplay.pendingCount} pending</Badge>
-              <Badge tone="neutral">{cockpitDisplay.dismissedCount} dismissed</Badge>
-            </div>
-            {cockpitDisplay.priorityCards.length > 0 && (
-              <div className="mt-3 flex flex-col gap-2">
-                {cockpitDisplay.priorityCards.slice(0, 4).map((item) => (
-                  <button
-                    key={item.candidate_id}
-                    type="button"
-                    onClick={() => setActiveFullView("review")}
-                    className="rounded-lg border border-[var(--line)] bg-white p-2.5 text-left transition-colors hover:bg-slate-50"
-                  >
-                    <Badge tone="neutral">{candidateTypeLabels[item.type]}</Badge>
-                    <p className="mt-1 line-clamp-2 text-xs font-medium text-ink">{item.title}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </Card>
-            </>
-          )}
-        </aside>      </div>
+      </div>
       {(selectedSource || selectedCitationContext) && (
         <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
           <div
