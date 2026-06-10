@@ -1560,11 +1560,12 @@ export default function JournalSection({
           </span>
         </div>
       ) : (
-        <div
-          className="mb-4 inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm"
-          role="tablist"
-          aria-label="Journal feed"
-        >
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div
+            className="inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm"
+            role="tablist"
+            aria-label="Journal feed"
+          >
           <button
             type="button"
             role="tab"
@@ -1587,6 +1588,35 @@ export default function JournalSection({
           >
             Team Room
           </button>
+          </div>
+          {/* Below xl the Studio rail (which holds Intelligence/Review entry
+              points) is hidden, so surface the preserved full views here too. */}
+          <div className="flex flex-wrap items-center gap-1.5 xl:hidden">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Full views
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("sources")}
+              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Sources
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("intelligence")}
+              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Intelligence
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveFullView("review")}
+              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Review Queue
+            </button>
+          </div>
         </div>
       )}
       {renderCitationContext()}
