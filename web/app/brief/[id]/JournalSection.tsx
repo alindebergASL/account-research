@@ -167,6 +167,7 @@ export default function JournalSection({
   const [editText, setEditText] = useState("");
   const [expandedEntries, setExpandedEntries] = useState<string[]>([]);
   const [showUpload, setShowUpload] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
@@ -1485,6 +1486,15 @@ export default function JournalSection({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => setSearchOpen((v) => !v)}
+            aria-pressed={searchOpen}
+            aria-label="Search"
+            className="inline-flex items-center justify-center rounded-[10px] border border-[var(--line)] bg-white p-2 text-ink transition-colors hover:bg-[var(--surface-muted)]"
+          >
+            <Search className="size-4" />
+          </button>
+          <button
+            type="button"
             onClick={() => setPaletteOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
           >
@@ -1567,54 +1577,53 @@ export default function JournalSection({
       <div className="mx-auto max-w-[1100px]">
         <div className="min-w-0">
 
-      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <label className="min-w-0 flex-1 text-sm font-medium text-ink">
-            Search Journal, sources, and review candidates
-            <input
-              value={journalSearchQuery}
-              onChange={(event) => setJournalSearchQuery(event.target.value)}
-              placeholder="Search notes, assistant replies, source snippets, evidence labels, or review cards…"
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-ink placeholder:text-muted"
-            />
-          </label>
+      {(searchOpen || journalSearchResult.isActive) && (
+        <div className="mb-4 rounded-[14px] border border-[var(--line)] bg-[var(--surface)] p-3">
           <div className="flex flex-wrap items-center gap-2">
-            {journalSearchResult.isActive && (
-              <button
-                type="button"
-                onClick={() => setJournalSearchQuery("")}
-                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Clear search
-              </button>
-            )}
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-[var(--line)] bg-white px-3 py-2">
+              <Search className="size-4 shrink-0 text-[var(--text-muted)]" />
+              <input
+                value={journalSearchQuery}
+                onChange={(event) => setJournalSearchQuery(event.target.value)}
+                placeholder="Search notes, sources, evidence labels, or review cards…"
+                autoFocus
+                className="min-w-0 flex-1 bg-transparent text-sm text-ink placeholder:text-[var(--text-muted)] focus:outline-none"
+              />
+              {journalSearchResult.isActive && (
+                <button
+                  type="button"
+                  onClick={() => setJournalSearchQuery("")}
+                  aria-label="Clear search"
+                  className="shrink-0 text-[var(--text-muted)] transition-colors hover:text-ink"
+                >
+                  <X className="size-4" />
+                </button>
+              )}
+            </div>
             <button
               type="button"
               onClick={runSearchRecallPrompt}
               disabled={!journalSearchResult.isActive || !journalSearchResult.hasMatches || posting || loading}
-              className="rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-[10px] border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-3 py-2 text-sm font-medium text-[var(--ai-text)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Ask about search results
+              Ask about results
             </button>
           </div>
+          {journalSearchResult.isActive && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5">
+                {journalSearchResult.entryIds.length} timeline
+              </span>
+              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5">
+                {journalSearchResult.sourceIds.length} sources
+              </span>
+              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5">
+                {journalSearchResult.reviewCandidateIds.length} review cards
+              </span>
+            </div>
+          )}
         </div>
-        {journalSearchResult.isActive && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5">
-              {journalSearchResult.entryIds.length} timeline match{journalSearchResult.entryIds.length === 1 ? "" : "es"}
-            </span>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5">
-              {journalSearchResult.sourceIds.length} source match{journalSearchResult.sourceIds.length === 1 ? "" : "es"}
-            </span>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5">
-              {journalSearchResult.reviewCandidateIds.length} review card match{journalSearchResult.reviewCandidateIds.length === 1 ? "" : "es"}
-            </span>
-            <span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-900">
-              {journalSearchResult.recallSourceDocumentIds.length} included source{journalSearchResult.recallSourceDocumentIds.length === 1 ? "" : "s"} available for recall
-            </span>
-          </div>
-        )}
-      </div>
+      )}
 
       {!activeFullView && centerTab === "timeline" && (
         <div className="mb-6 space-y-4">
