@@ -165,6 +165,8 @@ export default function JournalSection({
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
   const [activeFullView, setActiveFullView] = useState<
     "sources" | "intelligence" | "review" | null
   >(null);
@@ -179,6 +181,19 @@ export default function JournalSection({
     setSelectedSource(null);
     setSelectedCitationContext(null);
   }
+  // ⌘K / Ctrl-K toggles the AI command palette; Escape closes it.
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
+        ev.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (ev.key === "Escape") {
+        setPaletteOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1292,6 +1307,55 @@ export default function JournalSection({
     !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
   const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
   const cockpitDisplay = cockpitDisplayFromModel(cockpitModel);
+  // Command-palette model: every AI action funnels through one on-demand list
+  // (⌘K) instead of always-visible button grids — each item dispatches an
+  // existing handler.
+  const paletteGroups: Array<{
+    label: string;
+    items: Array<{ label: string; run: () => void }>;
+  }> = [
+    {
+      label: "Catch up",
+      items: [
+        { label: "Catch me up — last 24h", run: () => runCatchUpPrompt("24h") },
+        { label: "Catch me up — last 7 days", run: () => runCatchUpPrompt("7d") },
+        { label: "Catch me up — all loaded", run: () => runCatchUpPrompt("all") },
+      ],
+    },
+    {
+      label: "Generate & analyze",
+      items: INTELLIGENCE_ACTIONS.map((a) => ({
+        label: a.label,
+        run: () => runIntelligenceAction(a.prompt),
+      })),
+    },
+    {
+      label: "Quick prompts",
+      items: [
+        {
+          label: "Summarize latest document",
+          run: () =>
+            prepareAssistantPrompt(
+              "Summarize the most recent uploaded document and explain why it matters for this account.",
+            ),
+        },
+        {
+          label: "Suggest brief updates",
+          run: () =>
+            prepareAssistantPrompt(
+              "What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.",
+            ),
+        },
+        {
+          label: "Draft next actions",
+          run: () =>
+            prepareAssistantPrompt(
+              "Turn the recent journal notes and documents into recommended next actions for this account.",
+            ),
+        },
+      ],
+    },
+  ];
 
   function filteredSourceDocumentIds(ids: string[], additionalAvailableDocumentIds: string[] = []): string[] {
     const availableIds = new Set([...sources.map((source) => source.id), ...additionalAvailableDocumentIds]);
@@ -2353,31 +2417,18 @@ export default function JournalSection({
             </button>
           </div>
         )}
-        {askAi && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => prepareAssistantPrompt("Summarize the most recent uploaded document and explain why it matters for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-            >
-              Summarize latest document
-            </button>
-            <button
-              type="button"
-              onClick={() => prepareAssistantPrompt("What brief updates are supported by the recent journal documents? Cite filenames and be explicit about where each update belongs.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-            >
-              Suggest brief updates
-            </button>
-            <button
-              type="button"
-              onClick={() => prepareAssistantPrompt("Turn the recent journal notes and documents into recommended next actions for this account.")}
-              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-            >
-              Draft next actions
-            </button>
-          </div>
-        )}
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
+          >
+            <Sparkles className="size-3" /> Ask / generate…
+            <span className="ml-1 rounded border border-violet-200 bg-white px-1 text-[10px] text-violet-500">
+              ⌘K
+            </span>
+          </button>
+        </div>
         <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -2557,6 +2608,76 @@ export default function JournalSection({
                 The selected source preview does not match this search. Clear search or open a matching source.
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {paletteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[10vh]"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI command palette"
+        >
+          <div
+            className="absolute inset-0 bg-slate-900/30"
+            onClick={() => setPaletteOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-2xl">
+            <div className="flex items-center gap-2 border-b border-[var(--line)] px-3 py-2">
+              <Sparkles className="size-4 shrink-0 text-violet-600" />
+              <input
+                autoFocus
+                value={paletteQuery}
+                onChange={(e) => setPaletteQuery(e.target.value)}
+                placeholder="Ask or generate… (catch up, what changed, summarize, draft actions)"
+                className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-muted"
+              />
+              <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-muted">
+                Esc
+              </span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {(() => {
+                const q = paletteQuery.trim().toLowerCase();
+                const groups = paletteGroups
+                  .map((group) => ({
+                    label: group.label,
+                    items: group.items.filter((it) => it.label.toLowerCase().includes(q)),
+                  }))
+                  .filter((group) => group.items.length > 0);
+                if (groups.length === 0) {
+                  return (
+                    <p className="px-2 py-6 text-center text-sm text-muted">
+                      No matching actions.
+                    </p>
+                  );
+                }
+                return groups.map((group) => (
+                  <div key={group.label} className="mb-2">
+                    <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      {group.label}
+                    </div>
+                    {group.items.map((it) => (
+                      <button
+                        key={it.label}
+                        type="button"
+                        onClick={() => {
+                          it.run();
+                          setPaletteOpen(false);
+                          setPaletteQuery("");
+                        }}
+                        disabled={posting || loading}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        <Sparkles className="size-3 shrink-0 text-violet-500" />
+                        {it.label}
+                      </button>
+                    ))}
+                  </div>
+                ));
+              })()}
+            </div>
           </div>
         </div>
       )}
