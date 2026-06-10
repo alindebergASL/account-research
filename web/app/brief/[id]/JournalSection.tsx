@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
+  ArrowUpRight,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   FileText,
   Loader2,
@@ -83,7 +85,7 @@ import {
   summarizeDocumentPrompt,
   trustedLegendStart,
 } from "./journal/helpers";
-import { Badge, Card, EmptyState, SectionHeader } from "./journal/ui";
+import { Badge, type BadgeTone, Card, EmptyState, SectionHeader } from "./journal/ui";
 
 function renderCitationChips(
   entry: Entry,
@@ -162,6 +164,7 @@ export default function JournalSection({
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [expandedEntries, setExpandedEntries] = useState<string[]>([]);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
@@ -1444,20 +1447,109 @@ export default function JournalSection({
   }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
 
 
+  function toggleExpanded(id: string) {
+    setExpandedEntries((cur) =>
+      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+    );
+  }
+  function recentResearchSummary(e: Entry): { title: string; badge: string; tone: BadgeTone } {
+    const docName = e.documents && e.documents.length > 0 ? e.documents[0].filename : null;
+    if (docName) return { title: `Uploaded document: ${docName}`, badge: "Evidence", tone: "source" };
+    const body = (displayEntryBody(e) || "").replace(/\s+/g, " ").trim();
+    const snippet = body.length > 90 ? body.slice(0, 90) + "\u2026" : body || "(no text)";
+    if (e.author_type === "assistant") return { title: snippet, badge: "Assistant", tone: "assistant" };
+    return { title: snippet, badge: "Note", tone: "neutral" };
+  }
+
   return (
     <section className="max-w-[1180px] mx-auto px-6 mt-6 pb-24">
-      <header className="flex items-center gap-2 mb-1">
-        <BookOpen className="size-5 text-muted" />
-        <h2 className="text-lg font-semibold text-ink">Journal</h2>
-        {entries && entries.length > 0 && (
-          <span className="text-sm text-muted">({entries.length})</span>
-        )}
-      </header>
-      <p className="text-sm text-muted mb-4">
-        Log updates, attach evidence, and ask the journal assistant to interpret
-        recent notes or uploaded documents. Journal replies are advisory; use the
-        main brief chat when you want the brief itself edited.
-      </p>
+      {/* Editorial account header */}
+      <div className="mb-5 flex flex-col gap-3 border-b border-[var(--border-subtle)] pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="font-editorial text-2xl font-semibold text-ink">
+            {briefContext.account_name}
+          </h2>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--text-secondary)]">
+            <span>{totalSourceCount} sources</span>
+            <span aria-hidden>·</span>
+            <span>{entries?.length ?? 0} journal entries</span>
+            <span aria-hidden>·</span>
+            <span className={reviewCandidates.length > 0 ? "text-[var(--warning-text)]" : ""}>
+              {reviewCandidates.length} items need review
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
+          >
+            <Sparkles className="size-3.5 text-[var(--ai-text)]" /> Ask
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveFullView(null);
+              setCenterTab("timeline");
+              setAskAi(false);
+              window.setTimeout(() => composeRef.current?.focus(), 0);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
+          >
+            <Pencil className="size-3.5" /> Add note
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveFullView("review")}
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
+          >
+            Review queue
+            {reviewCandidates.length > 0 && (
+              <span className="rounded-full bg-[var(--warning-bg)] px-1.5 text-xs font-semibold text-[var(--warning-text)]">
+                {reviewCandidates.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Quiet mode tabs */}
+      <div className="mb-5 flex flex-wrap items-center gap-1 text-sm" role="tablist" aria-label="Journal mode">
+        {(
+          [
+            ["journal", "Journal", !activeFullView && centerTab === "timeline"],
+            ["team", "Team Room", !activeFullView && centerTab === "team"],
+            ["sources", "Sources", activeFullView === "sources"],
+            ["review", "Review Queue", activeFullView === "review"],
+          ] as const
+        ).map(([id, label, active]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => {
+              if (id === "journal") {
+                setActiveFullView(null);
+                setCenterTab("timeline");
+              } else if (id === "team") {
+                setActiveFullView(null);
+                setCenterTab("team");
+              } else {
+                setActiveFullView(id);
+              }
+            }}
+            className={`rounded-[10px] px-3 py-1.5 font-medium transition-colors ${
+              active
+                ? "bg-[var(--active-dark)] text-white"
+                : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {error && (
         <div className="mb-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
@@ -1521,81 +1613,102 @@ export default function JournalSection({
         )}
       </div>
 
-      {activeFullView ? (
-        <div className="mb-4 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setActiveFullView(null)}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-slate-50"
-          >
-            ← Back to feed
-          </button>
-          <span className="text-sm font-semibold text-muted">
-            {activeFullView === "sources"
-              ? "Source Library"
-              : activeFullView === "review"
-                ? "Review Queue"
-                : "Journal Intelligence"}
-          </span>
-        </div>
-      ) : (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <div
-            className="inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm"
-            role="tablist"
-            aria-label="Journal feed"
-          >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={centerTab === "timeline"}
-            onClick={() => setCenterTab("timeline")}
-            className={`rounded-md px-3 py-1.5 transition-colors ${
-              centerTab === "timeline" ? "bg-ink text-white" : "text-muted hover:text-ink"
-            }`}
-          >
-            Timeline
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={centerTab === "team"}
-            onClick={() => setCenterTab("team")}
-            className={`rounded-md px-3 py-1.5 transition-colors ${
-              centerTab === "team" ? "bg-ink text-white" : "text-muted hover:text-ink"
-            }`}
-          >
-            Team Room
-          </button>
+      {!activeFullView && centerTab === "timeline" && (
+        <div className="mb-6 space-y-4">
+          {/* Current understanding — the main object on the page */}
+          <div className="rounded-[20px] border border-[var(--line)] bg-[var(--surface)] p-6">
+            <div className="flex items-start gap-4">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--surface-muted)] text-[var(--ai-text)]">
+                <Sparkles className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-editorial text-xl font-semibold text-ink">Current understanding</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+                  {briefContext.priority_summary ||
+                    "No current-priority summary yet. Add notes and evidence, then ask the assistant to synthesize where the account stands."}
+                </p>
+                <ul className="mt-3 space-y-1.5 text-sm text-ink">
+                  {briefContext.next_action && (
+                    <li className="flex gap-2">
+                      <span className="text-[var(--text-muted)]">•</span>
+                      <span>Next action: {briefContext.next_action}</span>
+                    </li>
+                  )}
+                  <li className="flex gap-2">
+                    <span className="text-[var(--text-muted)]">•</span>
+                    <span>
+                      {totalSourceCount} sources gathered · {totalIncludedSourceCount} in AI context.
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-[var(--text-muted)]">•</span>
+                    <span>
+                      {reviewCandidates.length > 0
+                        ? `${reviewCandidates.length} review candidate${reviewCandidates.length === 1 ? "" : "s"} awaiting a decision.`
+                        : "No open review candidates."}
+                    </span>
+                  </li>
+                </ul>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveFullView("sources")}
+                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
+                  >
+                    <FileText className="size-3.5" /> View evidence
+                  </button>
+                  {onViewBriefBaseline && (
+                    <button
+                      type="button"
+                      onClick={onViewBriefBaseline}
+                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
+                    >
+                      <Pencil className="size-3.5" /> Update brief
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      runIntelligenceAction(
+                        "Generate an account update from the recent journal notes and uploaded documents, explicitly comparing it to the current brief baseline. Use sections: What changed, Current brief baseline, Evidence, Recommended next moves. Cite source labels like [J1] and [D1].",
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
+                  >
+                    <Sparkles className="size-3.5 text-[var(--ai-text)]" /> Draft narrative
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-          {/* Below xl the Studio rail (which holds Intelligence/Review entry
-              points) is hidden, so surface the preserved full views here too. */}
-          <div className="flex flex-wrap items-center gap-1.5 xl:hidden">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-              Full views
-            </span>
-            <button
-              type="button"
-              onClick={() => setActiveFullView("sources")}
-              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Sources
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveFullView("intelligence")}
-              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Intelligence
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveFullView("review")}
-              className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Review Queue
-            </button>
-          </div>
+
+          {/* Recommended next move — one specific action */}
+          {briefContext.next_action && (
+            <div className="flex items-start justify-between gap-4 rounded-[20px] border border-[var(--line)] bg-[var(--surface)] p-5">
+              <div className="flex min-w-0 items-start gap-4">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--success-bg)] text-[var(--success-text)]">
+                  <CheckCircle2 className="size-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-ink">Recommended next move</h3>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">{briefContext.next_action}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  prepareAssistantPrompt(
+                    `Draft a concise, source-backed narrative for this recommended next move: ${briefContext.next_action}. Use the current brief baseline plus recent journal notes and uploaded documents, and cite source labels like [J1] and [D1].`,
+                  )
+                }
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--primary)] px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--primary-hover)]"
+              >
+                Do this <ArrowUpRight className="size-3.5" />
+              </button>
+            </div>
+          )}
+
+          <h3 className="pt-1 text-sm font-semibold text-ink">Recent research</h3>
         </div>
       )}
 
@@ -2259,7 +2372,37 @@ export default function JournalSection({
           />
         ))}
 
-      {!activeFullView && centerTab === "timeline" && filteredEntries && filteredEntries.map((e) => renderEntry(e))}
+      {!activeFullView &&
+        centerTab === "timeline" &&
+        filteredEntries &&
+        filteredEntries.length > 0 && (
+          <div className="overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)]">
+            {filteredEntries.map((e) => {
+              const expanded = expandedEntries.includes(e.id);
+              const { title, badge, tone } = recentResearchSummary(e);
+              return (
+                <div key={e.id} className="border-b border-[var(--border-subtle)] last:border-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(e.id)}
+                    aria-expanded={expanded}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
+                  >
+                    <span className="w-14 shrink-0 text-xs text-[var(--text-muted)]">
+                      {relativeTime(e.created_at)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
+                    <Badge tone={tone}>{badge}</Badge>
+                    <ChevronDown
+                      className={`size-4 shrink-0 text-[var(--text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  {expanded && <div className="px-3 pb-3">{renderEntry(e)}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
       {aiError && (
         <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -2275,7 +2418,7 @@ export default function JournalSection({
       )}
 
       {!activeFullView ? (
-      <div className="mt-6 rounded-xl border border-[var(--line)] bg-white p-4">
+      <div className="mt-6 rounded-[18px] border border-[var(--line)] bg-[var(--surface)] p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div
             role="group"

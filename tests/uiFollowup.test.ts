@@ -63,15 +63,15 @@ test("JournalSection default render is Timeline-first with Team Room as a sub-ta
     }),
   );
 
-  const timelineIndex = html.indexOf("Timeline");
+  // PR-D editorial IA: the default Journal view leads with the account header and
+  // the "Current understanding" hero; Journal is the active mode, Team Room a tab.
+  const journalIndex = html.indexOf("Journal");
   const teamIndex = html.indexOf("Team Room");
-  assert.ok(timelineIndex >= 0, "Timeline tab should render");
+  assert.ok(journalIndex >= 0, "Journal mode tab should render");
   assert.ok(teamIndex >= 0, "Team Room tab should render");
-  // PR-C NotebookLM IA: chat-first. Timeline is the default feed tab and renders
-  // before Team Room, which is now a sub-tab of the center feed.
-  assert.ok(timelineIndex < teamIndex, "Timeline should render before Team Room");
-  assert.match(html, /aria-selected="true"[^>]*>Timeline/);
-  // Sources panel grounds in the current brief baseline.
+  assert.match(html, /aria-selected="true"[^>]*>Journal/);
+  assert.match(html, /Current understanding/);
+  // Editorial header grounds in the account + brief baseline.
   assert.match(html, /California Community Colleges System/);
-  assert.match(html, /Current brief priority/);
+  assert.match(html, /Brief baseline summary/);
 });
