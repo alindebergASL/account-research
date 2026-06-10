@@ -1429,10 +1429,10 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_320px]">
-        <aside className="lg:sticky lg:top-4 lg:self-start">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_320px]">
+        <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
           <nav
-            className="flex gap-1 overflow-x-auto rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm lg:flex-col lg:overflow-visible"
+            className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm lg:flex-col lg:overflow-visible"
             aria-label="Journal sections"
           >
         {workspaceTabs.map((tab) => {
