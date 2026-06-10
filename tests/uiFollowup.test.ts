@@ -43,7 +43,7 @@ test("SourceLink renders only plain http and https URLs as anchors", () => {
   }
 });
 
-test("JournalSection default render puts Team Room first and counts brief baseline sources", () => {
+test("JournalSection default render is Timeline-first with Team Room as a sub-tab", () => {
   const html = renderToStaticMarkup(
     React.createElement(JournalSection, {
       briefId: "brief-ui",
@@ -63,13 +63,15 @@ test("JournalSection default render puts Team Room first and counts brief baseli
     }),
   );
 
-  const teamIndex = html.indexOf("Team Room");
   const timelineIndex = html.indexOf("Timeline");
-  assert.ok(teamIndex >= 0, "Team Room tab should render");
+  const teamIndex = html.indexOf("Team Room");
   assert.ok(timelineIndex >= 0, "Timeline tab should render");
-  assert.ok(teamIndex < timelineIndex, "Team Room should render before Timeline");
-  assert.match(html, /aria-pressed="true"[^>]*><span[^>]*>Team Room/);
-  assert.match(html, /Current brief sources/);
-  assert.match(html, /2 saved sources/);
-  assert.match(html, /Sources<span class="rounded-full px-2 py-0\.5 text-xs bg-slate-100 text-muted">2<\/span>/);
+  assert.ok(teamIndex >= 0, "Team Room tab should render");
+  // PR-C NotebookLM IA: chat-first. Timeline is the default feed tab and renders
+  // before Team Room, which is now a sub-tab of the center feed.
+  assert.ok(timelineIndex < teamIndex, "Timeline should render before Team Room");
+  assert.match(html, /aria-selected="true"[^>]*>Timeline/);
+  // Sources panel grounds in the current brief baseline.
+  assert.match(html, /California Community Colleges System/);
+  assert.match(html, /Current brief priority/);
 });

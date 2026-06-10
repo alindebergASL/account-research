@@ -194,6 +194,8 @@ export default function JournalSection({
         setPaletteOpen((v) => !v);
       } else if (ev.key === "Escape") {
         setPaletteOpen(false);
+        setSelectedSource(null);
+        setSelectedCitationContext(null);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -783,19 +785,19 @@ export default function JournalSection({
     return (
       <div ref={sourcePreviewRef} className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
               <FileText className="size-3.5" /> Source preview
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-ink">{selectedSource.filename}</h3>
+            <h3 className="mt-3 truncate text-sm font-semibold text-ink" title={selectedSource.filename}>{selectedSource.filename}</h3>
             <p className="mt-1 text-xs text-muted">
               Uploaded {relativeTime(selectedSource.created_at)} by {selectedSource.entryAuthor} · {formatFileSize(selectedSource.byte_size)}
             </p>
           </div>
           <button
             type="button"
-            onClick={() => setSelectedSource(null)}
-            className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
+            onClick={closePeek}
+            className="shrink-0 rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
             aria-label="Close source preview"
           >
             <X className="size-4" />
@@ -863,7 +865,7 @@ export default function JournalSection({
           </div>
           <button
             type="button"
-            onClick={() => setSelectedCitationContext(null)}
+            onClick={closePeek}
             className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
             aria-label="Close citation source context"
           >
@@ -1012,7 +1014,6 @@ export default function JournalSection({
           preview: source.content_preview,
           evidenceSnippet,
         });
-        setActiveFullView("sources");
         return;
       }
       const briefSource = resolveCitedBriefSource(label, entry.body, currentBriefSources);
@@ -1025,7 +1026,6 @@ export default function JournalSection({
           accessed: briefSource.accessed,
           evidenceSnippet,
         });
-        setActiveFullView("sources");
         return;
       }
     }
@@ -1040,8 +1040,6 @@ export default function JournalSection({
           meta: `${authorName(journalEntry)} · ${relativeTime(journalEntry.created_at)}`,
           evidenceSnippet,
         });
-        setTimelineFilter("all");
-        goToComposer();
         return;
       }
     }
@@ -1051,8 +1049,6 @@ export default function JournalSection({
       message:
         "This citation label was present in the assistant reply, but the current Journal data could not resolve it to a saved note, uploaded document, or brief source. No evidence was fabricated.",
     });
-    setTimelineFilter("all");
-    goToComposer();
   }
 
   function renderAssistantReviewSuggestions(entry: Entry) {
@@ -1202,7 +1198,7 @@ export default function JournalSection({
               </div>
             </div>
           ) : (
-            <p className="mt-2 text-sm whitespace-pre-wrap text-ink">
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-ink">
               {deleted ? (
                 <span className="italic text-muted">
                   This entry was deleted.
@@ -1604,7 +1600,7 @@ export default function JournalSection({
           </Card>
             </>
           )}
-        </aside>        <div className="min-w-0">
+        </aside>        <div className="order-first min-w-0 lg:order-none">
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -1940,6 +1936,11 @@ export default function JournalSection({
 
       {activeFullView === "review" && (
         <div className="mb-4 space-y-4">
+          {reviewError && (
+            <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+              {reviewError}
+            </div>
+          )}
           <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -2123,11 +2124,6 @@ export default function JournalSection({
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
             </div>
-            {reviewError && (
-              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
-                {reviewError}
-              </div>
-            )}
             <div className="mt-3 flex justify-end">
               <button
                 type="button"
