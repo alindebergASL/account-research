@@ -2615,10 +2615,10 @@ test("JournalSection exposes search UI, source-scoped recall, catch-up windows, 
     "utf8",
   );
 
-  assert.match(journalSource, /Search Journal, sources, and review candidates/);
+  assert.match(journalSource, /Search notes, sources, evidence labels/);
   assert.match(journalSource, /journalSearchQuery/);
   assert.match(journalSource, /searchJournalWorkspace/);
-  assert.match(journalSource, /Ask about search results/);
+  assert.match(journalSource, /Ask about results/);
   assert.match(journalSource, /recallSourceDocumentIds/);
   assert.match(journalSource, /requireSourceDocumentScope/);
   assert.match(journalSource, /source_document_ids: safeSourceDocumentIds/);
