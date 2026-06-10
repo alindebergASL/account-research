@@ -41,7 +41,7 @@ export function SectionHeader({
           {icon}
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
           {count !== undefined && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+            <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-muted">
               {count}
             </span>
           )}
@@ -65,12 +65,12 @@ export type BadgeTone =
   | "source";
 
 const BADGE_TONES: Record<BadgeTone, string> = {
-  neutral: "border-slate-200 bg-slate-50 text-slate-700",
-  assistant: "border-violet-200 bg-violet-50 text-violet-800",
-  review: "border-amber-200 bg-amber-50 text-amber-800",
-  risk: "border-rose-200 bg-rose-50 text-rose-800",
-  accepted: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  source: "border-sky-200 bg-sky-50 text-sky-900",
+  neutral: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]",
+  assistant: "border-[var(--border-subtle)] bg-[var(--ai-bg)] text-[var(--ai-text)]",
+  review: "border-[var(--border-subtle)] bg-[var(--warning-bg)] text-[var(--warning-text)]",
+  risk: "border-[var(--border-subtle)] bg-[var(--risk-bg)] text-[var(--risk-text)]",
+  accepted: "border-[var(--border-subtle)] bg-[var(--success-bg)] text-[var(--success-text)]",
+  source: "border-[var(--border-subtle)] bg-[var(--info-bg)] text-[var(--info-text)]",
 };
 
 export function Badge({
@@ -112,7 +112,7 @@ export function EmptyState({
       className={`flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--line)] bg-white px-6 py-10 text-center ${className}`}
     >
       {icon && (
-        <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+        <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-[var(--surface-muted)] text-[var(--text-muted)]">
           {icon}
         </div>
       )}

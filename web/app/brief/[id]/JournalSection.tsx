@@ -95,14 +95,14 @@ function renderCitationChips(
   const labels = extractCitationLabels(entry);
   if (labels.length === 0) return null;
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-violet-900">
+    <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-[var(--ai-text)]">
       <span className="font-medium">Sources cited</span>
       {labels.map((label) => (
         <button
           key={label}
           type="button"
           onClick={() => onCitationClick?.(label, entry)}
-          className="rounded-full border border-violet-200 bg-white px-2 py-0.5 font-mono text-[11px] text-violet-800 shadow-sm hover:bg-violet-50"
+          className="rounded-full border border-[var(--border-subtle)] bg-white px-2 py-0.5 font-mono text-[11px] text-[var(--ai-text)] shadow-sm hover:bg-[var(--surface-muted)]"
           title="Open cited source context"
         >
           {label}
@@ -646,24 +646,24 @@ export default function JournalSection({
         key={`${source.entryId}-${source.id}`}
         className={`rounded-xl border p-4 transition-colors ${
           isExcluded
-            ? "border-slate-200 bg-slate-50 opacity-75"
-            : "border-slate-200 bg-white hover:border-slate-300"
+            ? "border-[var(--line)] bg-[var(--surface-muted)] opacity-75"
+            : "border-[var(--line)] bg-white hover:border-[var(--border-subtle)]"
         }`}
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
               <FileText className="size-3" /> Source
             </span>
             <span className="text-xs text-muted" title={new Date(source.created_at).toISOString()}>
               Uploaded {relativeTime(source.created_at)} by {source.entryAuthor}
             </span>
             {isExcluded ? (
-              <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">
+              <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-2 py-0.5 text-xs font-medium text-[var(--risk-text)]">
                 Excluded from AI context
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+              <span className="inline-flex items-center gap-1 text-xs text-[var(--success-text)]">
                 <CheckCircle2 className="size-3" /> In AI context
               </span>
             )}
@@ -675,17 +675,17 @@ export default function JournalSection({
             {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source health</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Source health</span>
             {healthBadges.map((badge) => (
               <span
                 key={badge.status}
                 title={badge.description}
                 className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                   badge.status === "current"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    ? "border-[var(--border-subtle)] bg-[var(--success-bg)] text-[var(--success-text)]"
                     : badge.status === "conflicting"
-                      ? "border-rose-200 bg-rose-50 text-rose-800"
-                      : "border-amber-200 bg-amber-50 text-amber-800"
+                      ? "border-[var(--border-subtle)] bg-[var(--risk-bg)] text-[var(--risk-text)]"
+                      : "border-[var(--border-subtle)] bg-[var(--warning-bg)] text-[var(--warning-text)]"
                 }`}
               >
                 {badge.label}
@@ -693,7 +693,7 @@ export default function JournalSection({
             ))}
           </div>
         </div>
-        <p className="mt-3 line-clamp-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
+        <p className="mt-3 line-clamp-4 whitespace-pre-wrap rounded-lg bg-[var(--surface-muted)] p-3 text-xs text-[var(--text-secondary)]">
           {source.content_preview || "No text preview extracted."}
         </p>
         {source.entryBody && (
@@ -701,13 +701,13 @@ export default function JournalSection({
             Attached to journal note: {source.entryBody}
           </p>
         )}
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border-subtle)] pt-3">
           {/* Primary source actions */}
           <button
             type="button"
             disabled={isExcluded}
             onClick={() => prepareAssistantPrompt(askAboutSourcePrompt(source.filename), [source.id], true)}
-            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-2.5 py-1 text-xs font-medium text-[var(--ai-text)] transition-colors hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Sparkles className="size-3" /> Ask about this source
           </button>
@@ -722,22 +722,22 @@ export default function JournalSection({
                 0,
               );
             }}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)]"
           >
             Preview source
           </button>
           <button
             type="button"
             onClick={() => toggleSourceExclusion(source)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)]"
           >
             {isExcluded ? "Include source" : "Exclude source"}
           </button>
           <details className="group relative ml-auto">
-            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] [&::-webkit-details-marker]:hidden">
               More source actions
             </summary>
-            <div className="absolute right-0 z-10 mt-2 flex w-60 flex-col gap-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+            <div className="absolute right-0 z-10 mt-2 flex w-60 flex-col gap-1 rounded-lg border border-[var(--line)] bg-white p-2 shadow-lg">
               {/* Secondary source actions */}
               <button
                 type="button"
@@ -746,8 +746,8 @@ export default function JournalSection({
                 aria-pressed={isSelected && !isExcluded}
                 className={`rounded-md border px-2 py-1 text-left text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   isSelected && !isExcluded
-                    ? "border-violet-300 bg-violet-600 text-white"
-                    : "border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+                    ? "border-[var(--border-subtle)] bg-[var(--primary)] text-white"
+                    : "border-[var(--border-subtle)] bg-white text-[var(--ai-text)] hover:bg-[var(--surface-muted)]"
                 }`}
               >
                 {isSelected && !isExcluded ? "Selected for batch AI" : "Select for batch AI"}
@@ -756,15 +756,15 @@ export default function JournalSection({
                 type="button"
                 disabled={isExcluded}
                 onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(source.filename), [source.id], true)}
-                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-white px-2 py-1 text-left text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Sparkles className="size-3 text-violet-600" /> Summarize
+                <Sparkles className="size-3 text-[var(--ai-text)]" /> Summarize
               </button>
               <button
                 type="button"
                 disabled={isExcluded}
                 onClick={() => prepareAssistantPrompt(briefUpdatePrompt(source.filename), [source.id], true)}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-left text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Find supported brief updates
               </button>
@@ -772,7 +772,7 @@ export default function JournalSection({
                 type="button"
                 disabled={isExcluded}
                 onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(source.filename), [source.id], true)}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-left text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Compare with brief
               </button>
@@ -787,10 +787,10 @@ export default function JournalSection({
     if (!selectedSource) return null;
     const isSelectedSourceExcluded = excludedDocumentIds.includes(selectedSource.id);
     return (
-      <div ref={sourcePreviewRef} className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+      <div ref={sourcePreviewRef} className="rounded-2xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--info-bg)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--info-text)]">
               <FileText className="size-3.5" /> Source preview
             </div>
             <h3 className="mt-3 truncate text-sm font-semibold text-ink" title={selectedSource.filename}>{selectedSource.filename}</h3>
@@ -801,22 +801,22 @@ export default function JournalSection({
           <button
             type="button"
             onClick={closePeek}
-            className="shrink-0 rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
+            className="shrink-0 rounded-md border border-[var(--line)] bg-white p-1 text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
             aria-label="Close source preview"
           >
             <X className="size-4" />
           </button>
         </div>
-        <p className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-800">
+        <p className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--surface-muted)] p-3 text-sm text-ink">
           {selectedSource.content_preview || "No text preview extracted."}
         </p>
         {selectedSource.entryBody && (
-          <p className="mt-3 rounded-lg border border-slate-100 bg-white p-3 text-xs text-muted">
+          <p className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-white p-3 text-xs text-muted">
             Attached journal note: {selectedSource.entryBody}
           </p>
         )}
         {isSelectedSourceExcluded && (
-          <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+          <p className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] p-3 text-xs text-[var(--risk-text)]">
             This source is excluded from AI context. Include it before running source-scoped prompts from this preview.
           </p>
         )}
@@ -825,7 +825,7 @@ export default function JournalSection({
             type="button"
             disabled={isSelectedSourceExcluded}
             onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(selectedSource.filename), [selectedSource.id], true)}
-            className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-2 py-1 text-xs font-medium text-[var(--ai-text)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Sparkles className="size-3" /> Summarize
           </button>
@@ -833,7 +833,7 @@ export default function JournalSection({
             type="button"
             disabled={isSelectedSourceExcluded}
             onClick={() => prepareAssistantPrompt(compareWithBriefPrompt(selectedSource.filename), [selectedSource.id], true)}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Compare with brief
           </button>
@@ -854,10 +854,10 @@ export default function JournalSection({
     if (!selectedCitationContext) return null;
     const context = selectedCitationContext;
     return (
-      <div className="mb-4 rounded-2xl border border-violet-200 bg-white p-4 shadow-sm">
+      <div className="mb-4 rounded-2xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--ai-text)]">
               <Sparkles className="size-3.5" /> Citation source context {context.label}
             </div>
             <h3 className="mt-3 text-sm font-semibold text-ink">
@@ -870,37 +870,37 @@ export default function JournalSection({
           <button
             type="button"
             onClick={closePeek}
-            className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50"
+            className="rounded-md border border-[var(--line)] bg-white p-1 text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
             aria-label="Close citation source context"
           >
             <X className="size-4" />
           </button>
         </div>
         {context.kind === "journal" && (
-          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <div className="mt-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-3">
             <p className="text-xs font-medium text-muted">{context.meta}</p>
-            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">
+            <p className="mt-2 whitespace-pre-wrap text-sm text-ink">
               {context.body || "No journal text available."}
             </p>
           </div>
         )}
         {context.kind === "document" && (
-          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <div className="mt-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-3">
             <p className="text-sm font-medium text-ink">{context.title}</p>
             {context.preview && (
-              <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-sm text-slate-900">
+              <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-sm text-ink">
                 {context.preview}
               </p>
             )}
           </div>
         )}
         {context.kind === "brief_source" && (
-          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <div className="mt-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-3">
             <p className="text-sm font-medium text-ink">{context.title || "Untitled source"}</p>
             <div className="mt-1 text-sm">
               <SourceLink
                 source={context.url}
-                className="break-all text-sky-800 hover:underline"
+                className="break-all text-[var(--info-text)] hover:underline"
                 mutedClassName="break-all text-muted"
               />
             </div>
@@ -908,20 +908,20 @@ export default function JournalSection({
           </div>
         )}
         {context.kind !== "unresolved" && context.evidenceSnippet && (
-          <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+          <div className="mt-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--ai-bg)] p-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ai-text)]">
                   Cited source snippet
                 </p>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-violet-950">
+                <p className="mt-1 whitespace-pre-wrap text-sm text-[var(--ai-text)]">
                   {context.evidenceSnippet}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => copyCitationEvidence(context.evidenceSnippet || "")}
-                className="shrink-0 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100"
+                className="shrink-0 rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1 text-xs font-medium text-[var(--ai-text)] hover:bg-[var(--surface-muted)]"
               >
                 Copy evidence snippet
               </button>
@@ -929,7 +929,7 @@ export default function JournalSection({
           </div>
         )}
         {context.kind === "unresolved" && (
-          <p className="mt-3 rounded-xl border border-dashed border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
+          <p className="mt-3 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--ai-bg)] p-3 text-sm text-[var(--ai-text)]">
             {context.message}
           </p>
         )}
@@ -939,14 +939,14 @@ export default function JournalSection({
 
   function renderReviewCandidate(candidate: ReviewCandidate) {
     return (
-      <div key={candidate.id} className="rounded-xl border border-amber-200 bg-white p-4 shadow-sm">
+      <div key={candidate.id} className="rounded-xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+              <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-2 py-0.5 text-xs font-medium text-[var(--warning-text)]">
                 {candidateTypeLabels[candidate.candidate_type]}
               </span>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
+              <span className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
                 {candidateStatusLabels[candidate.status]}
               </span>
               {candidate.confidence && <span className="text-xs text-muted">Confidence: {candidate.confidence}</span>}
@@ -959,7 +959,7 @@ export default function JournalSection({
             value={candidate.status}
             disabled={reviewLoading}
             onChange={(ev) => updateCandidateStatus(candidate.id, ev.target.value as ReviewCandidateStatus)}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+            className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs text-[var(--text-secondary)]"
           >
             {Object.entries(candidateStatusLabels).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
@@ -967,18 +967,18 @@ export default function JournalSection({
           </select>
         </div>
         {candidate.current_baseline && (
-          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs text-slate-700">
-            <span className="font-semibold text-slate-800">Current baseline:</span> {candidate.current_baseline}
+          <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-3 text-xs text-[var(--text-secondary)]">
+            <span className="font-semibold text-ink">Current baseline:</span> {candidate.current_baseline}
           </div>
         )}
-        <p className="mt-3 whitespace-pre-wrap text-sm text-slate-900">{candidate.proposed_text}</p>
+        <p className="mt-3 whitespace-pre-wrap text-sm text-ink">{candidate.proposed_text}</p>
         {candidate.evidence && (
-          <p className="mt-3 rounded-lg bg-violet-50 p-3 text-xs text-violet-900">
+          <p className="mt-3 rounded-lg bg-[var(--ai-bg)] p-3 text-xs text-[var(--ai-text)]">
             Evidence: {candidate.evidence}
           </p>
         )}
         {candidate.risk && (
-          <p className="mt-2 rounded-lg bg-rose-50 p-3 text-xs text-rose-900">
+          <p className="mt-2 rounded-lg bg-[var(--risk-bg)] p-3 text-xs text-[var(--risk-text)]">
             Risk / review note: {candidate.risk}
           </p>
         )}
@@ -986,7 +986,7 @@ export default function JournalSection({
           <button
             type="button"
             onClick={() => copyBriefChatPrompt(candidate)}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-muted)]"
           >
             Copy brief-chat prompt
           </button>
@@ -994,7 +994,7 @@ export default function JournalSection({
             <button
               type="button"
               onClick={() => openBriefToApply(candidate)}
-              className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+              className="rounded-md border border-[var(--border-subtle)] bg-[var(--success-bg)] px-2 py-1 text-xs font-medium text-[var(--success-text)] hover:opacity-90"
             >
               Open brief to apply
             </button>
@@ -1059,46 +1059,46 @@ export default function JournalSection({
     const drafts = buildReviewCandidateDraftsFromAssistantEntry(entry).slice(0, 6);
     if (drafts.length === 0) return null;
     return (
-      <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+      <div className="mt-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--warning-bg)] p-3">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--warning-text)]">
               Suggested review candidates
             </p>
-            <p className="mt-1 text-xs text-amber-900">
+            <p className="mt-1 text-xs text-[var(--warning-text)]">
               Assistant output is advisory. Add only the cards you want humans to review; nothing edits the brief automatically.
             </p>
           </div>
-          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-amber-800">
+          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[var(--warning-text)]">
             {drafts.length} suggestion{drafts.length === 1 ? "" : "s"}
           </span>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {drafts.map((draft, index) => (
-            <div key={`${entry.id}-${index}-${draft.title}`} className="rounded-lg border border-amber-200 bg-white p-3 text-xs shadow-sm">
+            <div key={`${entry.id}-${index}-${draft.title}`} className="rounded-lg border border-[var(--border-subtle)] bg-white p-3 text-xs shadow-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-medium text-amber-800">
+                <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-2 py-0.5 font-medium text-[var(--warning-text)]">
                   {candidateTypeLabels[draft.candidate_type]}
                 </span>
                 {draft.confidence && <span className="text-muted">Confidence: {draft.confidence}</span>}
               </div>
               <h4 className="mt-2 text-sm font-semibold text-ink">{draft.title}</h4>
               {draft.target && <p className="mt-1 text-muted">Target: {draft.target}</p>}
-              <p className="mt-2 line-clamp-3 text-slate-800">{draft.proposed_text}</p>
-              {draft.evidence && <p className="mt-2 text-violet-800">Evidence: {draft.evidence}</p>}
+              <p className="mt-2 line-clamp-3 text-ink">{draft.proposed_text}</p>
+              {draft.evidence && <p className="mt-2 text-[var(--ai-text)]">Evidence: {draft.evidence}</p>}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => saveReviewCandidateDraft(draft)}
                   disabled={reviewLoading}
-                  className="rounded-md bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                  className="rounded-md bg-[var(--primary)] px-2 py-1 font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
                 >
                   Add to Review Queue
                 </button>
                 <button
                   type="button"
                   onClick={() => editReviewCandidateDraft(draft)}
-                  className="rounded-md border border-amber-200 bg-white px-2 py-1 font-medium text-amber-800 hover:bg-amber-50"
+                  className="rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1 font-medium text-[var(--warning-text)] hover:bg-[var(--surface-muted)]"
                 >
                   Edit before adding
                 </button>
@@ -1125,7 +1125,7 @@ export default function JournalSection({
         <div
           className={`rounded-xl border p-4 ${
             isAssistant
-              ? "border-violet-200 bg-violet-50/60"
+              ? "border-[var(--border-subtle)] bg-[var(--ai-bg)]/60"
               : "border-[var(--line)] bg-white"
           }`}
         >
@@ -1135,7 +1135,7 @@ export default function JournalSection({
                 {deleted ? "(deleted)" : authorName(e)}
               </span>
               {isAssistant && !deleted && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 border border-violet-200 text-violet-800 px-2 py-0.5 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--ai-bg)] border border-[var(--border-subtle)] text-[var(--ai-text)] px-2 py-0.5 text-xs">
                   <Sparkles className="size-3" /> Assistant
                 </span>
               )}
@@ -1165,7 +1165,7 @@ export default function JournalSection({
                 <button
                   type="button"
                   onClick={() => softDelete(e.id)}
-                  className="inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700"
+                  className="inline-flex items-center gap-1 text-xs text-[var(--risk-text)] hover:opacity-80"
                 >
                   <Trash2 className="size-3" /> Delete
                 </button>
@@ -1221,7 +1221,7 @@ export default function JournalSection({
               <button
                 type="button"
                 onClick={() => draftReviewCandidateFromAssistant(e)}
-                className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-50"
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1 text-xs font-medium text-[var(--warning-text)] shadow-sm hover:bg-[var(--surface-muted)]"
               >
                 <CheckCircle2 className="size-3" /> Draft review candidate
               </button>
@@ -1235,7 +1235,7 @@ export default function JournalSection({
                 return (
                 <div
                   key={doc.id}
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800"
+                  className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-xs text-ink"
                 >
                   <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2 font-medium text-ink">
@@ -1245,7 +1245,7 @@ export default function JournalSection({
                         · {formatFileSize(doc.byte_size)}
                       </span>
                       {isDocExcluded && (
-                        <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800">
+                        <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--risk-text)]">
                           Excluded from AI context
                         </span>
                       )}
@@ -1255,7 +1255,7 @@ export default function JournalSection({
                         type="button"
                         disabled={isDocExcluded}
                         onClick={() => prepareAssistantPrompt(summarizeDocumentPrompt(doc.filename), [doc.id], true)}
-                        className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1 text-xs font-medium text-[var(--ai-text)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Sparkles className="size-3" /> Summarize with AI
                       </button>
@@ -1263,7 +1263,7 @@ export default function JournalSection({
                         type="button"
                         disabled={isDocExcluded}
                         onClick={() => prepareAssistantPrompt(briefUpdatePrompt(doc.filename), [doc.id], true)}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Find brief updates
                       </button>
@@ -1574,7 +1574,7 @@ export default function JournalSection({
       </div>
 
       {error && (
-        <div className="mb-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+        <div className="mb-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
           {error}
         </div>
       )}
@@ -1761,10 +1761,10 @@ export default function JournalSection({
             <div className="p-5">
       {activeFullView === "intelligence" && (
         <div className="mb-4 space-y-4">
-          <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-800">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--ai-text)]">
                 <Sparkles className="size-3.5" /> Journal Intelligence
               </div>
               <h3 className="mt-3 text-base font-semibold text-ink">
@@ -1786,14 +1786,14 @@ export default function JournalSection({
                   disabled={posting || loading || !entries}
                   className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
                     action.primary
-                      ? "border-violet-300 bg-violet-600 text-white shadow-sm hover:bg-violet-700"
-                      : "border-slate-200 bg-white text-ink hover:border-violet-200 hover:bg-violet-50"
+                      ? "border-[var(--border-subtle)] bg-[var(--primary)] text-white shadow-sm hover:bg-[var(--primary-hover)]"
+                      : "border-[var(--line)] bg-white text-ink hover:border-[var(--border-subtle)] hover:bg-[var(--surface-muted)]"
                   }`}
                 >
                   <span className="block font-medium">{action.label}</span>
                   <span
                     className={`mt-0.5 block text-xs ${
-                      action.primary ? "text-violet-100" : "text-muted"
+                      action.primary ? "text-white/80" : "text-muted"
                     }`}
                   >
                     {action.description}
@@ -1804,10 +1804,10 @@ export default function JournalSection({
           </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--line)] bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-indigo-800">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-ink">
                   Account intelligence loop
                 </div>
                 <h3 className="mt-3 text-base font-semibold text-ink">Catch up, review, then promote durable signals</h3>
@@ -1815,38 +1815,38 @@ export default function JournalSection({
                   Use advisory prompts to find what changed, promote only the useful suggestions into human review, then let accepted/sent/applied cards feed the cockpit.
                 </p>
               </div>
-              <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+              <span className="w-fit rounded-full border border-[var(--border-subtle)] bg-[var(--success-bg)] px-3 py-1 text-xs font-medium text-[var(--success-text)]">
                 Official only after human review
               </span>
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-3">
-              <div className="rounded-xl border border-violet-100 bg-violet-50/70 p-3">
-                <div className="text-sm font-semibold text-violet-950">1. Catch up</div>
-                <p className="mt-1 text-xs text-violet-900">Run a windowed catch-up or a focused intelligence action against included sources.</p>
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--ai-bg)]/70 p-3">
+                <div className="text-sm font-semibold text-[var(--ai-text)]">1. Catch up</div>
+                <p className="mt-1 text-xs text-[var(--ai-text)]">Run a windowed catch-up or a focused intelligence action against included sources.</p>
               </div>
-              <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-3">
-                <div className="text-sm font-semibold text-amber-950">2. Review suggestions</div>
-                <p className="mt-1 text-xs text-amber-900">Assistant suggestions stay advisory until you add or edit them as Review Queue cards.</p>
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--warning-bg)]/70 p-3">
+                <div className="text-sm font-semibold text-[var(--warning-text)]">2. Review suggestions</div>
+                <p className="mt-1 text-xs text-[var(--warning-text)]">Assistant suggestions stay advisory until you add or edit them as Review Queue cards.</p>
               </div>
-              <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3">
-                <div className="text-sm font-semibold text-indigo-950">3. Promote cockpit signals</div>
-                <p className="mt-1 text-xs text-indigo-900">Accepted, sent-to-brief-chat, or applied cards become durable cockpit signals with provenance.</p>
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)]/70 p-3">
+                <div className="text-sm font-semibold text-ink">3. Promote cockpit signals</div>
+                <p className="mt-1 text-xs text-ink">Accepted, sent-to-brief-chat, or applied cards become durable cockpit signals with provenance.</p>
               </div>
             </div>
             <div className="mt-4 grid gap-3 text-xs md:grid-cols-2">
-              <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sky-950">
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--info-bg)] px-3 py-2 text-[var(--info-text)]">
                 <span className="font-semibold">Current source scope:</span> {totalIncludedSourceCount} included for AI; {excludedDocumentIds.length} excluded from AI.
               </div>
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-emerald-950">
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--success-bg)] px-3 py-2 text-[var(--success-text)]">
                 <span className="font-semibold">Catch-up freshness:</span> cached catch-ups refresh when Journal entries, source scope, or reviewed cockpit signals change.
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--success-text)]">
                   What changed since
                 </div>
                 <h3 className="mt-1 text-sm font-semibold text-ink">Time-windowed Journal catch-up</h3>
@@ -1868,8 +1868,8 @@ export default function JournalSection({
                     disabled={posting || loading || !entries}
                     className={`rounded-lg border px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
                       catchUpWindow === window
-                        ? "border-emerald-300 bg-emerald-600 text-white"
-                        : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                        ? "border-[var(--border-subtle)] bg-[var(--primary)] text-white"
+                        : "border-[var(--border-subtle)] bg-[var(--success-bg)] text-[var(--success-text)] hover:opacity-90"
                     }`}
                   >
                     {label}
@@ -1879,10 +1879,10 @@ export default function JournalSection({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
                   Reviewed account signals
                 </div>
                 <h3 className="mt-1 text-base font-semibold text-ink">Account Intelligence Cockpit</h3>
@@ -1896,19 +1896,19 @@ export default function JournalSection({
                       ? `read-model refreshed ${relativeTime(cockpitDisplay.refreshedAt)}`
                       : "read-model not generated yet"}
                 </p>
-                {cockpitError && <p className="mt-1 text-xs text-rose-700">{cockpitError}</p>}
+                {cockpitError && <p className="mt-1 text-xs text-[var(--risk-text)]">{cockpitError}</p>}
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2">
-                  <div className="text-lg font-semibold text-indigo-900">{cockpitDisplay.reviewedCount}</div>
-                  <div className="text-indigo-700">reviewed</div>
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-2">
+                  <div className="text-lg font-semibold text-ink">{cockpitDisplay.reviewedCount}</div>
+                  <div className="text-[var(--text-secondary)]">reviewed</div>
                 </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                  <div className="text-lg font-semibold text-slate-800">{cockpitDisplay.pendingCount}</div>
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-2">
+                  <div className="text-lg font-semibold text-ink">{cockpitDisplay.pendingCount}</div>
                   <div className="text-muted">pending</div>
                 </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                  <div className="text-lg font-semibold text-slate-800">{cockpitDisplay.dismissedCount}</div>
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-2">
+                  <div className="text-lg font-semibold text-ink">{cockpitDisplay.dismissedCount}</div>
                   <div className="text-muted">dismissed</div>
                 </div>
               </div>
@@ -1917,7 +1917,7 @@ export default function JournalSection({
               {STRUCTURED_REVIEW_BOARDS.map((board) => {
                 const reviewedCards = cockpitDisplay.cardsByType[board.type];
                 return (
-                  <div key={board.type} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div key={board.type} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3">
                     <div className="flex items-center justify-between gap-2">
                       <h4 className="text-sm font-semibold text-ink">{board.title}</h4>
                       <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{reviewedCards.length}</span>
@@ -1925,7 +1925,7 @@ export default function JournalSection({
                     {reviewedCards.length === 0 ? (
                       <p className="mt-2 text-xs text-muted">No reviewed signal yet.</p>
                     ) : (
-                      <p className="mt-2 line-clamp-3 text-xs text-slate-700">{reviewedCards[0].title}</p>
+                      <p className="mt-2 line-clamp-3 text-xs text-[var(--text-secondary)]">{reviewedCards[0].title}</p>
                     )}
                   </div>
                 );
@@ -1934,28 +1934,28 @@ export default function JournalSection({
             <div className="mt-4 space-y-2">
               <h4 className="text-sm font-semibold text-ink">Priority reviewed cards</h4>
               {cockpitDisplay.priorityCards.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/60 p-4 text-sm text-indigo-950">
+                <div className="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--surface-muted)]/60 p-4 text-sm text-ink">
                   <div className="font-semibold">No reviewed cockpit signals yet</div>
-                  <p className="mt-1 text-indigo-900/80">
+                  <p className="mt-1 text-ink/80">
                     No accepted, sent, or applied review candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
                   </p>
                   <button
                     type="button"
                     onClick={() => setActiveFullView("review")}
-                    className="mt-3 rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-800 hover:bg-indigo-50"
+                    className="mt-3 rounded-md border border-[var(--border-subtle)] bg-white px-3 py-1.5 text-xs font-medium text-ink hover:bg-[var(--surface-muted)]"
                   >
                     Review suggested candidates
                   </button>
                 </div>
               ) : (
                 cockpitDisplay.priorityCards.map((card) => (
-                  <div key={card.candidate_id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                  <div key={card.candidate_id} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium text-ink">{card.title}</span>
                       <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{candidateStatusLabels[card.status as ReviewCandidateStatus]}</span>
                     </div>
                     <p className="mt-1 line-clamp-2 text-muted">{card.text}</p>
-                    {card.evidence && <p className="mt-2 text-xs text-slate-600">Evidence: {card.evidence}</p>}
+                    {card.evidence && <p className="mt-2 text-xs text-[var(--text-secondary)]">Evidence: {card.evidence}</p>}
                   </div>
                 ))
               )}
@@ -1967,14 +1967,14 @@ export default function JournalSection({
       {activeFullView === "review" && (
         <div className="mb-4 space-y-4">
           {reviewError && (
-            <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+            <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
               {reviewError}
             </div>
           )}
-          <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-800">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--warning-text)]">
                   <CheckCircle2 className="size-3.5" /> Review Queue
                 </div>
                 <h3 className="mt-3 text-base font-semibold text-ink">
@@ -1997,14 +1997,14 @@ export default function JournalSection({
                     disabled={posting || loading || !entries}
                     className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       action.primary
-                        ? "border-amber-300 bg-amber-600 text-white shadow-sm hover:bg-amber-700"
-                        : "border-slate-200 bg-white text-ink hover:border-amber-200 hover:bg-amber-50"
+                        ? "border-[var(--border-subtle)] bg-[var(--primary)] text-white shadow-sm hover:bg-[var(--primary-hover)]"
+                        : "border-[var(--line)] bg-white text-ink hover:border-[var(--border-subtle)] hover:bg-[var(--surface-muted)]"
                     }`}
                   >
                     <span className="block font-medium">{action.label}</span>
                     <span
                       className={`mt-0.5 block text-xs ${
-                        action.primary ? "text-amber-100" : "text-muted"
+                        action.primary ? "text-white/80" : "text-muted"
                       }`}
                     >
                       {action.description}
@@ -2015,10 +2015,10 @@ export default function JournalSection({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--line)] bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                   Human-reviewed lanes
                 </div>
                 <h3 className="mt-1 text-sm font-semibold text-ink">Structured review boards</h3>
@@ -2026,7 +2026,7 @@ export default function JournalSection({
                   Review candidates stay in the same human-approved workflow, but are grouped into boards so actions, decisions, open questions, and brief updates are easier to scan.
                 </p>
               </div>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-muted">
                 {displayedReviewCandidates.length} card{displayedReviewCandidates.length === 1 ? "" : "s"}
               </span>
             </div>
@@ -2034,27 +2034,27 @@ export default function JournalSection({
               {STRUCTURED_REVIEW_BOARDS.map((board) => {
                 const boardCandidates = reviewCandidatesByType[board.type];
                 return (
-                  <div key={board.type} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div key={board.type} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <h4 className="text-sm font-semibold text-ink">{board.title}</h4>
                         <p className="mt-1 text-xs text-muted">{board.description}</p>
                       </div>
-                      <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-700">
+                      <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
                         {boardCandidates.length}
                       </span>
                     </div>
                     <div className="mt-3 space-y-2">
                       {boardCandidates.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-xs text-muted">
+                        <div className="rounded-lg border border-dashed border-[var(--line)] bg-white p-3 text-xs text-muted">
                           {board.empty}
                         </div>
                       ) : (
                         boardCandidates.slice(0, 3).map((candidate) => (
-                          <div key={candidate.id} className="rounded-lg border border-slate-200 bg-white p-3 text-xs">
+                          <div key={candidate.id} className="rounded-lg border border-[var(--line)] bg-white p-3 text-xs">
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-medium text-ink">{candidate.title}</span>
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-muted">
+                              <span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] text-muted">
                                 {candidateStatusLabels[candidate.status]}
                               </span>
                             </div>
@@ -2072,7 +2072,7 @@ export default function JournalSection({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
             <button
               type="button"
               onClick={() => setCreateFormOpen((v) => !v)}
@@ -2080,7 +2080,7 @@ export default function JournalSection({
               className="flex w-full items-center justify-between gap-2 text-left"
             >
               <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
-              <span className="shrink-0 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+              <span className="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-2 py-0.5 text-xs font-medium text-[var(--warning-text)]">
                 {createFormOpen ? "Hide" : "+ New"}
               </span>
             </button>
@@ -2090,14 +2090,14 @@ export default function JournalSection({
                   Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
                 </p>
             {newCandidateSourceEntryId && (
-              <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+              <div className="mt-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-3 py-2 text-xs text-[var(--ai-text)]">
                 <div>
                   Drafted from assistant reply {newCandidateSourceEntryId}. Evidence labels are preserved from that reply’s trusted source legend when available.
                 </div>
                 <button
                   type="button"
                   onClick={() => setNewCandidateSourceEntryId(null)}
-                  className="mt-1 font-medium underline decoration-violet-300 underline-offset-2 hover:text-violet-700"
+                  className="mt-1 font-medium underline decoration-[var(--ai-text)] underline-offset-2 hover:text-[var(--ai-text)]"
                 >
                   Clear assistant provenance
                 </button>
@@ -2107,7 +2107,7 @@ export default function JournalSection({
               <select
                 value={newCandidateType}
                 onChange={(ev) => setNewCandidateType(ev.target.value as ReviewCandidateType)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
                 aria-label="Review candidate type"
               >
                 {Object.entries(candidateTypeLabels).map(([value, label]) => (
@@ -2118,40 +2118,40 @@ export default function JournalSection({
                 value={newCandidateTitle}
                 onChange={(ev) => setNewCandidateTitle(ev.target.value)}
                 placeholder="Candidate title"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
               />
               <input
                 value={newCandidateTarget}
                 onChange={(ev) => setNewCandidateTarget(ev.target.value)}
                 placeholder="Target brief field/section, owner, or question category"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
               />
               <input
                 value={newCandidateConfidence}
                 onChange={(ev) => setNewCandidateConfidence(ev.target.value)}
                 placeholder="Confidence, e.g. high / medium / low"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
               />
               <textarea
                 value={newCandidateText}
                 onChange={(ev) => setNewCandidateText(ev.target.value)}
                 placeholder="Proposed text / action / decision / open question"
                 rows={3}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm lg:col-span-2"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm lg:col-span-2"
               />
               <textarea
                 value={newCandidateEvidence}
                 onChange={(ev) => setNewCandidateEvidence(ev.target.value)}
                 placeholder="Evidence/source labels, e.g. [J1], [D1], filename, quote"
                 rows={2}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
               />
               <textarea
                 value={newCandidateRisk}
                 onChange={(ev) => setNewCandidateRisk(ev.target.value)}
                 placeholder="Risk of applying / reviewer note"
                 rows={2}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
               />
             </div>
             <div className="mt-3 flex justify-end">
@@ -2159,7 +2159,7 @@ export default function JournalSection({
                 type="button"
                 onClick={createReviewCandidate}
                 disabled={reviewLoading}
-                className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               >
                 {reviewLoading && <Loader2 className="size-3.5 animate-spin" />}
                 Save review candidate
@@ -2195,8 +2195,8 @@ export default function JournalSection({
 
       {activeFullView === "sources" && (
         <div className="mb-4 space-y-3">
-          <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800">
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-4">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--info-text)]">
               <FileText className="size-3.5" /> Source Library
             </div>
             <h3 className="mt-3 text-base font-semibold text-ink">
@@ -2208,35 +2208,35 @@ export default function JournalSection({
               documents, compare against the brief, or find supported brief update
               candidates without directly editing the brief.
             </p>
-            <div className="mt-3 grid gap-2 text-xs text-sky-950 sm:grid-cols-3">
-              <div className="rounded-lg border border-sky-100 bg-white/80 px-3 py-2">
+            <div className="mt-3 grid gap-2 text-xs text-[var(--info-text)] sm:grid-cols-3">
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-white/80 px-3 py-2">
                 Brief baseline sources: {currentBriefSources.length}
               </div>
-              <div className="rounded-lg border border-sky-100 bg-white/80 px-3 py-2">
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-white/80 px-3 py-2">
                 Journal uploads: {sources.length}
               </div>
-              <div className="rounded-lg border border-sky-100 bg-white/80 px-3 py-2 font-medium">
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-white/80 px-3 py-2 font-medium">
                 Total available to Journal AI: {totalIncludedSourceCount}
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--line)] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-ink">Brief baseline sources</h3>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-muted">
                 {currentBriefSources.length}
               </span>
             </div>
             {currentBriefSources.length === 0 ? (
-              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-slate-50 p-4 text-sm text-muted">
+              <div className="mt-3 rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm text-muted">
                 No current brief sources are saved on the baseline brief.
               </div>
             ) : (
               <div className="mt-3 grid gap-3 xl:grid-cols-2">
                 {currentBriefSources.map((source, index) => (
-                  <div key={`${source.url}-${index}`} className="rounded-xl border border-[var(--line)] bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <div key={`${source.url}-${index}`} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                       Source {index + 1}
                     </div>
                     <p className="mt-1 text-sm font-medium text-ink">
@@ -2245,7 +2245,7 @@ export default function JournalSection({
                     <div className="mt-1 text-sm">
                       <SourceLink
                         source={source.url}
-                        className="break-all text-sky-800 hover:underline"
+                        className="break-all text-[var(--info-text)] hover:underline"
                         mutedClassName="break-all text-muted"
                       />
                     </div>
@@ -2258,12 +2258,12 @@ export default function JournalSection({
             )}
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[var(--line)] bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex items-center gap-3">
                   <h3 className="text-sm font-semibold text-ink">Journal uploaded sources</h3>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted">
+                  <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-muted">
                     {displayedSources.length}
                   </span>
                 </div>
@@ -2280,7 +2280,7 @@ export default function JournalSection({
                     onClick={() => runSelectedSourcePrompt(
                       "Answer using only the selected included Journal sources. Summarize what these sources establish, what remains uncertain, and the best next account-team questions. Cite source labels like [D1] when available.",
                     )}
-                    className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-2 py-1 text-xs font-medium text-[var(--ai-text)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Ask about selected sources
                   </button>
@@ -2290,7 +2290,7 @@ export default function JournalSection({
                     onClick={() => runSelectedSourcePrompt(
                       "Review selected source health. Identify stale, duplicate, superseded, and conflicting evidence signals; explain which sources should be included, excluded, or reconciled before brief updates. Do not edit the brief.",
                     )}
-                    className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-2 py-1 text-xs font-medium text-[var(--warning-text)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Review selected source health
                   </button>
@@ -2298,7 +2298,7 @@ export default function JournalSection({
               )}
             </div>
             {sources.length > 0 && (
-              <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+              <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--info-bg)] px-3 py-2 text-xs text-[var(--info-text)]">
                 {activeScopedDocumentIds.length} selected included source{activeScopedDocumentIds.length === 1 ? "" : "s"}; {excludedDocumentIds.length} excluded from AI context.
               </div>
             )}
@@ -2343,8 +2343,8 @@ export default function JournalSection({
       )}
 
       {!activeFullView && centerTab === "team" && (
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
+        <div className="mb-4 rounded-2xl border border-[var(--line)] bg-white p-4 shadow-sm">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
             <MessageSquare className="size-3.5" /> Team Room
           </div>
           <h3 className="mt-3 text-base font-semibold text-ink">General team discussion</h3>
@@ -2484,13 +2484,13 @@ export default function JournalSection({
         )}
 
       {aiError && (
-        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="mt-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-3 py-2 text-sm text-[var(--warning-text)]">
           Your entry was saved, but the assistant couldn’t reply: {aiError}
         </div>
       )}
 
       {uploadNotice && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--success-bg)] px-3 py-2 text-sm text-[var(--success-text)]">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
           <span>{uploadNotice}</span>
         </div>
@@ -2648,7 +2648,7 @@ export default function JournalSection({
             goToComposer();
             window.setTimeout(() => composeRef.current?.focus(), 0);
           }}
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted transition-colors hover:border-slate-300 hover:text-ink"
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted transition-colors hover:border-[var(--border-subtle)] hover:text-ink"
         >
           <BookOpen className="size-4" />
           {activeFullView === "sources"
@@ -2671,7 +2671,7 @@ export default function JournalSection({
             ) : selectedPreviewMatchesSearch ? (
               renderSourcePreview()
             ) : (
-              <div className="rounded-2xl border border-dashed border-sky-200 bg-white p-4 text-sm text-muted">
+              <div className="rounded-2xl border border-dashed border-[var(--border-subtle)] bg-white p-4 text-sm text-muted">
                 The selected source preview does not match this search. Clear search or open a matching source.
               </div>
             )}
@@ -2692,7 +2692,7 @@ export default function JournalSection({
           />
           <div className="relative z-10 flex max-h-[60vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl sm:max-h-[70vh] sm:rounded-2xl">
             <div className="flex items-center gap-2 border-b border-[var(--line)] px-3 py-2">
-              <Sparkles className="size-4 shrink-0 text-violet-600" />
+              <Sparkles className="size-4 shrink-0 text-[var(--ai-text)]" />
               <input
                 autoFocus
                 value={paletteQuery}
@@ -2700,7 +2700,7 @@ export default function JournalSection({
                 placeholder="Ask or generate… (catch up, what changed, summarize, draft actions)"
                 className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-muted"
               />
-              <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-muted">
+              <span className="shrink-0 rounded border border-[var(--line)] bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] text-muted">
                 Esc
               </span>
             </div>
@@ -2735,9 +2735,9 @@ export default function JournalSection({
                           setPaletteQuery("");
                         }}
                         disabled={posting || loading}
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-[var(--surface-muted)] disabled:opacity-50"
                       >
-                        <Sparkles className="size-3 shrink-0 text-violet-500" />
+                        <Sparkles className="size-3 shrink-0 text-[var(--ai-text)]" />
                         {it.label}
                       </button>
                     ))}
