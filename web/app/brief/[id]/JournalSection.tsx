@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   FileText,
   Loader2,
@@ -168,6 +170,8 @@ export default function JournalSection({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(false);
+  const [studioCollapsed, setStudioCollapsed] = useState(false);
   const [activeFullView, setActiveFullView] = useState<
     "sources" | "intelligence" | "review" | null
   >(null);
@@ -1447,6 +1451,20 @@ export default function JournalSection({
       : timelineEntries;
   }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
 
+  const gridClass = [
+    "grid min-w-0 gap-4",
+    sourcesCollapsed
+      ? "lg:grid-cols-[56px_minmax(0,1fr)]"
+      : "lg:grid-cols-[280px_minmax(0,1fr)]",
+    sourcesCollapsed && studioCollapsed
+      ? "xl:grid-cols-[56px_minmax(0,1fr)_56px]"
+      : sourcesCollapsed
+        ? "xl:grid-cols-[56px_minmax(0,1fr)_340px]"
+        : studioCollapsed
+          ? "xl:grid-cols-[280px_minmax(0,1fr)_56px]"
+          : "xl:grid-cols-[280px_minmax(0,1fr)_340px]",
+  ].join(" ");
+
   return (
     <section className="max-w-7xl mx-auto px-6 mt-6 pb-24">
       <header className="flex items-center gap-2 mb-1">
@@ -1472,21 +1490,45 @@ export default function JournalSection({
         <div className="text-sm text-muted">Loading journal…</div>
       )}
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_340px]">
+      <div className={gridClass}>
         <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
+          {sourcesCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setSourcesCollapsed(false)}
+              title="Expand Sources"
+              aria-label="Expand Sources"
+              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 text-muted shadow-sm transition-colors hover:bg-slate-50"
+            >
+              <FileText className="size-4 text-sky-600" />
+              <ChevronRight className="size-4" />
+            </button>
+          ) : (
+            <>
           <Card className="p-3">
             <SectionHeader
               icon={<FileText className="size-4 text-sky-600" />}
               title="Sources"
               count={totalSourceCount}
               actions={
-                <button
-                  type="button"
-                  onClick={goToComposer}
-                  className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-ink transition-colors hover:bg-slate-50"
-                >
-                  + Add
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={goToComposer}
+                    className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-ink transition-colors hover:bg-slate-50"
+                  >
+                    + Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSourcesCollapsed(true)}
+                    title="Collapse Sources"
+                    aria-label="Collapse Sources"
+                    className="rounded-md border border-[var(--line)] bg-white p-1 text-muted transition-colors hover:bg-slate-50"
+                  >
+                    <ChevronLeft className="size-3.5" />
+                  </button>
+                </div>
               }
             />
             <p className="mt-1 text-[11px] text-muted">
@@ -1560,6 +1602,8 @@ export default function JournalSection({
               </button>
             )}
           </Card>
+            </>
+          )}
         </aside>        <div className="min-w-0">
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2524,10 +2568,34 @@ export default function JournalSection({
       )}
         </div>
         <aside className="hidden xl:flex xl:flex-col gap-3 xl:sticky xl:top-4 xl:self-start">
+          {studioCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setStudioCollapsed(false)}
+              title="Expand Studio"
+              aria-label="Expand Studio"
+              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-2 text-muted shadow-sm transition-colors hover:bg-slate-50"
+            >
+              <Sparkles className="size-4 text-violet-600" />
+              <ChevronLeft className="size-4" />
+            </button>
+          ) : (
+            <>
           <Card className="p-4">
             <SectionHeader
               icon={<Sparkles className="size-4 text-violet-600" />}
               title="Studio"
+              actions={
+                <button
+                  type="button"
+                  onClick={() => setStudioCollapsed(true)}
+                  title="Collapse Studio"
+                  aria-label="Collapse Studio"
+                  className="rounded-md border border-[var(--line)] bg-white p-1 text-muted transition-colors hover:bg-slate-50"
+                >
+                  <ChevronRight className="size-3.5" />
+                </button>
+              }
             />
             <p className="mt-1 text-[11px] leading-relaxed text-muted">
               Generate from your notes and sources. Advisory only — nothing edits the brief automatically.
@@ -2606,6 +2674,8 @@ export default function JournalSection({
               </div>
             )}
           </Card>
+            </>
+          )}
         </aside>      </div>
       {(selectedSource || selectedCitationContext) && (
         <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
