@@ -13,6 +13,7 @@ import {
   Paperclip,
   Pencil,
   Search,
+  Send,
   Sparkles,
   Trash2,
   X,
@@ -165,6 +166,7 @@ export default function JournalSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [expandedEntries, setExpandedEntries] = useState<string[]>([]);
+  const [showUpload, setShowUpload] = useState(false);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
@@ -2450,58 +2452,9 @@ export default function JournalSection({
       )}
 
       {!activeFullView ? (
-      <div className="mt-6 rounded-[18px] border border-[var(--line)] bg-[var(--surface)] p-4">
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div
-            role="group"
-            aria-label="Journal compose mode"
-            className="inline-flex w-fit rounded-lg border border-[var(--line)] bg-slate-50 p-0.5 text-sm"
-          >
-            <button
-              type="button"
-              aria-pressed={!askAi}
-              onClick={() => {
-                setAskAi(false);
-                setRequireSourceDocumentScope(false);
-                setScopedDocumentIds([]);
-              }}
-              className={`rounded-md px-3 py-1.5 transition-colors ${
-                !askAi ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"
-              }`}
-            >
-              Add note
-            </button>
-            <button
-              type="button"
-              aria-pressed={askAi}
-              onClick={() => setAskAi(true)}
-              className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 transition-colors ${
-                askAi ? "bg-violet-600 text-white shadow-sm" : "text-muted hover:text-ink"
-              }`}
-            >
-              <Sparkles className="size-3.5" /> Ask assistant
-            </button>
-          </div>
-          <p className="text-xs text-muted">
-            {askAi
-              ? "Assistant answers appear in the journal and can use recent uploaded documents."
-              : "Notes are saved as-is. Turn on Ask assistant when you want an AI reply."}
-          </p>
-        </div>
-        <textarea
-          ref={composeRef}
-          value={composeText}
-          onChange={(e) => setComposeText(e.target.value)}
-          placeholder={
-            askAi
-              ? "Ask the assistant a question about this account…"
-              : "Add an update to the journal…"
-          }
-          rows={3}
-          className="w-full rounded-lg border border-[var(--line)] p-2 text-sm"
-        />
+      <div className="sticky bottom-4 z-10 mt-6 rounded-[18px] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-sm">
         {askAi && activeScopedDocumentIds.length > 0 && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--info-bg)] px-3 py-2 text-xs text-[var(--info-text)]">
             <FileText className="size-3.5" />
             <span>
               AI context scoped to {activeScopedDocumentIds.length} selected source{activeScopedDocumentIds.length === 1 ? "" : "s"}.
@@ -2512,84 +2465,135 @@ export default function JournalSection({
                 setRequireSourceDocumentScope(false);
                 setScopedDocumentIds([]);
               }}
-              className="font-medium underline decoration-sky-300 underline-offset-2 hover:text-sky-700"
+              className="font-medium underline underline-offset-2 hover:opacity-80"
             >
               Use recent sources instead
             </button>
           </div>
         )}
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-          >
-            <Sparkles className="size-3" /> Ask / generate…
-            <span className="ml-1 rounded border border-violet-200 bg-white px-1 text-[10px] text-violet-500">
-              ⌘K
-            </span>
-          </button>
-        </div>
-        <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-medium text-ink">
-                <Paperclip className="size-3.5" /> Upload evidence
-              </div>
-              <p className="mt-1 text-xs text-muted">
-                PDFs up to 50 pages / 2MB, plus text, markdown, CSV, JSON, XML,
-                and YAML. Uploading extracts text and makes it available to AI;
-                it does not edit the brief automatically.
-              </p>
-              {selectedFile && (
-                <p className="mt-2 truncate text-xs text-ink">
-                  Selected: <span className="font-medium">{selectedFile.name}</span>
-                  <span className="text-muted"> · {formatFileSize(selectedFile.size)}</span>
+        {showUpload && (
+          <div className="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <Paperclip className="size-3.5" /> Upload evidence
+                </div>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  PDFs up to 50 pages / 2MB, plus text, markdown, CSV, JSON, XML,
+                  and YAML. Uploading extracts text and makes it available to AI;
+                  it does not edit the brief automatically.
                 </p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink transition-colors hover:bg-slate-50">
-              <Paperclip className="size-3.5" />
-              <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
-              <input
-                type="file"
-                accept=".pdf,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,text/*,application/json,application/xml"
-                className="sr-only"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => uploadDocument()}
-              disabled={uploading || posting || !selectedFile}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-ink transition-colors hover:bg-slate-50 disabled:opacity-50"
-            >
-              {uploading && <Loader2 className="size-3.5 animate-spin" />}
-              {uploading ? "Uploading…" : "Upload document"}
-            </button>
-            <button
-              type="button"
-              onClick={() => uploadDocument({ summarizeAfterUpload: true })}
-              disabled={uploading || posting || !selectedFile}
-              className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 transition-colors hover:bg-violet-100 disabled:opacity-50"
-            >
-              {uploading && <Loader2 className="size-3.5 animate-spin" />}
-              Upload + summarize
-            </button>
+                {selectedFile && (
+                  <p className="mt-2 truncate text-xs text-ink">
+                    Selected: <span className="font-medium">{selectedFile.name}</span>
+                    <span className="text-[var(--text-muted)]"> · {formatFileSize(selectedFile.size)}</span>
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm text-ink transition-colors hover:bg-[var(--surface-muted)]">
+                  <Paperclip className="size-3.5" />
+                  <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,text/*,application/json,application/xml"
+                    className="sr-only"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => uploadDocument()}
+                  disabled={uploading || posting || !selectedFile}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm text-ink transition-colors hover:bg-[var(--surface-muted)] disabled:opacity-50"
+                >
+                  {uploading && <Loader2 className="size-3.5 animate-spin" />}
+                  {uploading ? "Uploading…" : "Upload document"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => uploadDocument({ summarizeAfterUpload: true })}
+                  disabled={uploading || posting || !selectedFile}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-3 py-1.5 text-sm font-medium text-[var(--ai-text)] transition-colors hover:opacity-90 disabled:opacity-50"
+                >
+                  {uploading && <Loader2 className="size-3.5 animate-spin" />}
+                  Upload + summarize
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="mt-3 flex justify-end">
+        )}
+        <textarea
+          ref={composeRef}
+          value={composeText}
+          onChange={(e) => setComposeText(e.target.value)}
+          placeholder="Ask, add a note, or drop evidence…"
+          rows={2}
+          className="w-full resize-none rounded-xl border border-[var(--line)] bg-white p-3 text-sm text-ink placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none"
+        />
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Journal compose mode">
             <button
               type="button"
-              onClick={submit}
-              disabled={posting || !composeText.trim()}
-              className="inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+              aria-pressed={askAi}
+              onClick={() => {
+                setAskAi(true);
+                setShowUpload(false);
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+                askAi
+                  ? "bg-[var(--ai-bg)] text-[var(--ai-text)]"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+              }`}
             >
-              {posting && <Loader2 className="size-3.5 animate-spin" />}
-              {posting ? (askAi ? "Asking…" : "Posting…") : askAi ? "Ask" : "Post"}
+              <Sparkles className="size-3.5" /> Ask
             </button>
+            <button
+              type="button"
+              aria-pressed={!askAi && !showUpload}
+              onClick={() => {
+                setAskAi(false);
+                setShowUpload(false);
+                setRequireSourceDocumentScope(false);
+                setScopedDocumentIds([]);
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+                !askAi && !showUpload
+                  ? "bg-[var(--surface-muted)] text-ink"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+              }`}
+            >
+              <Pencil className="size-3.5" /> Note
+            </button>
+            <button
+              type="button"
+              aria-pressed={showUpload}
+              onClick={() => setShowUpload((v) => !v)}
+              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+                showUpload
+                  ? "bg-[var(--surface-muted)] text-ink"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+              }`}
+            >
+              <Paperclip className="size-3.5" /> Upload
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] hover:text-ink"
+            >
+              <Sparkles className="size-3.5" /> Draft
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={posting || !composeText.trim()}
+            className="inline-flex items-center gap-1.5 rounded-[10px] bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--primary-hover)] disabled:opacity-50"
+          >
+            {posting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            <span className="sr-only">{posting ? (askAi ? "Asking" : "Posting") : askAi ? "Ask" : "Post"}</span>
+          </button>
         </div>
       </div>
       ) : (
