@@ -167,6 +167,7 @@ export default function JournalSection({
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [createFormOpen, setCreateFormOpen] = useState(false);
   const [activeFullView, setActiveFullView] = useState<
     "sources" | "intelligence" | "review" | null
   >(null);
@@ -477,6 +478,7 @@ export default function JournalSection({
     setNewCandidateRisk(draft.risk ?? "Review before applying; this card was drafted from an assistant reply.");
     setNewCandidateSourceEntryId(draft.source_entry_id);
     setReviewError(null);
+    setCreateFormOpen(true);
     setActiveFullView("review");
   }
 
@@ -1996,10 +1998,22 @@ export default function JournalSection({
           </div>
 
           <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
-            <p className="mt-1 text-xs text-muted">
-              Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
-            </p>
+            <button
+              type="button"
+              onClick={() => setCreateFormOpen((v) => !v)}
+              aria-expanded={createFormOpen}
+              className="flex w-full items-center justify-between gap-2 text-left"
+            >
+              <h3 className="text-sm font-semibold text-ink">Create review candidate card</h3>
+              <span className="shrink-0 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+                {createFormOpen ? "Hide" : "+ New"}
+              </span>
+            </button>
+            {createFormOpen && (
+              <>
+                <p className="mt-2 text-xs text-muted">
+                  Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
+                </p>
             {newCandidateSourceEntryId && (
               <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
                 <div>
@@ -2081,6 +2095,8 @@ export default function JournalSection({
                 Save review candidate
               </button>
             </div>
+              </>
+            )}
           </div>
 
           <div className="space-y-3">
