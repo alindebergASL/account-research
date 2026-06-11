@@ -1476,12 +1476,23 @@ export default function JournalSection({
   function recentResearchSummary(e: Entry): { title: string; badge: string; tone: BadgeTone } {
     const docName = e.documents && e.documents.length > 0 ? e.documents[0].filename : null;
     if (docName) return { title: `Uploaded document: ${docName}`, badge: "Evidence", tone: "source" };
-    const body = (displayEntryBody(e) || "")
-      .replace(/^#{1,6}\s+/gm, "")
-      .replace(/[*_`>]+/g, "")
-      .replace(/^[-=]{3,}\s*$/gm, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const raw = displayEntryBody(e) || "";
+    const clean = (s: string) =>
+      s
+        .replace(/^#{1,6}\s+/gm, "")
+        .replace(/[*_`>]+/g, "")
+        .replace(/^[-=]{3,}\s*$/gm, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    // Automatic monitor updates post an assistant entry beginning with this
+    // header; surface them as their own "Update" row, titled by the summary.
+    if (e.author_type === "assistant" && raw.startsWith("Daily monitor update")) {
+      const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+      const summaryLine = clean(lines[1] || "") || "Monitor update";
+      const title = summaryLine.length > 90 ? summaryLine.slice(0, 90) + "\u2026" : summaryLine;
+      return { title: `Monitor: ${title}`, badge: "Update", tone: "accepted" };
+    }
+    const body = clean(raw);
     const snippet = body.length > 90 ? body.slice(0, 90) + "\u2026" : body || "(no text)";
     if (e.author_type === "assistant") return { title: snippet, badge: "Assistant", tone: "assistant" };
     return { title: snippet, badge: "Note", tone: "neutral" };
