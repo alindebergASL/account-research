@@ -738,11 +738,11 @@ function Header({
       transition={{ duration: 0.3 }}
       className="pt-10 pb-8"
     >
-      <div className="flex items-start justify-between gap-4 mb-2">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 mb-2">
         <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted">
           <span className="size-1.5 rounded-full bg-accent" /> Account brief
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           {currentBriefId && canManage && (
             <>
               <button

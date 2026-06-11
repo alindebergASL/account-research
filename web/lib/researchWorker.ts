@@ -820,6 +820,14 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     // monitor failures; those strings can include model-controlled content.
     // eslint-disable-next-line no-console
     console.error(`[worker] monitor failed job=${job.id} err=monitor_failed`);
+    // If the job was cancelled/disabled mid-scan (e.g. the user turned
+    // monitoring off and the provider then threw), preserve the cancelled
+    // semantics instead of reclassifying it as a failed run/job.
+    if (currentStatus(job.id) === "cancelled") {
+      // eslint-disable-next-line no-console
+      console.log(`[worker] monitor cancelled mid-scan job=${job.id} brief=${briefId}`);
+      return;
+    }
     if (!recorded) {
       try {
         recordMonitorRun({ briefId, jobId: job.id, outcome: "failed", tier: checkTier, usageJson: checkUsageJson });
