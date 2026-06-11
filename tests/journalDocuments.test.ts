@@ -1310,6 +1310,108 @@ test("PDF uploads are extracted through the bounded safe PDF path", async () => 
   assert.match(row.content_text, /PDF AI roadmap/);
 });
 
+test("Excel (.xlsx) uploads are extracted through the bounded safe Office path", async () => {
+  const ExcelJS = require("../web/node_modules/exceljs");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Pipeline");
+  ws.addRow(["Account", "Stage"]);
+  ws.addRow(["Denver Health", "Q4 procurement"]);
+  const buf = Buffer.from(await wb.xlsx.writeBuffer());
+  const form = new FormData();
+  form.set(
+    "file",
+    new File([buf], "deals.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+  );
+  const res = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: String(buf.length + 200) }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 200);
+  const data = await jsonOf(res);
+  const row = db()
+    .prepare(`SELECT mime_type, content_text FROM journal_documents WHERE id = ?`)
+    .get(data.document.id) as any;
+  assert.equal(
+    row.mime_type,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  assert.match(row.content_text, /# Sheet: Pipeline/);
+  assert.match(row.content_text, /Denver Health/);
+});
+
+test("Word (.docx) uploads are extracted through the bounded safe Office path", async () => {
+  const JSZip = require("../web/node_modules/jszip");
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+  );
+  zip.folder("_rels").file(
+    ".rels",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+  );
+  zip.folder("word").file(
+    "document.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Denver Health board governance memo</w:t></w:r></w:p></w:body></w:document>',
+  );
+  const buf = await zip.generateAsync({ type: "nodebuffer" });
+  const form = new FormData();
+  form.set(
+    "file",
+    new File([buf], "memo.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }),
+  );
+  const res = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: String(buf.length + 200) }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 200);
+  const data = await jsonOf(res);
+  const row = db()
+    .prepare(`SELECT mime_type, content_text FROM journal_documents WHERE id = ?`)
+    .get(data.document.id) as any;
+  assert.equal(
+    row.mime_type,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  );
+  assert.match(row.content_text, /Denver Health board governance memo/);
+});
+
+test("Office uploads reject legacy .xls/.doc and mislabeled non-zip files", async () => {
+  // Legacy OLE format → rejected with guidance.
+  let form = new FormData();
+  form.set(
+    "file",
+    new File([new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 1, 2, 3])], "old.xls", {
+      type: "application/vnd.ms-excel",
+    }),
+  );
+  let res = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: "2048" }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await jsonOf(res)).error, /Legacy \.xls and \.doc/);
+
+  // A non-zip payload disguised as .docx → rejected by the magic-byte guard.
+  form = new FormData();
+  form.set(
+    "file",
+    new File([new TextEncoder().encode("not a real docx")], "fake.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }),
+  );
+  res = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: "2048" }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await jsonOf(res)).error, /Invalid \.docx/);
+});
+
 test("document prompt formatting escapes delimiter-closing content", () => {
   const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
   const formatted = journalDocuments.formatDocumentsForPrompt([
@@ -1371,6 +1473,8 @@ test("JournalSection exposes document upload controls with text, PDF accept, and
   assert.match(source, /it does not edit the brief automatically/);
   assert.match(source, /application\/pdf/);
   assert.match(source, /\.pdf/);
+  assert.match(source, /\.xlsx/);
+  assert.match(source, /\.docx/);
   assert.match(source, /type JournalWorkspace =[\s\S]*?"timeline"[\s\S]*?"team"/);
   assert.match(source, /Source Library/);
   assert.match(source, /Review Queue/);

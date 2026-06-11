@@ -2568,9 +2568,9 @@ export default function JournalSection({
                   <Paperclip className="size-3.5" /> Upload evidence
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  PDFs up to 50 pages / 2MB, plus text, markdown, CSV, JSON, XML,
-                  and YAML. Uploading extracts text and makes it available to AI;
-                  it does not edit the brief automatically.
+                  PDF (50 pages), Word (.docx), Excel (.xlsx), plus text, markdown,
+                  CSV, JSON, XML, and YAML — up to 2MB. Uploading extracts text
+                  and makes it available to AI; it does not edit the brief automatically.
                 </p>
                 {selectedFile && (
                   <p className="mt-2 truncate text-xs text-ink">
@@ -2585,7 +2585,7 @@ export default function JournalSection({
                   <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
                   <input
                     type="file"
-                    accept=".pdf,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,text/*,application/json,application/xml"
+                    accept=".pdf,.docx,.xlsx,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/*,application/json,application/xml"
                     className="sr-only"
                     onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
                   />
