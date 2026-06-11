@@ -169,6 +169,7 @@ export default function JournalSection({
   const [showUpload, setShowUpload] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showAllEntries, setShowAllEntries] = useState(false);
+  const [heroExpanded, setHeroExpanded] = useState(false);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
@@ -1664,10 +1665,25 @@ export default function JournalSection({
               </div>
               <div className="min-w-0">
                 <h3 className="font-editorial text-xl font-semibold text-ink">Current understanding</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+                <p
+                  className={`mt-2 text-sm leading-relaxed text-[var(--text-secondary)] ${
+                    !heroExpanded && (briefContext.priority_summary?.length ?? 0) > 360
+                      ? "line-clamp-4"
+                      : ""
+                  }`}
+                >
                   {briefContext.priority_summary ||
                     "No current-priority summary yet. Add notes and evidence, then ask the assistant to synthesize where the account stands."}
                 </p>
+                {(briefContext.priority_summary?.length ?? 0) > 360 && (
+                  <button
+                    type="button"
+                    onClick={() => setHeroExpanded((v) => !v)}
+                    className="mt-1 text-xs font-medium text-[var(--text-secondary)] underline-offset-2 hover:text-ink hover:underline"
+                  >
+                    {heroExpanded ? "Show less" : "Show more"}
+                  </button>
+                )}
                 <ul className="mt-3 space-y-1.5 text-sm text-ink">
                   <li className="flex gap-2">
                     <span className="text-[var(--text-muted)]">•</span>

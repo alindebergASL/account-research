@@ -231,8 +231,8 @@ export default function CommentsSection({
         className={depth > 0 ? "ml-8 mt-3" : "mt-4"}
       >
         <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
               <span className="font-medium text-ink">
                 {deleted ? "(deleted)" : authorName(c.author)}
               </span>
@@ -247,7 +247,7 @@ export default function CommentsSection({
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {!deleted && (
                 <button
                   type="button"
