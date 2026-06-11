@@ -667,6 +667,20 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "023_journal_document_source_url",
+    // Web links imported as sources are stored as journal_documents with
+    // source_url set (null for file uploads), so links surface in the Sources
+    // list with a clickable origin and scope into AI like any upload.
+    up: (c) => {
+      const cols = c
+        .prepare("PRAGMA table_info(journal_documents)")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "source_url")) {
+        c.exec("ALTER TABLE journal_documents ADD COLUMN source_url TEXT");
+      }
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -704,6 +718,7 @@ export type JournalDocumentRow = {
   content_hash: string;
   content_text: string;
   created_at: number;
+  source_url: string | null;
 };
 
 export type JournalReviewCandidateRow = {

@@ -18,6 +18,8 @@ const authMod = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const journalRoute = require("../web/app/api/briefs/[id]/journal/route") as typeof import("../web/app/api/briefs/[id]/journal/route");
 const documentsRoute = require("../web/app/api/briefs/[id]/journal/documents/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/route");
 const journalDocuments = require("../web/lib/journalDocuments") as typeof import("../web/lib/journalDocuments");
+const linksRoute = require("../web/app/api/briefs/[id]/journal/links/route") as typeof import("../web/app/api/briefs/[id]/journal/links/route");
+const journalLinks = require("../web/lib/journalLinks") as typeof import("../web/lib/journalLinks");
 const briefChatContext = require("../web/lib/briefChatContext") as typeof import("../web/lib/briefChatContext");
 
 initDb();
@@ -1410,6 +1412,48 @@ test("Office uploads reject legacy .xls/.doc and mislabeled non-zip files", asyn
   );
   assert.equal(res.status, 400);
   assert.match((await jsonOf(res)).error, /Invalid \.docx/);
+});
+
+test("Web link import stores extracted readable text as a source with source_url", async () => {
+  journalLinks.__setTestLinkFetcher(async (url: string) => ({
+    finalUrl: url,
+    contentType: "text/html",
+    html:
+      "<html><head><title>Acme Q4 Procurement</title></head><body><article><h1>Acme Q4 Procurement</h1><p>Governance review may delay rollout by 30-60 days.</p></article><script>steal()</script></body></html>",
+  }));
+  try {
+    const res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/news" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 200);
+    const data = await jsonOf(res);
+    const row = db()
+      .prepare(`SELECT mime_type, source_url, content_text FROM journal_documents WHERE id = ?`)
+      .get(data.document.id) as any;
+    assert.equal(row.mime_type, "text/html");
+    assert.equal(row.source_url, "https://example.com/news");
+    assert.match(row.content_text, /Governance review may delay rollout/);
+    assert.doesNotMatch(row.content_text, /steal\(\)/);
+    assert.equal(data.document.source_url, "https://example.com/news");
+  } finally {
+    journalLinks.__setTestLinkFetcher(null);
+  }
+});
+
+test("Web link import rejects non-http, credentialed, and private-host URLs (SSRF)", async () => {
+  for (const url of [
+    "ftp://example.com/x",
+    "http://user:pass@example.com/",
+    "http://127.0.0.1/admin",
+    "http://169.254.169.254/latest/meta-data/",
+  ]) {
+    const res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400, `expected 400 for ${url}`);
+  }
 });
 
 test("document prompt formatting escapes delimiter-closing content", () => {
