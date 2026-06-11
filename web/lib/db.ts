@@ -631,6 +631,42 @@ const MIGRATIONS: Migration[] = [
           ON journal_catch_up_cache(updated_at DESC);
       `),
   },
+  {
+    id: "022_monitor_cadence_and_runs",
+    // Per-brief monitor cadence (how often the daily scheduler is allowed to
+    // enqueue a check) plus a monitor_runs history table that records EVERY
+    // monitor outcome — including no-op runs that previously left no trace
+    // beyond bumping last_monitored_at. The cadence ALTER uses the
+    // column-exists guard so a mid-flight retry is safe.
+    up: (c) => {
+      const cols = c
+        .prepare("PRAGMA table_info(briefs)")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "monitor_cadence")) {
+        c.exec(
+          "ALTER TABLE briefs ADD COLUMN monitor_cadence TEXT NOT NULL DEFAULT 'daily'",
+        );
+      }
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS monitor_runs (
+          id                  TEXT PRIMARY KEY,
+          brief_id            TEXT NOT NULL,
+          job_id              TEXT,
+          ran_at              INTEGER NOT NULL,
+          outcome             TEXT NOT NULL,            -- 'no_updates' | 'updated' | 'failed'
+          tier                TEXT NOT NULL DEFAULT 'deep', -- 'triage_only' | 'deep'
+          summary             TEXT,
+          patches_applied     INTEGER NOT NULL DEFAULT 0,
+          touched_fields_json TEXT,
+          pre_version_id      TEXT,
+          usage_json          TEXT,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_monitor_runs_brief_ran
+          ON monitor_runs(brief_id, ran_at DESC);
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -903,6 +939,7 @@ export type BriefRow = {
   created_at: number;
   brief_json: string;
   monitor_enabled: 0 | 1;
+  monitor_cadence: string;
   last_monitored_at: number | null;
 };
 

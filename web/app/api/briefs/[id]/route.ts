@@ -92,6 +92,7 @@ export async function GET(
     last_refreshed_at: lastRefreshedAt,
     versions_count: versionsCount,
     monitor_enabled: row.monitor_enabled === 1,
+    monitor_cadence: row.monitor_cadence || "daily",
     last_monitored_at: row.last_monitored_at ?? null,
     // Server-derived: only true when CANVAS_PREVIEW_ENABLED=1 AND
     // user.role === "admin". Used by the client to decide whether to

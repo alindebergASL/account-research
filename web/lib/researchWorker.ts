@@ -33,6 +33,7 @@ import {
 import { applyPatches, type BriefPatch } from "./briefPatches";
 import { runMonitorScan } from "./monitor";
 import { insertJournalEntry } from "./journal";
+import { recordMonitorRun } from "./monitorRuns";
 import { listBriefEmailRecipients } from "./briefRecipients";
 import { sendBriefMonitorUpdateEmail } from "./email";
 import { maybeRunDailySchedule } from "./monitorScheduler";
@@ -626,6 +627,9 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     return;
   }
   const briefId = job.target_brief_id;
+  // Track whether a terminal monitor_runs row was already written so the catch
+  // block does not double-record a run that already succeeded.
+  let recorded = false;
 
   try {
     const row = db()
@@ -672,6 +676,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         console.log(`[worker] monitor no-op skipped job=${job.id} brief=${briefId}`);
         return;
       }
+      recordMonitorRun({
+        briefId,
+        jobId: job.id,
+        outcome: "no_updates",
+        summary: findings.summary || null,
+      });
+      recorded = true;
       // eslint-disable-next-line no-console
       console.log(`[worker] monitor no-op job=${job.id} brief=${briefId}`);
       return;
@@ -689,6 +700,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         );
         return;
       }
+      recordMonitorRun({
+        briefId,
+        jobId: job.id,
+        outcome: "no_updates",
+        summary: findings.summary || null,
+      });
+      recorded = true;
       // eslint-disable-next-line no-console
       console.log(
         `[worker] monitor no-op job=${job.id} brief=${briefId} malformed_patches=${applied.skipped}`,
@@ -703,6 +721,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     // transaction so a late disable/cancel cannot be overwritten as done.
     const commit = commitMonitorUpdate(job, now, row.brief_json, JSON.stringify(updated));
     if (commit === "stale") {
+      recordMonitorRun({
+        briefId,
+        jobId: job.id,
+        outcome: "failed",
+        summary: "Brief changed during scan; monitor update skipped",
+      });
+      recorded = true;
       markJobFailed(job.id, "Brief changed during scan; monitor update skipped");
       // eslint-disable-next-line no-console
       console.log(`[worker] monitor stale skipped job=${job.id} brief=${briefId}`);
@@ -736,6 +761,17 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       patchesApplied: applied.patches.length,
       touchedFields,
     });
+
+    recordMonitorRun({
+      briefId,
+      jobId: job.id,
+      outcome: "updated",
+      summary: findings.summary || null,
+      patchesApplied: applied.patches.length,
+      touchedFields,
+      preVersionId: committed.versionId,
+    });
+    recorded = true;
 
     // Post the "what changed" note into the Journal as an assistant entry.
     insertJournalEntry({
@@ -771,6 +807,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     // monitor failures; those strings can include model-controlled content.
     // eslint-disable-next-line no-console
     console.error(`[worker] monitor failed job=${job.id} err=monitor_failed`);
+    if (!recorded) {
+      try {
+        recordMonitorRun({ briefId, jobId: job.id, outcome: "failed" });
+      } catch {
+        // history is best-effort; never mask the original failure
+      }
+    }
     markJobFailed(job.id, "Monitor job failed");
   }
 }
