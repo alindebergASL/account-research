@@ -31,9 +31,9 @@ import {
   logJobCompleted,
 } from "./briefEvents";
 import { applyPatches, type BriefPatch } from "./briefPatches";
-import { runMonitorScan } from "./monitor";
+import { runMonitorCheck } from "./monitor";
 import { insertJournalEntry } from "./journal";
-import { recordMonitorRun } from "./monitorRuns";
+import { recordMonitorRun, type MonitorRunTier } from "./monitorRuns";
 import { listBriefEmailRecipients } from "./briefRecipients";
 import { sendBriefMonitorUpdateEmail } from "./email";
 import { maybeRunDailySchedule } from "./monitorScheduler";
@@ -630,6 +630,8 @@ export async function executeMonitorJob(job: ResearchJobRow) {
   // Track whether a terminal monitor_runs row was already written so the catch
   // block does not double-record a run that already succeeded.
   let recorded = false;
+  let checkTier: MonitorRunTier = "deep";
+  let checkUsageJson: string | null = null;
 
   try {
     const row = db()
@@ -661,10 +663,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
 
-    const findings = await runMonitorScan({
+    const check = await runMonitorCheck({
       brief: parsed.data,
       lastMonitoredAt: row.last_monitored_at,
     });
+    const findings = check.findings;
+    checkTier = check.tier;
+    checkUsageJson = JSON.stringify(check.usage);
     const now = Date.now();
     if (!monitorMayCommit(job, briefId)) return;
 
@@ -680,7 +685,9 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         briefId,
         jobId: job.id,
         outcome: "no_updates",
+        tier: checkTier,
         summary: findings.summary || null,
+        usageJson: checkUsageJson,
       });
       recorded = true;
       // eslint-disable-next-line no-console
@@ -704,7 +711,9 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         briefId,
         jobId: job.id,
         outcome: "no_updates",
+        tier: checkTier,
         summary: findings.summary || null,
+        usageJson: checkUsageJson,
       });
       recorded = true;
       // eslint-disable-next-line no-console
@@ -725,7 +734,9 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         briefId,
         jobId: job.id,
         outcome: "failed",
+        tier: checkTier,
         summary: "Brief changed during scan; monitor update skipped",
+        usageJson: checkUsageJson,
       });
       recorded = true;
       markJobFailed(job.id, "Brief changed during scan; monitor update skipped");
@@ -766,10 +777,12 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       briefId,
       jobId: job.id,
       outcome: "updated",
+      tier: checkTier,
       summary: findings.summary || null,
       patchesApplied: applied.patches.length,
       touchedFields,
       preVersionId: committed.versionId,
+      usageJson: checkUsageJson,
     });
     recorded = true;
 
@@ -809,7 +822,7 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     console.error(`[worker] monitor failed job=${job.id} err=monitor_failed`);
     if (!recorded) {
       try {
-        recordMonitorRun({ briefId, jobId: job.id, outcome: "failed" });
+        recordMonitorRun({ briefId, jobId: job.id, outcome: "failed", tier: checkTier, usageJson: checkUsageJson });
       } catch {
         // history is best-effort; never mask the original failure
       }

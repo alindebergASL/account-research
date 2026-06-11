@@ -175,6 +175,9 @@ async function main() {
   assert(typeof lm === "number", "last_monitored_at set");
   const updRun = db().prepare("SELECT outcome, patches_applied FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
   assert(updRun?.outcome === "updated" && updRun?.patches_applied >= 1, "update path recorded an 'updated' monitor_run");
+  const updRun2 = db().prepare("SELECT tier, usage_json FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
+  assert(updRun2?.tier === "deep", "update run recorded tier 'deep'");
+  assert(typeof updRun2?.usage_json === "string", "update run recorded usage_json");
 
   // ---- 2. No-op path ------------------------------------------------------
   sentTo.length = 0;
@@ -233,6 +236,28 @@ async function main() {
   db().prepare("UPDATE briefs SET monitor_cadence = 'daily', last_monitored_at = ? WHERE id = ?").run(nowMs - 2 * DAY, briefId);
   const dueDaily = enqueueAllMonitorJobs(nowMs);
   assert(dueDaily === 1, `daily cadence 2 days stale should be due, got ${dueDaily}`);
+
+  // ---- 5. Two-tier: triage decides nothing is new, deep scan is skipped ---
+  db().prepare("UPDATE briefs SET monitor_enabled = 1, last_monitored_at = NULL WHERE id = ?").run(briefId);
+  const vBefore5 = (db().prepare("SELECT COUNT(*) AS n FROM brief_versions WHERE brief_id = ?").get(briefId) as any).n;
+  const jBefore5 = (db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n;
+  __setTestMonitorClient({
+    messages: {
+      create: async () => ({
+        stop_reason: "tool_use",
+        content: [{ type: "tool_use", name: "record_triage", id: "tg", input: { anything_new: false, leads: [] } }],
+      }),
+    },
+  });
+  const job5 = insertMonitorJob(briefId, ownerId, "Acme Corp");
+  await executeMonitorJob(job5 as any);
+  __setTestMonitorClient(null);
+  const vAfter5 = (db().prepare("SELECT COUNT(*) AS n FROM brief_versions WHERE brief_id = ?").get(briefId) as any).n;
+  const jAfter5 = (db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n;
+  assert(vAfter5 === vBefore5, "triage-skip: no new version");
+  assert(jAfter5 === jBefore5, "triage-skip: no new journal entry");
+  const triageRun = db().prepare("SELECT outcome, tier FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
+  assert(triageRun?.outcome === "no_updates" && triageRun?.tier === "triage_only", "triage-skip recorded a 'triage_only' no_updates run");
 
   // eslint-disable-next-line no-console
   console.log("verify-monitor: OK");
