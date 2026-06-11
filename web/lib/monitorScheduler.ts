@@ -11,6 +11,55 @@ import { newId } from "./password";
 
 const SCHEDULE_ID = "singleton";
 const MONITOR_HOUR = 2; // 2 AM, server local time
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Slack so a cadence boundary lands a little before the exact interval: the
+// scan itself takes time, so last_monitored_at is recorded a bit after 2 AM.
+// Without slack, "daily" would silently become every-other-day (the next 2 AM
+// is just under 24h after the previous run finished).
+const CADENCE_SLACK_MS = 6 * 60 * 60 * 1000;
+
+export type MonitorCadence = "daily" | "every_3_days" | "weekly";
+export const MONITOR_CADENCES: MonitorCadence[] = [
+  "daily",
+  "every_3_days",
+  "weekly",
+];
+
+export function isMonitorCadence(v: unknown): v is MonitorCadence {
+  return typeof v === "string" && (MONITOR_CADENCES as string[]).includes(v);
+}
+
+export function monitorCadenceIntervalMs(cadence: string): number {
+  switch (cadence) {
+    case "weekly":
+      return 7 * DAY_MS;
+    case "every_3_days":
+      return 3 * DAY_MS;
+    case "daily":
+    default:
+      return DAY_MS;
+  }
+}
+
+// Earliest moment a brief is "due" for its next check given its cadence.
+function dueAt(lastMonitoredAt: number | null, cadence: string): number {
+  if (lastMonitoredAt === null) return 0; // never checked → always due
+  return lastMonitoredAt + (monitorCadenceIntervalMs(cadence) - CADENCE_SLACK_MS);
+}
+
+// The wall-clock time the next scheduled check should fire: the next 2 AM at or
+// after the cadence due time. Used by the API to show "Next check" in the UI.
+export function nextScheduledCheckAt(
+  lastMonitoredAt: number | null,
+  cadence: string,
+  now: number = Date.now(),
+): number {
+  const floor = Math.max(dueAt(lastMonitoredAt, cadence), now);
+  const d = new Date(floor);
+  d.setHours(MONITOR_HOUR, 0, 0, 0);
+  if (d.getTime() < floor) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
 
 function localDateKey(d: Date): string {
   // YYYY-MM-DD in the server's local timezone (not UTC) so "2 AM" matches the
@@ -93,14 +142,23 @@ export const cancelQueuedMonitorJobsForBrief = cancelActiveMonitorJobsForBrief;
 
 // Enqueue a monitor job for every monitor-enabled brief, attributed to the
 // brief owner. Deduped per brief. Returns the number of jobs enqueued.
-export function enqueueAllMonitorJobs(): number {
+export function enqueueAllMonitorJobs(now: number = Date.now()): number {
   const briefs = db()
     .prepare(
-      `SELECT id, user_id FROM briefs WHERE monitor_enabled = 1`,
+      `SELECT id, user_id, monitor_cadence, last_monitored_at
+         FROM briefs WHERE monitor_enabled = 1`,
     )
-    .all() as Array<{ id: string; user_id: string }>;
+    .all() as Array<{
+    id: string;
+    user_id: string;
+    monitor_cadence: string;
+    last_monitored_at: number | null;
+  }>;
   let count = 0;
   for (const b of briefs) {
+    // Per-brief cadence: only enqueue when the brief is actually due. The 2 AM
+    // gate still bounds this to at most one enqueue per brief per day.
+    if (now < dueAt(b.last_monitored_at, b.monitor_cadence)) continue;
     if (enqueueMonitorJob(b.id, b.user_id)) count++;
   }
   return count;
@@ -118,7 +176,7 @@ export function maybeRunDailySchedule(now: Date = new Date()): number {
     .get(SCHEDULE_ID) as { last_run_date: string | null } | undefined;
   if (row?.last_run_date === today) return 0;
 
-  const count = enqueueAllMonitorJobs();
+  const count = enqueueAllMonitorJobs(now.getTime());
 
   // Record the run regardless of count so we don't re-scan all day even when
   // there are zero enabled briefs.

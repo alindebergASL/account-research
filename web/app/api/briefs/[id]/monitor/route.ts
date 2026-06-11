@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
-import { cancelActiveMonitorJobsForBrief, enqueueMonitorJob } from "@/lib/monitorScheduler";
+import {
+  cancelActiveMonitorJobsForBrief,
+  enqueueMonitorJob,
+  isMonitorCadence,
+  nextScheduledCheckAt,
+} from "@/lib/monitorScheduler";
+import { listMonitorRuns } from "@/lib/monitorRuns";
 
 export const runtime = "nodejs";
 
@@ -10,6 +16,48 @@ function authError(e: unknown) {
     return NextResponse.json(e.body, { status: e.status });
   }
   return null;
+}
+
+// Read the per-brief monitoring status + recent run history for the Monitoring
+// panel. Available to any reader of the brief.
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  let user;
+  try {
+    user = requireUser(req);
+  } catch (e) {
+    const r = authError(e);
+    if (r) return r;
+    throw e;
+  }
+  if (!canReadBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const row = db()
+    .prepare(
+      `SELECT monitor_enabled, monitor_cadence, last_monitored_at FROM briefs WHERE id = ?`,
+    )
+    .get(params.id) as
+    | { monitor_enabled: number; monitor_cadence: string; last_monitored_at: number | null }
+    | undefined;
+  if (!row) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const enabled = row.monitor_enabled === 1;
+  const cadence = row.monitor_cadence || "daily";
+  return NextResponse.json({
+    enabled,
+    cadence,
+    last_monitored_at: row.last_monitored_at ?? null,
+    next_check_at: enabled
+      ? nextScheduledCheckAt(row.last_monitored_at, cadence)
+      : null,
+    runs: listMonitorRuns(params.id, 20),
+  });
 }
 
 // Toggle the per-brief daily monitor. Available to admins + editors (owner /
@@ -35,7 +83,7 @@ export async function POST(
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
-  let body: { enabled?: unknown };
+  let body: { enabled?: unknown; cadence?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -47,10 +95,20 @@ export async function POST(
       { status: 400 },
     );
   }
+  // Optional per-brief cadence: daily | every_3_days | weekly. Omitted = leave
+  // the current cadence unchanged.
+  if (body.cadence !== undefined && !isMonitorCadence(body.cadence)) {
+    return NextResponse.json(
+      { error: "cadence must be daily, every_3_days, or weekly" },
+      { status: 400 },
+    );
+  }
 
   const row = db()
-    .prepare(`SELECT monitor_enabled FROM briefs WHERE id = ?`)
-    .get(params.id) as { monitor_enabled: number } | undefined;
+    .prepare(`SELECT monitor_enabled, monitor_cadence FROM briefs WHERE id = ?`)
+    .get(params.id) as
+    | { monitor_enabled: number; monitor_cadence: string }
+    | undefined;
   if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -60,6 +118,14 @@ export async function POST(
   db()
     .prepare(`UPDATE briefs SET monitor_enabled = ? WHERE id = ?`)
     .run(enabled ? 1 : 0, params.id);
+  if (isMonitorCadence(body.cadence)) {
+    db()
+      .prepare(`UPDATE briefs SET monitor_cadence = ? WHERE id = ?`)
+      .run(body.cadence, params.id);
+  }
+  const cadence = isMonitorCadence(body.cadence)
+    ? body.cadence
+    : row.monitor_cadence || "daily";
 
   // First enable → run a check immediately (deduped if one is already queued).
   let queuedJobId: string | null = null;
@@ -69,5 +135,5 @@ export async function POST(
     cancelActiveMonitorJobsForBrief(params.id);
   }
 
-  return NextResponse.json({ ok: true, enabled, queued_job_id: queuedJobId });
+  return NextResponse.json({ ok: true, enabled, cadence, queued_job_id: queuedJobId });
 }

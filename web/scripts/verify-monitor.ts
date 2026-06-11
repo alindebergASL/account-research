@@ -41,7 +41,7 @@ const { __setTestMonitorClient } = require("../lib/monitor") as typeof import(".
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { __setTestMailer } = require("../lib/email") as typeof import("../lib/email");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { maybeRunDailySchedule } = require("../lib/monitorScheduler") as typeof import("../lib/monitorScheduler");
+const { maybeRunDailySchedule, enqueueAllMonitorJobs } = require("../lib/monitorScheduler") as typeof import("../lib/monitorScheduler");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { listBriefEmailRecipients } = require("../lib/briefRecipients") as typeof import("../lib/briefRecipients");
 
@@ -173,6 +173,11 @@ async function main() {
   assert(j1.status === "done", "update job marked done");
   const lm = (db().prepare("SELECT last_monitored_at FROM briefs WHERE id = ?").get(briefId) as any).last_monitored_at;
   assert(typeof lm === "number", "last_monitored_at set");
+  const updRun = db().prepare("SELECT outcome, patches_applied FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
+  assert(updRun?.outcome === "updated" && updRun?.patches_applied >= 1, "update path recorded an 'updated' monitor_run");
+  const updRun2 = db().prepare("SELECT tier, usage_json FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
+  assert(updRun2?.tier === "deep", "update run recorded tier 'deep'");
+  assert(typeof updRun2?.usage_json === "string", "update run recorded usage_json");
 
   // ---- 2. No-op path ------------------------------------------------------
   sentTo.length = 0;
@@ -198,6 +203,8 @@ async function main() {
   assert(journalAfter === journalBefore, "no-op: no new journal entry");
   assert(briefAfter === briefBefore, "no-op: brief json unchanged");
   assert(sentTo.length === 0, "no-op: no email sent");
+  const noopRun = db().prepare("SELECT outcome FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
+  assert(noopRun?.outcome === "no_updates", "no-op path recorded a 'no_updates' monitor_run");
 
   __setTestMonitorClient(null);
   __setTestMailer(null);
@@ -205,6 +212,9 @@ async function main() {
   // ---- 3. Scheduler -------------------------------------------------------
   // Clear any monitor jobs so the schedule starts clean.
   db().prepare("DELETE FROM research_jobs WHERE intent = 'monitor'").run();
+  // The brief was just monitored above; clear last_monitored_at so cadence
+  // gating treats it as due for the daily-enqueue test.
+  db().prepare("UPDATE briefs SET monitor_cadence = 'daily', last_monitored_at = NULL WHERE id = ?").run(briefId);
   const at0230 = new Date(); at0230.setHours(2, 30, 0, 0);
   const n1 = maybeRunDailySchedule(at0230);
   assert(n1 === 1, `scheduler enqueued ${n1}, expected 1`);
@@ -212,6 +222,42 @@ async function main() {
   assert(queued === 1, `expected 1 queued monitor job, got ${queued}`);
   const n2 = maybeRunDailySchedule(at0230);
   assert(n2 === 0, "scheduler is a no-op on second same-day run");
+
+  // ---- 4. Per-brief cadence ----------------------------------------------
+  db().prepare("DELETE FROM research_jobs WHERE intent = 'monitor'").run();
+  const nowMs = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  // Weekly cadence checked just now → not due.
+  db().prepare("UPDATE briefs SET monitor_cadence = 'weekly', last_monitored_at = ? WHERE id = ?").run(nowMs, briefId);
+  const dueWeekly = enqueueAllMonitorJobs(nowMs);
+  assert(dueWeekly === 0, `weekly cadence checked just now should not be due, got ${dueWeekly}`);
+  db().prepare("DELETE FROM research_jobs WHERE intent = 'monitor'").run();
+  // Daily cadence last checked 2 days ago → due.
+  db().prepare("UPDATE briefs SET monitor_cadence = 'daily', last_monitored_at = ? WHERE id = ?").run(nowMs - 2 * DAY, briefId);
+  const dueDaily = enqueueAllMonitorJobs(nowMs);
+  assert(dueDaily === 1, `daily cadence 2 days stale should be due, got ${dueDaily}`);
+
+  // ---- 5. Two-tier: triage decides nothing is new, deep scan is skipped ---
+  db().prepare("UPDATE briefs SET monitor_enabled = 1, last_monitored_at = NULL WHERE id = ?").run(briefId);
+  const vBefore5 = (db().prepare("SELECT COUNT(*) AS n FROM brief_versions WHERE brief_id = ?").get(briefId) as any).n;
+  const jBefore5 = (db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n;
+  __setTestMonitorClient({
+    messages: {
+      create: async () => ({
+        stop_reason: "tool_use",
+        content: [{ type: "tool_use", name: "record_triage", id: "tg", input: { anything_new: false, leads: [] } }],
+      }),
+    },
+  });
+  const job5 = insertMonitorJob(briefId, ownerId, "Acme Corp");
+  await executeMonitorJob(job5 as any);
+  __setTestMonitorClient(null);
+  const vAfter5 = (db().prepare("SELECT COUNT(*) AS n FROM brief_versions WHERE brief_id = ?").get(briefId) as any).n;
+  const jAfter5 = (db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n;
+  assert(vAfter5 === vBefore5, "triage-skip: no new version");
+  assert(jAfter5 === jBefore5, "triage-skip: no new journal entry");
+  const triageRun = db().prepare("SELECT outcome, tier FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
+  assert(triageRun?.outcome === "no_updates" && triageRun?.tier === "triage_only", "triage-skip recorded a 'triage_only' no_updates run");
 
   // eslint-disable-next-line no-console
   console.log("verify-monitor: OK");

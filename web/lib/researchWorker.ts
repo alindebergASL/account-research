@@ -31,8 +31,9 @@ import {
   logJobCompleted,
 } from "./briefEvents";
 import { applyPatches, type BriefPatch } from "./briefPatches";
-import { runMonitorScan } from "./monitor";
+import { runMonitorCheck } from "./monitor";
 import { insertJournalEntry } from "./journal";
+import { recordMonitorRun, type MonitorRunTier } from "./monitorRuns";
 import { listBriefEmailRecipients } from "./briefRecipients";
 import { sendBriefMonitorUpdateEmail } from "./email";
 import { maybeRunDailySchedule } from "./monitorScheduler";
@@ -626,6 +627,11 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     return;
   }
   const briefId = job.target_brief_id;
+  // Track whether a terminal monitor_runs row was already written so the catch
+  // block does not double-record a run that already succeeded.
+  let recorded = false;
+  let checkTier: MonitorRunTier = "deep";
+  let checkUsageJson: string | null = null;
 
   try {
     const row = db()
@@ -657,10 +663,13 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
 
-    const findings = await runMonitorScan({
+    const check = await runMonitorCheck({
       brief: parsed.data,
       lastMonitoredAt: row.last_monitored_at,
     });
+    const findings = check.findings;
+    checkTier = check.tier;
+    checkUsageJson = JSON.stringify(check.usage);
     const now = Date.now();
     if (!monitorMayCommit(job, briefId)) return;
 
@@ -672,6 +681,15 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         console.log(`[worker] monitor no-op skipped job=${job.id} brief=${briefId}`);
         return;
       }
+      recordMonitorRun({
+        briefId,
+        jobId: job.id,
+        outcome: "no_updates",
+        tier: checkTier,
+        summary: findings.summary || null,
+        usageJson: checkUsageJson,
+      });
+      recorded = true;
       // eslint-disable-next-line no-console
       console.log(`[worker] monitor no-op job=${job.id} brief=${briefId}`);
       return;
@@ -689,6 +707,15 @@ export async function executeMonitorJob(job: ResearchJobRow) {
         );
         return;
       }
+      recordMonitorRun({
+        briefId,
+        jobId: job.id,
+        outcome: "no_updates",
+        tier: checkTier,
+        summary: findings.summary || null,
+        usageJson: checkUsageJson,
+      });
+      recorded = true;
       // eslint-disable-next-line no-console
       console.log(
         `[worker] monitor no-op job=${job.id} brief=${briefId} malformed_patches=${applied.skipped}`,
@@ -703,6 +730,15 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     // transaction so a late disable/cancel cannot be overwritten as done.
     const commit = commitMonitorUpdate(job, now, row.brief_json, JSON.stringify(updated));
     if (commit === "stale") {
+      recordMonitorRun({
+        briefId,
+        jobId: job.id,
+        outcome: "failed",
+        tier: checkTier,
+        summary: "Brief changed during scan; monitor update skipped",
+        usageJson: checkUsageJson,
+      });
+      recorded = true;
       markJobFailed(job.id, "Brief changed during scan; monitor update skipped");
       // eslint-disable-next-line no-console
       console.log(`[worker] monitor stale skipped job=${job.id} brief=${briefId}`);
@@ -736,6 +772,19 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       patchesApplied: applied.patches.length,
       touchedFields,
     });
+
+    recordMonitorRun({
+      briefId,
+      jobId: job.id,
+      outcome: "updated",
+      tier: checkTier,
+      summary: findings.summary || null,
+      patchesApplied: applied.patches.length,
+      touchedFields,
+      preVersionId: committed.versionId,
+      usageJson: checkUsageJson,
+    });
+    recorded = true;
 
     // Post the "what changed" note into the Journal as an assistant entry.
     insertJournalEntry({
@@ -771,6 +820,21 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     // monitor failures; those strings can include model-controlled content.
     // eslint-disable-next-line no-console
     console.error(`[worker] monitor failed job=${job.id} err=monitor_failed`);
+    // If the job was cancelled/disabled mid-scan (e.g. the user turned
+    // monitoring off and the provider then threw), preserve the cancelled
+    // semantics instead of reclassifying it as a failed run/job.
+    if (currentStatus(job.id) === "cancelled") {
+      // eslint-disable-next-line no-console
+      console.log(`[worker] monitor cancelled mid-scan job=${job.id} brief=${briefId}`);
+      return;
+    }
+    if (!recorded) {
+      try {
+        recordMonitorRun({ briefId, jobId: job.id, outcome: "failed", tier: checkTier, usageJson: checkUsageJson });
+      } catch {
+        // history is best-effort; never mask the original failure
+      }
+    }
     markJobFailed(job.id, "Monitor job failed");
   }
 }
