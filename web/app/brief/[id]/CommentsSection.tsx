@@ -57,10 +57,12 @@ export default function CommentsSection({
   briefId,
   currentUserId,
   isAdmin,
+  collapseLongBodies = false,
 }: {
   briefId: string;
   currentUserId: string;
   isAdmin: boolean;
+  collapseLongBodies?: boolean;
 }) {
   const [comments, setComments] = useState<Comment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +74,7 @@ export default function CommentsSection({
   const [assistBusy, setAssistBusy] = useState<AssistMode | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [expandedBodies, setExpandedBodies] = useState<string[]>([]);
   const composeRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
@@ -306,16 +309,40 @@ export default function CommentsSection({
                 </button>
               </div>
             </div>
-          ) : (
+          ) : deleted ? (
             <p className="mt-2 text-sm whitespace-pre-wrap text-ink">
-              {deleted ? (
-                <span className="italic text-muted">
-                  This comment was deleted.
-                </span>
-              ) : (
-                c.body
-              )}
+              <span className="italic text-muted">This comment was deleted.</span>
             </p>
+          ) : (
+            (() => {
+              const body = c.body ?? "";
+              const isLong = collapseLongBodies && body.length > 350;
+              const expanded = expandedBodies.includes(c.id);
+              return (
+                <>
+                  <p
+                    className={`mt-2 text-sm whitespace-pre-wrap break-words text-ink ${
+                      isLong && !expanded ? "line-clamp-4" : ""
+                    }`}
+                  >
+                    {body}
+                  </p>
+                  {isLong && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedBodies((cur) =>
+                          cur.includes(c.id) ? cur.filter((x) => x !== c.id) : [...cur, c.id],
+                        )
+                      }
+                      className="mt-1 text-xs font-medium text-[var(--text-secondary)] underline-offset-2 hover:text-ink hover:underline"
+                    >
+                      {expanded ? "Show less" : "Show more"}
+                    </button>
+                  )}
+                </>
+              );
+            })()
           )}
         </div>
         {(childrenByParent.get(c.id) ?? []).map((child) =>

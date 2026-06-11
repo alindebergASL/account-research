@@ -1921,7 +1921,8 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(journalSource, /briefContext/);
   assert.match(journalSource, /Brief baseline/);
   assert.match(journalSource, /Current understanding/);
-  assert.match(journalSource, /Next action:/);
+  assert.match(journalSource, /Recommended next move/);
+  assert.match(journalSource, /briefContext\.next_action/);
   assert.match(journalSource, /Compare evidence against the current brief baseline/);
   assert.match(journalSource, /Brief-grounded review/);
   assert.match(journalSource, /which current brief claim it supports, contradicts, or updates/);
