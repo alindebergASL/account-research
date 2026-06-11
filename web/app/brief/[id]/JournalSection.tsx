@@ -169,6 +169,7 @@ export default function JournalSection({
   const [showUpload, setShowUpload] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showAllEntries, setShowAllEntries] = useState(false);
+  const [heroExpanded, setHeroExpanded] = useState(false);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
@@ -1465,10 +1466,22 @@ export default function JournalSection({
     if (ts >= startOfToday - 86_400_000) return "Yesterday";
     return "Older";
   }
+  function rowTimeLabel(ts: number): string {
+    const group = dayGroupLabel(ts);
+    if (group === "Older") {
+      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+    return new Date(ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
   function recentResearchSummary(e: Entry): { title: string; badge: string; tone: BadgeTone } {
     const docName = e.documents && e.documents.length > 0 ? e.documents[0].filename : null;
     if (docName) return { title: `Uploaded document: ${docName}`, badge: "Evidence", tone: "source" };
-    const body = (displayEntryBody(e) || "").replace(/\s+/g, " ").trim();
+    const body = (displayEntryBody(e) || "")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/[*_`>]+/g, "")
+      .replace(/^[-=]{3,}\s*$/gm, " ")
+      .replace(/\s+/g, " ")
+      .trim();
     const snippet = body.length > 90 ? body.slice(0, 90) + "\u2026" : body || "(no text)";
     if (e.author_type === "assistant") return { title: snippet, badge: "Assistant", tone: "assistant" };
     return { title: snippet, badge: "Note", tone: "neutral" };
@@ -1482,12 +1495,20 @@ export default function JournalSection({
           <h2 className="font-editorial text-2xl font-semibold text-ink">
             {briefContext.account_name}
           </h2>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--text-secondary)]">
-            <span>{totalSourceCount} sources</span>
-            <span aria-hidden>·</span>
-            <span>{entries?.length ?? 0} journal entries</span>
-            <span aria-hidden>·</span>
-            <span className={reviewCandidates.length > 0 ? "text-[var(--warning-text)]" : ""}>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface)] px-2.5 py-1 font-medium text-[var(--text-secondary)]">
+              {totalSourceCount} sources
+            </span>
+            <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface)] px-2.5 py-1 font-medium text-[var(--text-secondary)]">
+              {entries?.length ?? 0} journal entries
+            </span>
+            <span
+              className={`rounded-full border px-2.5 py-1 font-medium ${
+                reviewCandidates.length > 0
+                  ? "border-[var(--border-subtle)] bg-[var(--warning-bg)] text-[var(--warning-text)]"
+                  : "border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text-secondary)]"
+              }`}
+            >
               {reviewCandidates.length} items need review
             </span>
           </div>
@@ -1644,17 +1665,26 @@ export default function JournalSection({
               </div>
               <div className="min-w-0">
                 <h3 className="font-editorial text-xl font-semibold text-ink">Current understanding</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+                <p
+                  className={`mt-2 text-sm leading-relaxed text-[var(--text-secondary)] ${
+                    !heroExpanded && (briefContext.priority_summary?.length ?? 0) > 360
+                      ? "line-clamp-4"
+                      : ""
+                  }`}
+                >
                   {briefContext.priority_summary ||
                     "No current-priority summary yet. Add notes and evidence, then ask the assistant to synthesize where the account stands."}
                 </p>
+                {(briefContext.priority_summary?.length ?? 0) > 360 && (
+                  <button
+                    type="button"
+                    onClick={() => setHeroExpanded((v) => !v)}
+                    className="mt-1 text-xs font-medium text-[var(--text-secondary)] underline-offset-2 hover:text-ink hover:underline"
+                  >
+                    {heroExpanded ? "Show less" : "Show more"}
+                  </button>
+                )}
                 <ul className="mt-3 space-y-1.5 text-sm text-ink">
-                  {briefContext.next_action && (
-                    <li className="flex gap-2">
-                      <span className="text-[var(--text-muted)]">•</span>
-                      <span>Next action: {briefContext.next_action}</span>
-                    </li>
-                  )}
                   <li className="flex gap-2">
                     <span className="text-[var(--text-muted)]">•</span>
                     <span>
@@ -2352,7 +2382,7 @@ export default function JournalSection({
             Use this general team discussion space for teammate review comments and alignment that should not be mixed with source-grounded Journal evidence or assistant review cards.
           </p>
           <div className="mt-4">
-            <CommentsSection briefId={briefId} currentUserId={currentUserId} isAdmin={isAdmin} />
+            <CommentsSection briefId={briefId} currentUserId={currentUserId} isAdmin={isAdmin} collapseLongBodies />
           </div>
         </div>
       )}
@@ -2452,8 +2482,11 @@ export default function JournalSection({
                       aria-expanded={expanded}
                       className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
                     >
-                      <span className="w-14 shrink-0 text-xs text-[var(--text-muted)]">
-                        {relativeTime(e.created_at)}
+                      <span
+                        className="w-16 shrink-0 text-xs text-[var(--text-muted)]"
+                        title={new Date(e.created_at).toLocaleString()}
+                      >
+                        {rowTimeLabel(e.created_at)}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
                       <Badge tone={tone}>{badge}</Badge>
@@ -2641,21 +2674,7 @@ export default function JournalSection({
           </button>
         </div>
       </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => {
-            goToComposer();
-            window.setTimeout(() => composeRef.current?.focus(), 0);
-          }}
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm font-medium text-muted transition-colors hover:border-[var(--border-subtle)] hover:text-ink"
-        >
-          <BookOpen className="size-4" />
-          {activeFullView === "sources"
-            ? "Upload a source or add a note in Timeline"
-            : "Add a note or ask the assistant in Timeline"}
-        </button>
-      )}
+      ) : null}
         </div>
       </div>
       {(selectedSource || selectedCitationContext) && (
