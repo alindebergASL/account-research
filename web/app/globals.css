@@ -34,6 +34,21 @@
   --tone-risk:        #dc2626;
   --tone-opportunity: #16a34a;
   --tone-signal:      #2f6df6;
+
+  /* Journal v2 — editorial notebook palette (warm, calm, executive). */
+  --surface:        #fffdf8;
+  --surface-muted:  #f2efe8;
+  --border-subtle:  #e7e2d8;
+  --text-secondary: #667085;
+  --text-muted:     #8a8f98;
+  --primary:        #245446;
+  --primary-hover:  #1a473c;
+  --active-dark:    #0f172a;
+  --success-bg:     #e8f3ec;  --success-text: #276749;
+  --info-bg:        #eaf1f8;  --info-text:    #2f5f8f;
+  --warning-bg:     #fff4da;  --warning-text: #9a6b10;
+  --risk-bg:        #fdebe8;  --risk-text:    #b54740;
+  --ai-bg:          #f3eef8;  --ai-text:      #6b4fa0;
 }
 
 html, body {
@@ -79,4 +94,10 @@ html, body {
   padding: 1px 6px;
   background: #fff;
   color: var(--muted);
+}
+
+/* Editorial serif for Journal v2 headings (Fraunces is already loaded). */
+.font-editorial {
+  font-family: Fraunces, Georgia, "Times New Roman", serif;
+  letter-spacing: -0.01em;
 }

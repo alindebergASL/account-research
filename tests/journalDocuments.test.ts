@@ -1920,12 +1920,12 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(journalSource, /type JournalBriefContext/);
   assert.match(journalSource, /briefContext/);
   assert.match(journalSource, /Brief baseline/);
-  assert.match(journalSource, /Current brief priority/);
-  assert.match(journalSource, /Current next action/);
+  assert.match(journalSource, /Current understanding/);
+  assert.match(journalSource, /Next action:/);
   assert.match(journalSource, /Compare evidence against the current brief baseline/);
   assert.match(journalSource, /Brief-grounded review/);
   assert.match(journalSource, /which current brief claim it supports, contradicts, or updates/);
-  assert.match(journalSource, /View brief baseline first/);
+  assert.match(journalSource, /Update brief/);
   assert.match(pageSource, /briefContext=\{\{/);
   assert.match(pageSource, /account_name: brief\.account_name/);
   assert.match(pageSource, /priority_summary: brief\.priority_summary/);
@@ -1960,8 +1960,8 @@ test("JournalSection opens on the Timeline feed with Team Room as a sub-tab and 
   assert.match(journalSource, /useState<"timeline" \| "team">\("timeline"\)/);
   assert.match(journalSource, /centerTab === "team"/);
   assert.match(journalSource, /Team Room/);
-  // Sources panel counts the combined brief + uploaded sources.
-  assert.match(journalSource, /count=\{totalSourceCount\}/);
+  // Editorial header counts the combined brief + uploaded sources.
+  assert.match(journalSource, /\{totalSourceCount\} sources/);
 });
 
 test("JournalSection clarifies source counts and hides dense source actions behind progressive disclosure", () => {
@@ -2615,10 +2615,10 @@ test("JournalSection exposes search UI, source-scoped recall, catch-up windows, 
     "utf8",
   );
 
-  assert.match(journalSource, /Search Journal, sources, and review candidates/);
+  assert.match(journalSource, /Search notes, sources, evidence labels/);
   assert.match(journalSource, /journalSearchQuery/);
   assert.match(journalSource, /searchJournalWorkspace/);
-  assert.match(journalSource, /Ask about search results/);
+  assert.match(journalSource, /Ask about results/);
   assert.match(journalSource, /recallSourceDocumentIds/);
   assert.match(journalSource, /requireSourceDocumentScope/);
   assert.match(journalSource, /source_document_ids: safeSourceDocumentIds/);
