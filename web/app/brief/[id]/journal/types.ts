@@ -15,6 +15,7 @@ export type JournalDocument = {
   byte_size: number;
   created_at: number;
   content_preview: string;
+  source_url: string | null;
 };
 
 export type Entry = {

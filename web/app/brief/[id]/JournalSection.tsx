@@ -13,6 +13,7 @@ import {
   Paperclip,
   Pencil,
   Search,
+  Link2,
   Send,
   Sparkles,
   Trash2,
@@ -167,6 +168,8 @@ export default function JournalSection({
   const [editText, setEditText] = useState("");
   const [expandedEntries, setExpandedEntries] = useState<string[]>([]);
   const [showUpload, setShowUpload] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [addingLink, setAddingLink] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showAllEntries, setShowAllEntries] = useState(false);
   const [heroExpanded, setHeroExpanded] = useState(false);
@@ -601,6 +604,36 @@ export default function JournalSection({
     }
   }
 
+  async function addLink() {
+    const url = linkUrl.trim();
+    if (!url || addingLink) return;
+    setAddingLink(true);
+    setAiError(null);
+    setUploadNotice(null);
+    try {
+      const r = await fetch(`/api/briefs/${briefId}/journal/links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      setLinkUrl("");
+      const filename = data?.document?.filename || "link";
+      setUploadNotice(
+        `Added link: ${filename}. Its extracted text is now available to the journal assistant and brief chat.`,
+      );
+      await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to add link");
+    } finally {
+      setAddingLink(false);
+    }
+  }
+
   async function saveEdit(entryId: string) {
     const text = editText.trim();
     if (!text) return;
@@ -672,9 +705,22 @@ export default function JournalSection({
           <h3 className="mt-2 truncate text-sm font-semibold text-ink">
             {source.filename}
           </h3>
-          <p className="mt-1 text-xs text-muted">
-            {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
-          </p>
+          {source.source_url ? (
+            <a
+              href={source.source_url}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="mt-1 flex items-center gap-1 truncate text-xs text-[var(--info-text)] hover:underline"
+              title={source.source_url}
+            >
+              <Link2 className="size-3 shrink-0" />
+              <span className="truncate">{source.source_url}</span>
+            </a>
+          ) : (
+            <p className="mt-1 text-xs text-muted">
+              {source.mime_type || "document"} · {formatFileSize(source.byte_size)}
+            </p>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Source health</span>
             {healthBadges.map((badge) => (
@@ -2568,9 +2614,9 @@ export default function JournalSection({
                   <Paperclip className="size-3.5" /> Upload evidence
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  PDFs up to 50 pages / 2MB, plus text, markdown, CSV, JSON, XML,
-                  and YAML. Uploading extracts text and makes it available to AI;
-                  it does not edit the brief automatically.
+                  PDF (50 pages), Word (.docx), Excel (.xlsx), plus text, markdown,
+                  CSV, JSON, XML, and YAML — up to 2MB. Uploading extracts text
+                  and makes it available to AI; it does not edit the brief automatically.
                 </p>
                 {selectedFile && (
                   <p className="mt-2 truncate text-xs text-ink">
@@ -2585,7 +2631,7 @@ export default function JournalSection({
                   <span>{selectedFile ? selectedFile.name : "Choose document"}</span>
                   <input
                     type="file"
-                    accept=".pdf,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,text/*,application/json,application/xml"
+                    accept=".pdf,.docx,.xlsx,.txt,.md,.markdown,.csv,.json,.xml,.yaml,.yml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/*,application/json,application/xml"
                     className="sr-only"
                     onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
                   />
@@ -2607,6 +2653,38 @@ export default function JournalSection({
                 >
                   {uploading && <Loader2 className="size-3.5 animate-spin" />}
                   Upload + summarize
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 border-t border-[var(--border-subtle)] pt-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                <Link2 className="size-3.5" /> Add a web link
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                Paste a public article or page URL; its readable text is imported as a source.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  type="url"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addLink();
+                    }
+                  }}
+                  placeholder="https://…"
+                  className="min-w-0 flex-1 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm text-ink placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={addLink}
+                  disabled={addingLink || posting || !linkUrl.trim()}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm text-ink transition-colors hover:bg-[var(--surface-muted)] disabled:opacity-50"
+                >
+                  {addingLink && <Loader2 className="size-3.5 animate-spin" />}
+                  {addingLink ? "Adding…" : "Add link"}
                 </button>
               </div>
             </div>
