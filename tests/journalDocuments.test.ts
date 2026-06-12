@@ -1414,6 +1414,40 @@ test("Office uploads reject legacy .xls/.doc and mislabeled non-zip files", asyn
   assert.match((await jsonOf(res)).error, /Invalid \.docx/);
 });
 
+test("Office uploads are rejected by the OOXML preflight (zip bomb + path traversal)", async () => {
+  const JSZipLocal = require("../web/node_modules/jszip");
+
+  // Ratio-bomb .xlsx: structurally valid parts + a highly compressible payload.
+  const bomb = new JSZipLocal();
+  bomb.file("[Content_Types].xml", "<x/>");
+  bomb.folder("xl").file("workbook.xml", "<w/>");
+  bomb.folder("xl").file("big.xml", "0".repeat(2 * 1024 * 1024));
+  const bombBytes = await bomb.generateAsync({ type: "nodebuffer" });
+  let form = new FormData();
+  form.set("file", new File([bombBytes], "bomb.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  let res = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: String(bombBytes.length + 200) }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await jsonOf(res)).error, /compression ratio|too large|uncompressed size/);
+
+  // Path-traversal entry in a .docx.
+  const eviltrav = new JSZipLocal();
+  eviltrav.file("[Content_Types].xml", "<x/>");
+  eviltrav.folder("word").file("document.xml", "<w/>");
+  eviltrav.file("../escape.xml", "<x/>");
+  const travBytes = await eviltrav.generateAsync({ type: "nodebuffer" });
+  form = new FormData();
+  form.set("file", new File([travBytes], "evil.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
+  res = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: String(travBytes.length + 200) }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await jsonOf(res)).error, /path-traversal/);
+});
+
 // ---- Web link import (SSRF-guarded) ----
 
 function fakeResp(opts: {
