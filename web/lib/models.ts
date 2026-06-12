@@ -137,6 +137,7 @@ export const ADMIN_STRATEGIC_MODEL = "claude-fable-5";
 // every entry here resolves to a model with `webSearchLatest: true`, so a
 // model/tool mismatch (e.g. Haiku + web_search) cannot regress in.
 export const WEB_SEARCH_ROLE_MODELS = [
+  RESEARCH_QUICK_MODEL,
   RESEARCH_HEAVY_MODEL,
   SOURCE_SCOUT_MODEL,
   BRIEF_CHAT_MODEL,

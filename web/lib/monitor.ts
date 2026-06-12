@@ -100,7 +100,7 @@ MONITOR CONTEXT (MINIMIZED JSON):
 ${JSON.stringify(monitorContext, null, 2)}${leadsBlock}`;
 }
 
-// ---- Two-tier scan: usage + a cheap Haiku triage gate -------------------
+// ---- Two-tier scan: usage + a cheap Sonnet triage gate ------------------
 
 export type MonitorUsage = {
   triage_input_tokens: number;
@@ -192,7 +192,8 @@ ${JSON.stringify(ctx, null, 2)}`;
 
 export type MonitorTriageResult = { anythingNew: boolean; leads: string[] };
 
-// Cheap first pass (Haiku, 1-2 searches). Fails OPEN — if it can't decide,
+// Cheap first pass (MONITOR_TRIAGE_MODEL / Sonnet 4.6, 1-2 searches). Fails
+// OPEN — if it can't decide,
 // returns anythingNew=true so the deep scan still runs.
 export async function runMonitorTriage(
   input: MonitorScanInput,

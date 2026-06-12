@@ -69,6 +69,25 @@ test("every web-search role uses a model that supports the latest web tools", ()
   assert.equal(models.modelSupportsWebSearchLatest("claude-haiku-4-5"), false);
 });
 
+test("WEB_SEARCH_ROLE_MODELS covers every role that attaches web_search, incl. Quick", () => {
+  // runResearchLoop attaches web_search_* unconditionally, so Quick is a
+  // web-search path too — it must be in the invariant list or a future
+  // Quick→Haiku regression would slip past the check above.
+  for (const role of [
+    models.RESEARCH_QUICK_MODEL,
+    models.RESEARCH_HEAVY_MODEL,
+    models.SOURCE_SCOUT_MODEL,
+    models.BRIEF_CHAT_MODEL,
+    models.MONITOR_SCAN_MODEL,
+    models.MONITOR_TRIAGE_MODEL,
+  ]) {
+    assert.ok(
+      models.WEB_SEARCH_ROLE_MODELS.includes(role),
+      `${role} attaches web_search but is missing from WEB_SEARCH_ROLE_MODELS`,
+    );
+  }
+});
+
 test("cost estimator resolves catalog prices (incl. opus-4-8) and fails closed on unknown", () => {
   const cents = cost.estimateAnthropicCostCents([
     { name: "research", model: "claude-opus-4-8", usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 } },
