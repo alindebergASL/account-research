@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { db, type JournalDocumentRow as DbJournalDocumentRow } from "@/lib/db";
 import { neutralizeSourceLegendMarkers } from "@/lib/journalSourceLegend";
+import { assertSafeOoxmlPackage } from "@/lib/ooxml";
 import { newId } from "@/lib/password";
 
 export type JournalDocumentRow = DbJournalDocumentRow;
@@ -513,11 +514,13 @@ export async function extractJournalDocument(args: {
     if (!contentText) throw new Error("No text could be extracted from PDF");
   } else if (looksSpreadsheetLike(mimeType, filename)) {
     if (!startsWithZipMagic(args.bytes)) throw new Error("Invalid .xlsx document");
+    assertSafeOoxmlPackage(args.bytes, "xlsx");
     mimeType = SPREADSHEET_MIME;
     contentText = normalizeExtractedText(await extractOfficeTextSafely(args.bytes, "xlsx"));
     if (!contentText) throw new Error("No text could be extracted from spreadsheet");
   } else if (looksWordLike(mimeType, filename)) {
     if (!startsWithZipMagic(args.bytes)) throw new Error("Invalid .docx document");
+    assertSafeOoxmlPackage(args.bytes, "docx");
     mimeType = WORD_MIME;
     contentText = normalizeExtractedText(await extractOfficeTextSafely(args.bytes, "docx"));
     if (!contentText) throw new Error("No text could be extracted from Word document");
