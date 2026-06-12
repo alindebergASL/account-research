@@ -1418,11 +1418,14 @@ test("Office uploads are rejected by the OOXML preflight (zip bomb + path traver
   const JSZipLocal = require("../web/node_modules/jszip");
 
   // Ratio-bomb .xlsx: structurally valid parts + a highly compressible payload.
+  // DEFLATE keeps the *upload* tiny (well under the 2MB body cap) so the bomb
+  // actually reaches the preflight rather than the upload size guard.
   const bomb = new JSZipLocal();
   bomb.file("[Content_Types].xml", "<x/>");
   bomb.folder("xl").file("workbook.xml", "<w/>");
   bomb.folder("xl").file("big.xml", "0".repeat(2 * 1024 * 1024));
-  const bombBytes = await bomb.generateAsync({ type: "nodebuffer" });
+  const bombBytes = await bomb.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  assert.ok(bombBytes.length < 1024 * 1024, `bomb upload should be small, was ${bombBytes.length}`);
   let form = new FormData();
   form.set("file", new File([bombBytes], "bomb.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   let res = await documentsRoute.POST(
@@ -1430,7 +1433,7 @@ test("Office uploads are rejected by the OOXML preflight (zip bomb + path traver
     { params: { id: "brief-doc" } },
   );
   assert.equal(res.status, 400);
-  assert.match((await jsonOf(res)).error, /compression ratio|too large|uncompressed size/);
+  assert.match((await jsonOf(res)).error, /suspicious compression ratio/);
 
   // Path-traversal entry in a .docx.
   const eviltrav = new JSZipLocal();

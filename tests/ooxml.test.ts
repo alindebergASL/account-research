@@ -47,6 +47,11 @@ test("assertOoxmlSafe enforces entry-count, per-entry, total, and ratio caps", (
     () => ooxml.assertOoxmlSafe([ok(CT), ok("xl/workbook.xml", ooxml.MAX_OOXML_ENTRY_UNCOMPRESSED + 1, 10)], "xlsx"),
     /an entry is too large/,
   );
+  // total uncompressed across entries (each under the per-entry cap)
+  const perEntry = 45 * 1024 * 1024; // < 50MB per-entry cap
+  const manyBig = [ok(CT), ok("xl/workbook.xml")];
+  for (let i = 0; i < 5; i += 1) manyBig.push(ok(`xl/part${i}.xml`, perEntry, perEntry)); // 225MB > 200MB total, ratio 1
+  assert.throws(() => ooxml.assertOoxmlSafe(manyBig, "xlsx"), /uncompressed size exceeds/);
   // suspicious compression ratio (zip bomb)
   assert.throws(
     () => ooxml.assertOoxmlSafe([ok(CT), ok("xl/workbook.xml", 50 * 1024 * 1024, 1000)], "xlsx"),
@@ -89,4 +94,65 @@ test("assertSafeOoxmlPackage accepts a jszip-built docx and rejects a traversal 
   bad.file("../escape.xml", "<x/>");
   const badBytes = new Uint8Array(await bad.generateAsync({ type: "nodebuffer" }));
   assert.throws(() => ooxml.assertSafeOoxmlPackage(badBytes, "docx"), /path-traversal/);
+});
+
+// ---- central-directory bounds / ZIP64 hardening (mutating a real workbook) ----
+
+async function realXlsxBytes(): Promise<Uint8Array> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("S");
+  ws.addRow(["a", "b"]);
+  ws.addRow([1, 2]);
+  return new Uint8Array(Buffer.from(await wb.xlsx.writeBuffer()));
+}
+
+function findEocdOffset(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let i = bytes.byteLength - 22; i >= 0; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) return i;
+  }
+  throw new Error("no EOCD in fixture");
+}
+
+test("parseZipEntries rejects a bogus central-directory extra length (truncated record)", async () => {
+  const bytes = await realXlsxBytes();
+  ooxml.parseZipEntries(bytes); // sanity: valid before mutation
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocd = findEocdOffset(bytes);
+  const cdOffset = view.getUint32(eocd + 16, true);
+  // Inflate the first central-directory header's extra-field length past the
+  // directory extent — the bytes it claims do not exist.
+  view.setUint16(cdOffset + 30, 1000, true);
+  assert.throws(
+    () => ooxml.parseZipEntries(bytes),
+    /corrupt central directory entry|central directory size mismatch|out of bounds/,
+  );
+});
+
+test("parseZipEntries rejects truncated archives and trailing junk", async () => {
+  const bytes = await realXlsxBytes();
+  // Truncate the tail (drops/garbles the EOCD).
+  assert.throws(() => ooxml.parseZipEntries(bytes.subarray(0, bytes.byteLength - 8)), /central directory/i);
+  // Append trailing bytes so the real EOCD's comment no longer runs to EOF.
+  const padded = new Uint8Array(bytes.byteLength + 5);
+  padded.set(bytes, 0);
+  assert.throws(() => ooxml.parseZipEntries(padded), /central directory not found/);
+});
+
+test("parseZipEntries rejects ZIP64 EOCD indicators", async () => {
+  // cdSize sentinel in the classic EOCD.
+  let bytes = await realXlsxBytes();
+  let view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = findEocdOffset(bytes);
+  view.setUint32(eocd + 12, 0xffffffff, true);
+  assert.throws(() => ooxml.parseZipEntries(bytes), /ZIP64/);
+
+  // ZIP64 EOCD locator signature immediately before the EOCD.
+  bytes = await realXlsxBytes();
+  view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  eocd = findEocdOffset(bytes);
+  if (eocd >= 20) {
+    view.setUint32(eocd - 20, 0x07064b50, true);
+    assert.throws(() => ooxml.parseZipEntries(bytes), /ZIP64/);
+  }
 });
