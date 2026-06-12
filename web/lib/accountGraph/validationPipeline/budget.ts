@@ -1,3 +1,4 @@
+import { ALL_MODEL_IDS, modelPrice } from "@/lib/models";
 // Phase A.7 — Task 4: budget / cost enforcement primitives.
 //
 // System-owned. The adapter cannot mutate this state directly; the runner
@@ -154,16 +155,20 @@ export type ModelPricing = {
   output_usd_per_million: number;
 };
 
-export const PRICING_TABLE: Record<string, ModelPricing> = {
-  // Anthropic Claude Opus / Sonnet / Haiku public list prices.
-  // Operators add a row here in the same PR that bumps --model.
-  "claude-opus-4-5": { input_usd_per_million: 15, output_usd_per_million: 75 },
-  "claude-opus-4-6": { input_usd_per_million: 15, output_usd_per_million: 75 },
-  "claude-opus-4-7": { input_usd_per_million: 15, output_usd_per_million: 75 },
-  "claude-sonnet-4-5": { input_usd_per_million: 3, output_usd_per_million: 15 },
-  "claude-sonnet-4-6": { input_usd_per_million: 3, output_usd_per_million: 15 },
-  "claude-haiku-4-5": { input_usd_per_million: 0.8, output_usd_per_million: 4 },
-};
+// Derived from the central model catalog (web/lib/models.ts) so prices live in
+// one place. Operators add a model to the catalog; it appears here automatically.
+export const PRICING_TABLE: Record<string, ModelPricing> = Object.fromEntries(
+  ALL_MODEL_IDS.map((id) => {
+    const p = modelPrice(id)!;
+    return [
+      id,
+      {
+        input_usd_per_million: p.input_per_mtok,
+        output_usd_per_million: p.output_per_mtok,
+      },
+    ];
+  }),
+);
 
 export function lookupModelPricing(model: string): ModelPricing | null {
   return PRICING_TABLE[model] ?? null;

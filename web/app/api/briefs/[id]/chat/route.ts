@@ -1,3 +1,4 @@
+import { BRIEF_CHAT_MODEL } from "@/lib/models";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "crypto";
@@ -143,7 +144,7 @@ async function handleReadOnlyChat({
   const messages = buildMessages(history, userMessage);
   try {
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: BRIEF_CHAT_MODEL,
       max_tokens: 4000,
       cache_control: { type: "ephemeral" } as any,
       system,
@@ -351,7 +352,7 @@ export async function POST(
   try {
     for (let i = 0; i < 6; i++) {
       const response: Anthropic.Messages.Message = await client.messages.create({
-        model: "claude-sonnet-4-6",
+        model: BRIEF_CHAT_MODEL,
         max_tokens: 8000,
         thinking: { type: "adaptive" },
         cache_control: { type: "ephemeral" } as any,

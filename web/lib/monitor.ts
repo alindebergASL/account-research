@@ -8,6 +8,7 @@
 // If nothing genuinely new is found the model returns has_updates=false with
 // no patches, and the caller changes nothing.
 
+import { MONITOR_SCAN_MODEL, MONITOR_TRIAGE_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Brief } from "./schema";
 import type { BriefPatch } from "./briefPatches";
@@ -212,7 +213,7 @@ export async function runMonitorTriage(
 
   for (let i = 0; i < TRIAGE_MAX_ITERATIONS; i++) {
     const response = await c.messages.create({
-      model: "claude-haiku-4-5",
+      model: MONITOR_TRIAGE_MODEL,
       max_tokens: TRIAGE_MAX_TOKENS,
       system,
       ...(containerId ? { container: containerId } : {}),
@@ -330,7 +331,7 @@ export async function runMonitorScan(
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await c.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MONITOR_SCAN_MODEL,
       max_tokens: MAX_OUTPUT_TOKENS,
       system,
       ...(containerId ? { container: containerId } : {}),
