@@ -117,3 +117,79 @@ test("Fable 5 is catalogued but not wired to any non-admin product role", () => 
   ];
   assert.equal(productRoles.includes("claude-fable-5"), false);
 });
+
+test("admin gate: only ADMIN_STRATEGIC_MODEL (Fable) requires admin", () => {
+  // The admin-only set must be exactly the strategic model and must never
+  // overlap with a product role.
+  assert.deepEqual(models.ADMIN_ONLY_MODELS, ["claude-fable-5"]);
+  assert.equal(models.modelRequiresAdmin("claude-fable-5"), true);
+  for (const id of [
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "model-that-does-not-exist",
+  ]) {
+    assert.equal(models.modelRequiresAdmin(id), false, id);
+  }
+});
+
+test("admin gate: ordinary product models bypass the gate regardless of context", () => {
+  const noCtx = { isAdmin: false, acknowledgedDataPosture: false };
+  assert.equal(models.collectAdminModelRefusals("claude-opus-4-8", noCtx), null);
+  // assert* must not throw for a non-admin model even with an empty context.
+  models.assertAdminModelAllowed("claude-opus-4-8", noCtx);
+  models.assertAdminModelAllowed("claude-sonnet-4-6", noCtx);
+});
+
+test("admin gate: Fable refused when caller is not admin", () => {
+  const refusal = models.collectAdminModelRefusals("claude-fable-5", {
+    isAdmin: false,
+    acknowledgedDataPosture: true,
+  });
+  assert.ok(refusal);
+  assert.equal(refusal!.reasons.length, 1);
+  assert.match(refusal!.reasons[0], /not an authenticated admin/);
+  assert.match(refusal!.message, /Refusing to route to admin-only model claude-fable-5/);
+  assert.match(refusal!.message, /30-day retention/);
+});
+
+test("admin gate: Fable refused when admin has not acknowledged data posture", () => {
+  const refusal = models.collectAdminModelRefusals("claude-fable-5", {
+    isAdmin: true,
+    acknowledgedDataPosture: false,
+  });
+  assert.ok(refusal);
+  assert.equal(refusal!.reasons.length, 1);
+  assert.match(refusal!.reasons[0], /acknowledgement of its data posture/);
+});
+
+test("admin gate: aggregates BOTH unmet requirements for Fable", () => {
+  const refusal = models.collectAdminModelRefusals("claude-fable-5", {
+    isAdmin: false,
+    acknowledgedDataPosture: false,
+  });
+  assert.ok(refusal);
+  assert.equal(refusal!.reasons.length, 2);
+});
+
+test("admin gate: Fable allowed only for an acknowledged admin (fail-closed assert)", () => {
+  const ok = { isAdmin: true, acknowledgedDataPosture: true };
+  assert.equal(models.collectAdminModelRefusals("claude-fable-5", ok), null);
+  // Permitted: must not throw.
+  models.assertAdminModelAllowed("claude-fable-5", ok);
+  // Every other context throws AdminModelGateError carrying the reasons.
+  for (const ctx of [
+    { isAdmin: false, acknowledgedDataPosture: false },
+    { isAdmin: false, acknowledgedDataPosture: true },
+    { isAdmin: true, acknowledgedDataPosture: false },
+  ]) {
+    assert.throws(
+      () => models.assertAdminModelAllowed("claude-fable-5", ctx),
+      (err: unknown) => {
+        assert.ok(err instanceof models.AdminModelGateError);
+        assert.ok((err as InstanceType<typeof models.AdminModelGateError>).reasons.length > 0);
+        return true;
+      },
+    );
+  }
+});

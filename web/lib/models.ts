@@ -144,3 +144,105 @@ export const WEB_SEARCH_ROLE_MODELS = [
   MONITOR_SCAN_MODEL,
   MONITOR_TRIAGE_MODEL,
 ];
+
+// ---------------------------------------------------------------------------
+// Admin-only model gate.
+//
+// Some catalogued models carry a weaker data posture than our end-user product
+// surfaces are allowed to assume. Fable 5 has 30-day retention with NO
+// zero-data-retention guarantee, and ~2x Opus 4.8 cost. It must never be
+// reachable from an ordinary product surface: any caller that wants to route
+// account/customer data to one of these models must first clear this gate with
+// an explicit, authenticated admin context that acknowledges the data posture.
+//
+// The CLI real-adapter seam in run-account-graph-validation.ts is the operator
+// path; this gate is the product-side equivalent — the guard a product surface
+// must call BEFORE selecting an admin-only model. It is PURE and FAIL-CLOSED:
+// no env reads, no I/O, and it refuses unless every requirement is met.
+// ---------------------------------------------------------------------------
+
+/** Models that require an explicit admin context before any data is routed. */
+export const ADMIN_ONLY_MODELS = [ADMIN_STRATEGIC_MODEL] as const;
+
+/** True if `id` may only be used through the admin gate. */
+export function modelRequiresAdmin(id: string): boolean {
+  return (ADMIN_ONLY_MODELS as readonly string[]).includes(id);
+}
+
+/** Human-readable data-posture warning surfaced on every admin-gate refusal. */
+export const ADMIN_MODEL_DATA_POSTURE_WARNING =
+  "claude-fable-5 has 30-day retention with no zero-data-retention guarantee " +
+  "and ~2x Opus 4.8 cost; do not route account/customer data to it without an " +
+  "authenticated admin who has acknowledged this data posture.";
+
+export type AdminModelContext = {
+  /** The resolved caller principal is an authenticated admin/operator. */
+  isAdmin: boolean;
+  /**
+   * The caller has explicitly acknowledged the weaker data posture of the
+   * admin-only model (30-day retention, no ZDR, higher cost). Acknowledgement
+   * is required even for admins so the tradeoff is a deliberate per-call act,
+   * not an ambient consequence of being an admin.
+   */
+  acknowledgedDataPosture: boolean;
+};
+
+/**
+ * Aggregated, fail-closed refusal for the admin model gate. Returns `null` when
+ * the model is not admin-only (ordinary product models are always allowed) OR
+ * when every admin requirement is met. Otherwise returns the full list of unmet
+ * requirements as a single human-readable message.
+ *
+ * Pure: no env reads, no filesystem, no network. Call it BEFORE selecting the
+ * model for any request that carries account data.
+ */
+export function collectAdminModelRefusals(
+  model: string,
+  ctx: AdminModelContext,
+): { reasons: string[]; message: string } | null {
+  if (!modelRequiresAdmin(model)) return null;
+
+  const reasons: string[] = [];
+  if (!ctx.isAdmin) {
+    reasons.push(
+      `${model} is admin/operator-only; caller is not an authenticated admin`,
+    );
+  }
+  if (!ctx.acknowledgedDataPosture) {
+    reasons.push(
+      `${model} requires explicit acknowledgement of its data posture (30-day retention, no ZDR)`,
+    );
+  }
+
+  if (reasons.length === 0) return null;
+  const bulletted = reasons.map((r) => `- ${r}`).join("\n");
+  const message =
+    `Refusing to route to admin-only model ${model}. Unmet requirements:\n` +
+    bulletted +
+    "\n" +
+    ADMIN_MODEL_DATA_POSTURE_WARNING;
+  return { reasons, message };
+}
+
+/** Thrown by `assertAdminModelAllowed` when the gate refuses. */
+export class AdminModelGateError extends Error {
+  readonly reasons: string[];
+  constructor(refusal: { reasons: string[]; message: string }) {
+    super(refusal.message);
+    this.name = "AdminModelGateError";
+    this.reasons = refusal.reasons;
+  }
+}
+
+/**
+ * Fail-closed assertion wrapper around `collectAdminModelRefusals`. Throws an
+ * `AdminModelGateError` unless `model` is permitted for the given caller
+ * context. No-op for ordinary product models.
+ */
+export function assertAdminModelAllowed(
+  model: string,
+  ctx: AdminModelContext,
+): void {
+  const refusal = collectAdminModelRefusals(model, ctx);
+  if (refusal) throw new AdminModelGateError(refusal);
+}
