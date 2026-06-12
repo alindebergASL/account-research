@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canWriteBrief, requireUser } from "@/lib/auth";
 import { insertJournalEntry, rowToJournalDto, type JournalListRow } from "@/lib/journal";
 import { db } from "@/lib/db";
 import {
@@ -46,7 +46,9 @@ export async function POST(
     if (r) return r;
     throw e;
   }
-  if (!canReadBrief(user, params.id)) {
+  // Link import triggers server-side network egress + extraction, so it
+  // requires write access (stricter than read-only document viewing).
+  if (!canWriteBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

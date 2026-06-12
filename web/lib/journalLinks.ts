@@ -1,16 +1,20 @@
 // Import a web link as a journal source. Fetches the URL server-side with SSRF
-// guards (protocol/credential checks, private-IP rejection on every redirect
-// hop, size + timeout caps, content-type allowlist), extracts readable text in
-// the same bounded subprocess used for binary documents, and returns an
-// ExtractedJournalDocument the route stores like any upload.
+// guards and extracts readable text in the same bounded child process used for
+// binary documents, returning an ExtractedJournalDocument the route stores like
+// any upload.
 //
-// Residual risk: DNS rebinding between our lookup and fetch's own resolution is
-// not fully eliminated (we validate resolved IPs but do not pin the socket).
-// Acceptable for importing public web pages; documented as a follow-up.
+// DNS-rebinding / TOCTOU defense: validation and the actual socket connection
+// MUST use the same resolved IP. We achieve that with a pinned undici dispatcher
+// whose connect.lookup resolves the host, rejects any private/reserved address,
+// and hands undici exactly the address it validated — there is no second,
+// independent DNS resolution between check and connect. This runs on every
+// redirect hop (manual redirects), alongside a pre-flight check, size/timeout
+// caps, and a content-type allowlist.
 
-import net from "node:net";
-import { lookup } from "node:dns/promises";
+import net, { type LookupFunction } from "node:net";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { createHash } from "node:crypto";
+import { Agent, request as undiciRequest } from "undici";
 import {
   extractHtmlTextSafely,
   MAX_DOCUMENT_BYTES,
@@ -20,6 +24,7 @@ import {
 export const MAX_LINK_BYTES = MAX_DOCUMENT_BYTES;
 const LINK_FETCH_TIMEOUT_MS = 8_000;
 const MAX_REDIRECTS = 4;
+const REDIRECT_DRAIN_BYTES = 64 * 1024;
 const ALLOWED_CONTENT_TYPES = new Set([
   "text/html",
   "application/xhtml+xml",
@@ -27,12 +32,38 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 export type FetchedLink = { finalUrl: string; html: string; contentType: string };
+export type ResolvedAddr = { address: string; family: number };
 
-// Test seam: inject page content without real network/DNS in tests.
-type LinkFetcher = (rawUrl: string) => Promise<FetchedLink>;
-let _testFetcher: LinkFetcher | null = null;
-export function __setTestLinkFetcher(f: LinkFetcher | null) {
-  _testFetcher = f;
+// Minimal response shape fetchLink works against, so tests can drive redirect,
+// content-type, size, and error handling without real network.
+export type RawHttpResponse = {
+  status: number;
+  header: (name: string) => string | null;
+  body: AsyncIterable<Uint8Array>;
+};
+
+// Test seams (no real network/DNS in tests):
+//  - resolver: simulate what a hostname resolves to (incl. rebinding by
+//    returning different addresses across calls).
+//  - request: drive response handling directly.
+//  - timeout: shorten the abort window.
+type ResolveFn = (hostname: string) => Promise<ResolvedAddr[]>;
+type RequestImpl = (
+  url: string,
+  signal: AbortSignal,
+  dispatcher: Agent | null,
+) => Promise<RawHttpResponse>;
+let _testResolver: ResolveFn | null = null;
+let _testRequest: RequestImpl | null = null;
+let _testTimeoutMs: number | null = null;
+export function __setTestResolver(f: ResolveFn | null) {
+  _testResolver = f;
+}
+export function __setTestRequestImpl(f: RequestImpl | null) {
+  _testRequest = f;
+}
+export function __setTestTimeoutMs(ms: number | null) {
+  _testTimeoutMs = ms;
 }
 
 export function isPrivateIp(ip: string): boolean {
@@ -60,18 +91,25 @@ export function isPrivateIp(ip: string): boolean {
   return true; // unparseable → treat as unsafe
 }
 
+async function resolveHost(hostname: string): Promise<ResolvedAddr[]> {
+  if (_testResolver) return _testResolver(hostname);
+  const addrs = await dnsLookup(hostname, { all: true });
+  return addrs.map((a) => ({ address: a.address, family: a.family }));
+}
+
 async function assertPublicHost(hostname: string): Promise<void> {
-  // A bare IP literal is checked directly; a name is resolved and every
-  // returned address must be public.
+  // Pre-flight: a bare IP literal is checked directly; a name is resolved and
+  // every returned address must be public. This is a fast, friendly-error gate;
+  // pinnedLookup below is the authoritative connect-time enforcement.
   if (net.isIP(hostname)) {
     if (isPrivateIp(hostname)) {
       throw new Error("That link points to a private or reserved address");
     }
     return;
   }
-  let addrs: Array<{ address: string }>;
+  let addrs: ResolvedAddr[];
   try {
-    addrs = await lookup(hostname, { all: true });
+    addrs = await resolveHost(hostname);
   } catch {
     throw new Error("Could not resolve the link's host");
   }
@@ -81,6 +119,37 @@ async function assertPublicHost(hostname: string): Promise<void> {
       throw new Error("That link resolves to a private or reserved address");
     }
   }
+}
+
+// undici connect.lookup hook (Node dns.lookup signature). This is the IP the
+// socket actually connects to, so validating here closes the rebinding window:
+// if any resolved address is private/reserved we error before any connection.
+function pinnedLookup(
+  hostname: string,
+  options: { all?: boolean; family?: number } | undefined,
+  callback: (err: NodeJS.ErrnoException | null, address: string | ResolvedAddr[], family?: number) => void,
+): void {
+  const fail = (msg: string) =>
+    callback(Object.assign(new Error(msg), { code: "EAI_BLOCKED" }), "", 0);
+  if (net.isIP(hostname)) {
+    if (isPrivateIp(hostname)) return fail("Blocked: link resolves to a private or reserved address");
+    const fam = net.isIPv6(hostname) ? 6 : 4;
+    if (options?.all) callback(null, [{ address: hostname, family: fam }]);
+    else callback(null, hostname, fam);
+    return;
+  }
+  resolveHost(hostname)
+    .then((addrs) => {
+      if (addrs.length === 0) return fail("Could not resolve the link's host");
+      for (const a of addrs) {
+        if (isPrivateIp(a.address)) {
+          return fail("Blocked: link resolves to a private or reserved address");
+        }
+      }
+      if (options?.all) callback(null, addrs);
+      else callback(null, addrs[0].address, addrs[0].family);
+    })
+    .catch(() => fail("DNS resolution failed"));
 }
 
 function validateUrl(raw: string): URL {
@@ -99,67 +168,103 @@ function validateUrl(raw: string): URL {
   return u;
 }
 
-async function readBodyCapped(res: Response, max: number): Promise<string> {
-  const reader = res.body?.getReader();
-  if (!reader) return (await res.text()).slice(0, max);
+async function readCapped(body: AsyncIterable<Uint8Array>, max: number): Promise<string> {
   let received = 0;
-  const chunks: Uint8Array[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      received += value.length;
-      if (received > max) {
-        await reader.cancel();
-        throw new Error("Page is too large to import (max 2MB)");
-      }
-      chunks.push(value);
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) {
+    const b = Buffer.from(chunk);
+    received += b.length;
+    if (received > max) {
+      throw new Error("Page is too large to import (max 2MB)");
     }
+    chunks.push(b);
   }
-  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8");
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function drain(body: AsyncIterable<Uint8Array>): Promise<void> {
+  try {
+    await readCapped(body, REDIRECT_DRAIN_BYTES);
+  } catch {
+    /* best-effort: free the socket without surfacing drain errors */
+  }
+}
+
+async function realRequest(
+  url: string,
+  signal: AbortSignal,
+  dispatcher: Agent | null,
+): Promise<RawHttpResponse> {
+  const res = await undiciRequest(url, {
+    dispatcher: dispatcher ?? undefined,
+    method: "GET",
+    signal,
+    headers: {
+      "user-agent": "AccountBriefBuilder/1.0 (+link-import)",
+      accept: "text/html,application/xhtml+xml,text/plain",
+    },
+  });
+  return {
+    status: res.statusCode,
+    header: (name) => {
+      const v = res.headers[name.toLowerCase()];
+      if (Array.isArray(v)) return v[0] ?? null;
+      return typeof v === "string" ? v : v == null ? null : String(v);
+    },
+    body: res.body,
+  };
 }
 
 export async function fetchLink(raw: string): Promise<FetchedLink> {
-  if (_testFetcher) return _testFetcher(raw);
   let url = validateUrl(raw);
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-    await assertPublicHost(url.hostname);
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), LINK_FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        redirect: "manual",
-        signal: ctrl.signal,
-        headers: {
-          "user-agent": "AccountBriefBuilder/1.0 (+link-import)",
-          accept: "text/html,application/xhtml+xml,text/plain",
-        },
-      });
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get("location");
-        if (!loc) throw new Error("The link redirected without a destination");
-        url = validateUrl(new URL(loc, url).toString());
-        continue;
+  const doRequest = _testRequest ?? realRequest;
+  // Real path uses a per-import dispatcher that pins DNS to validated IPs; the
+  // test seam supplies responses directly and needs no dispatcher.
+  const agent = _testRequest ? null : new Agent({ connect: { lookup: pinnedLookup as unknown as LookupFunction } });
+  const timeoutMs = _testTimeoutMs ?? LINK_FETCH_TIMEOUT_MS;
+  try {
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      await assertPublicHost(url.hostname);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await doRequest(url.toString(), ctrl.signal, agent);
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.header("location");
+          await drain(res.body);
+          if (!loc) throw new Error("The link redirected without a destination");
+          // Re-validate scheme/credentials of the redirect target; the host is
+          // re-checked at the top of the next iteration and at connect time.
+          url = validateUrl(new URL(loc, url).toString());
+          continue;
+        }
+        if (res.status < 200 || res.status >= 300) {
+          await drain(res.body);
+          throw new Error(`Could not fetch the link (HTTP ${res.status})`);
+        }
+        const contentType = (res.header("content-type") || "")
+          .split(";")[0]
+          .trim()
+          .toLowerCase();
+        if (contentType && !ALLOWED_CONTENT_TYPES.has(contentType)) {
+          await drain(res.body);
+          throw new Error(`Unsupported link content type: ${contentType}`);
+        }
+        const declared = Number(res.header("content-length") || "");
+        if (Number.isFinite(declared) && declared > MAX_LINK_BYTES) {
+          await drain(res.body);
+          throw new Error("Page is too large to import (max 2MB)");
+        }
+        const html = await readCapped(res.body, MAX_LINK_BYTES);
+        return { finalUrl: url.toString(), html, contentType: contentType || "text/html" };
+      } finally {
+        clearTimeout(timer);
       }
-      if (!res.ok) throw new Error(`Could not fetch the link (HTTP ${res.status})`);
-      const contentType = (res.headers.get("content-type") || "")
-        .split(";")[0]
-        .trim()
-        .toLowerCase();
-      if (contentType && !ALLOWED_CONTENT_TYPES.has(contentType)) {
-        throw new Error(`Unsupported link content type: ${contentType}`);
-      }
-      const declared = Number(res.headers.get("content-length") || "");
-      if (Number.isFinite(declared) && declared > MAX_LINK_BYTES) {
-        throw new Error("Page is too large to import (max 2MB)");
-      }
-      const html = await readBodyCapped(res, MAX_LINK_BYTES);
-      return { finalUrl: url.toString(), html, contentType: contentType || "text/html" };
-    } finally {
-      clearTimeout(timer);
     }
+    throw new Error("The link redirected too many times");
+  } finally {
+    if (agent) await agent.close().catch(() => {});
   }
-  throw new Error("The link redirected too many times");
 }
 
 export async function importJournalLink(rawUrl: string): Promise<ExtractedJournalDocument> {

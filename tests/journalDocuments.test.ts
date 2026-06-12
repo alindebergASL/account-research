@@ -1414,13 +1414,38 @@ test("Office uploads reject legacy .xls/.doc and mislabeled non-zip files", asyn
   assert.match((await jsonOf(res)).error, /Invalid \.docx/);
 });
 
+// ---- Web link import (SSRF-guarded) ----
+
+function fakeResp(opts: {
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string;
+  chunks?: Uint8Array[];
+}): any {
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(opts.headers || {})) headers[k.toLowerCase()] = v;
+  const bytes =
+    opts.chunks ?? (opts.body == null ? [] : [new TextEncoder().encode(opts.body)]);
+  return {
+    status: opts.status ?? 200,
+    header: (name: string) => headers[name.toLowerCase()] ?? null,
+    body: (async function* () {
+      for (const c of bytes) yield c;
+    })(),
+  };
+}
+
+const PUBLIC_ADDR = [{ address: "93.184.216.34", family: 4 }];
+
 test("Web link import stores extracted readable text as a source with source_url", async () => {
-  journalLinks.__setTestLinkFetcher(async (url: string) => ({
-    finalUrl: url,
-    contentType: "text/html",
-    html:
-      "<html><head><title>Acme Q4 Procurement</title></head><body><article><h1>Acme Q4 Procurement</h1><p>Governance review may delay rollout by 30-60 days.</p></article><script>steal()</script></body></html>",
-  }));
+  journalLinks.__setTestResolver(async () => PUBLIC_ADDR);
+  journalLinks.__setTestRequestImpl(async () =>
+    fakeResp({
+      headers: { "content-type": "text/html; charset=utf-8" },
+      body:
+        "<html><head><title>Acme Q4 Procurement</title></head><body><article><h1>Acme Q4 Procurement</h1><p>Governance review may delay rollout by 30-60 days.</p></article><script>steal()</script></body></html>",
+    }),
+  );
   try {
     const res = await linksRoute.POST(
       makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/news" } }),
@@ -1437,22 +1462,155 @@ test("Web link import stores extracted readable text as a source with source_url
     assert.doesNotMatch(row.content_text, /steal\(\)/);
     assert.equal(data.document.source_url, "https://example.com/news");
   } finally {
-    journalLinks.__setTestLinkFetcher(null);
+    journalLinks.__setTestRequestImpl(null);
+    journalLinks.__setTestResolver(null);
   }
 });
 
-test("Web link import rejects non-http, credentialed, and private-host URLs (SSRF)", async () => {
+test("Web link import rejects non-http, credentialed, and private-host URLs (SSRF pre-flight)", async () => {
   for (const url of [
     "ftp://example.com/x",
     "http://user:pass@example.com/",
     "http://127.0.0.1/admin",
     "http://169.254.169.254/latest/meta-data/",
+    "http://[::1]/",
   ]) {
     const res = await linksRoute.POST(
       makeJsonReq({ sessionId: ownerSession, body: { url } }),
       { params: { id: "brief-doc" } },
     );
     assert.equal(res.status, 400, `expected 400 for ${url}`);
+  }
+});
+
+test("Web link import blocks DNS rebinding at connect time (pinned lookup)", async () => {
+  // Public during pre-flight validation, private during the actual connect.
+  let calls = 0;
+  journalLinks.__setTestResolver(async () => {
+    calls += 1;
+    return calls === 1 ? PUBLIC_ADDR : [{ address: "10.0.0.5", family: 4 }];
+  });
+  try {
+    const res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://rebind.example/" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400);
+    // The connect-time resolution (>= 2nd call) is what catches the rebind.
+    assert.ok(calls >= 2, `expected pinned connect-time resolution, calls=${calls}`);
+  } finally {
+    journalLinks.__setTestResolver(null);
+  }
+});
+
+test("Web link import re-validates every redirect hop (private + non-http + credentialed)", async () => {
+  journalLinks.__setTestResolver(async () => PUBLIC_ADDR);
+  for (const location of [
+    "http://169.254.169.254/latest/meta-data/", // private/link-local target
+    "ftp://example.com/file", // non-http target
+    "http://user:pass@example.com/", // credentialed target
+  ]) {
+    journalLinks.__setTestRequestImpl(async () =>
+      fakeResp({ status: 302, headers: { location } }),
+    );
+    const res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/start" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400, `expected 400 for redirect to ${location}`);
+  }
+  journalLinks.__setTestRequestImpl(null);
+  journalLinks.__setTestResolver(null);
+});
+
+test("Web link import rejects unsupported content types", async () => {
+  journalLinks.__setTestResolver(async () => PUBLIC_ADDR);
+  journalLinks.__setTestRequestImpl(async () =>
+    fakeResp({ headers: { "content-type": "application/octet-stream" }, body: "\x00\x01binary" }),
+  );
+  try {
+    const res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/bin" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400);
+  } finally {
+    journalLinks.__setTestRequestImpl(null);
+    journalLinks.__setTestResolver(null);
+  }
+});
+
+test("Web link import enforces the size cap (declared and streamed)", async () => {
+  journalLinks.__setTestResolver(async () => PUBLIC_ADDR);
+  try {
+    // Declared content-length over the cap.
+    journalLinks.__setTestRequestImpl(async () =>
+      fakeResp({
+        headers: { "content-type": "text/html", "content-length": String(3 * 1024 * 1024) },
+        body: "<html>x</html>",
+      }),
+    );
+    let res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/declared" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400);
+
+    // Streamed body over the cap with no content-length header.
+    const oneMb = new Uint8Array(1024 * 1024);
+    journalLinks.__setTestRequestImpl(async () =>
+      fakeResp({ headers: { "content-type": "text/html" }, chunks: [oneMb, oneMb, oneMb] }),
+    );
+    res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/streamed" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400);
+  } finally {
+    journalLinks.__setTestRequestImpl(null);
+    journalLinks.__setTestResolver(null);
+  }
+});
+
+test("Web link import aborts on timeout", async () => {
+  journalLinks.__setTestResolver(async () => PUBLIC_ADDR);
+  journalLinks.__setTestTimeoutMs(40);
+  journalLinks.__setTestRequestImpl(
+    (_url: string, signal: AbortSignal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")));
+      }) as any,
+  );
+  try {
+    const res = await linksRoute.POST(
+      makeJsonReq({ sessionId: ownerSession, body: { url: "https://example.com/slow" } }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 400);
+  } finally {
+    journalLinks.__setTestRequestImpl(null);
+    journalLinks.__setTestResolver(null);
+    journalLinks.__setTestTimeoutMs(null);
+  }
+});
+
+test("isPrivateIp classifies private, loopback, link-local, and mapped addresses", () => {
+  for (const ip of [
+    "127.0.0.1",
+    "10.0.0.5",
+    "192.168.1.1",
+    "169.254.169.254",
+    "172.16.0.1",
+    "100.64.0.1",
+    "::1",
+    "fc00::1",
+    "fe80::1",
+    "::ffff:127.0.0.1",
+  ]) {
+    assert.equal(journalLinks.isPrivateIp(ip), true, `expected private: ${ip}`);
+  }
+  for (const ip of ["8.8.8.8", "1.1.1.1", "93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]) {
+    assert.equal(journalLinks.isPrivateIp(ip), false, `expected public: ${ip}`);
   }
 });
 
