@@ -6,6 +6,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Brief } from "./schema";
 import { SOURCE_DISCOVERY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import type { StageUsage } from "./cost";
+import {
+  RESEARCH_QUICK_MODEL,
+  RESEARCH_HEAVY_MODEL,
+  SOURCE_SCOUT_MODEL,
+  JSON_REPAIR_MODEL,
+} from "./models";
 
 export type ResearchMode = "quick" | "standard" | "deep";
 
@@ -67,7 +73,7 @@ const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
     runScout: false,
     scoutCap: 0,
     research: {
-      model: "claude-sonnet-4-6",
+      model: RESEARCH_QUICK_MODEL,
       maxOutputTokens: 16_000,
       thinking: { type: "disabled" },
       maxContinuations: 2,
@@ -80,7 +86,7 @@ const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
     runScout: true,
     scoutCap: 12,
     research: {
-      model: "claude-opus-4-7",
+      model: RESEARCH_HEAVY_MODEL,
       maxOutputTokens: 32_000,
       thinking: { type: "adaptive" },
       maxContinuations: 5,
@@ -93,7 +99,7 @@ const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
     runScout: true,
     scoutCap: 25,
     research: {
-      model: "claude-opus-4-7",
+      model: RESEARCH_HEAVY_MODEL,
       maxOutputTokens: 64_000,
       thinking: { type: "adaptive" },
       effort: "xhigh",
@@ -150,7 +156,7 @@ async function findSources(
   try {
     for (let i = 0; i <= SOURCE_DISCOVERY_MAX_CONTINUATIONS; i++) {
       const response = await client.messages.create({
-        model: "claude-haiku-4-5",
+        model: SOURCE_SCOUT_MODEL,
         max_tokens: 8000,
         cache_control: { type: "ephemeral" } as any,
         system: SOURCE_DISCOVERY_PROMPT,
@@ -165,7 +171,7 @@ async function findSources(
       });
       stages.push({
         name: i === 0 ? "source_scout" : `source_scout_continue_${i}`,
-        model: "claude-haiku-4-5",
+        model: SOURCE_SCOUT_MODEL,
         usage: response.usage as any,
       });
       if (
@@ -272,7 +278,7 @@ async function repairJson(
 ): Promise<unknown | null> {
   try {
     const response = await client.messages.create({
-      model: "claude-haiku-4-5",
+      model: JSON_REPAIR_MODEL,
       max_tokens: 16000,
       cache_control: { type: "ephemeral" } as any,
       system: SYSTEM_PROMPT,
@@ -291,7 +297,7 @@ async function repairJson(
     });
     stages.push({
       name: "repair",
-      model: "claude-haiku-4-5",
+      model: JSON_REPAIR_MODEL,
       usage: response.usage as any,
     });
     const text = response.content.find((b: any) => b.type === "text") as

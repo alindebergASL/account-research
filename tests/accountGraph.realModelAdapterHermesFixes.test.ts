@@ -575,16 +575,16 @@ test("RB1: 429 retry HALTED by cumulative tally — provider mock called exactly
     sleep: async () => {},
   });
   // Excerpt pre-call estimate for opus@KNOWN_MODEL with ~tiny input is
-  // dominated by output: 2000 tokens * $75/1M = $0.15. Budget of $0.20
+  // dominated by output: 2000 tokens * $25/1M = $0.05. Budget of $0.07
   // affords the first attempt (preflight passes) but NOT a second
-  // ($0.15 reserved + $0.15 next = $0.30 > $0.20).
+  // ($0.05 reserved + $0.05 next = $0.10 > $0.07).
   await assert.rejects(
     () => adapter.proposeExcerpts(
       {
         account_id: "acct_rb1",
         chunks: [{ source_document_id: "src0", source_text: "abc", chunk_index: 0 }],
       },
-      { account_id: "acct_rb1", remaining_budget_usd: 0.20 },
+      { account_id: "acct_rb1", remaining_budget_usd: 0.07 },
     ),
     /budget/i,
   );
@@ -611,12 +611,12 @@ test("RB1: corrective JSON-retry SUPPRESSED when cumulative tally would exceed b
   });
   const outDir = tmpOut("rb1-corrective");
   try {
-    // maxCost 0.20 fits ONE call ($0.15 estimated) but NOT a corrective
-    // retry ($0.15 + $0.15 = $0.30 > $0.20).
+    // maxCost 0.07 fits ONE call ($0.05 estimated) but NOT a corrective
+    // retry ($0.05 + $0.05 = $0.10 > $0.07).
     const r = await runModelModeOrchestrator({
       outDir,
       adapter,
-      maxCostUsd: 0.20,
+      maxCostUsd: 0.07,
       allowHighCost: false,
       limit: 1,
     });

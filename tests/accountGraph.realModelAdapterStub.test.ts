@@ -286,9 +286,9 @@ test("Task 7: observed cost is computed from priced pricing table (never $0 for 
   });
   const r = await adapter.proposeExcerpts(fullChunkInput(), ctxWithBudget(100));
   assert.equal(r.cost.status, "observed");
-  // Opus pricing is 15 input/M + 75 output/M → 10k input + 2k output =
-  // 10000/1e6 * 15 + 2000/1e6 * 75 = 0.15 + 0.15 = 0.30 USD.
-  assert.ok(Math.abs(r.cost.observed_usd - 0.30) < 1e-9, `expected ~0.30; got ${r.cost.observed_usd}`);
+  // Opus pricing is 5 input/M + 25 output/M → 10k input + 2k output =
+  // 10000/1e6 * 5 + 2000/1e6 * 25 = 0.05 + 0.05 = 0.10 USD.
+  assert.ok(Math.abs(r.cost.observed_usd - 0.10) < 1e-9, `expected ~0.10; got ${r.cost.observed_usd}`);
 });
 
 test("Task 7: pricing or usage missing → cost.status === 'unknown_estimated' (never silently $0 observed)", async () => {

@@ -8,6 +8,7 @@
 // If nothing genuinely new is found the model returns has_updates=false with
 // no patches, and the caller changes nothing.
 
+import { MONITOR_SCAN_MODEL, MONITOR_TRIAGE_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Brief } from "./schema";
 import type { BriefPatch } from "./briefPatches";
@@ -99,7 +100,7 @@ MONITOR CONTEXT (MINIMIZED JSON):
 ${JSON.stringify(monitorContext, null, 2)}${leadsBlock}`;
 }
 
-// ---- Two-tier scan: usage + a cheap Haiku triage gate -------------------
+// ---- Two-tier scan: usage + a cheap Sonnet triage gate ------------------
 
 export type MonitorUsage = {
   triage_input_tokens: number;
@@ -191,7 +192,8 @@ ${JSON.stringify(ctx, null, 2)}`;
 
 export type MonitorTriageResult = { anythingNew: boolean; leads: string[] };
 
-// Cheap first pass (Haiku, 1-2 searches). Fails OPEN — if it can't decide,
+// Cheap first pass (MONITOR_TRIAGE_MODEL / Sonnet 4.6, 1-2 searches). Fails
+// OPEN — if it can't decide,
 // returns anythingNew=true so the deep scan still runs.
 export async function runMonitorTriage(
   input: MonitorScanInput,
@@ -212,7 +214,7 @@ export async function runMonitorTriage(
 
   for (let i = 0; i < TRIAGE_MAX_ITERATIONS; i++) {
     const response = await c.messages.create({
-      model: "claude-haiku-4-5",
+      model: MONITOR_TRIAGE_MODEL,
       max_tokens: TRIAGE_MAX_TOKENS,
       system,
       ...(containerId ? { container: containerId } : {}),
@@ -330,7 +332,7 @@ export async function runMonitorScan(
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await c.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MONITOR_SCAN_MODEL,
       max_tokens: MAX_OUTPUT_TOKENS,
       system,
       ...(containerId ? { container: containerId } : {}),

@@ -13,6 +13,7 @@
 // passes `undefined` and a fresh `new Anthropic()` is used (same pattern
 // as `web/app/api/briefs/[id]/chat/route.ts`).
 
+import { COMMENT_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const BRIEF_INPUT_CHAR_CAP = 4000;
@@ -176,7 +177,7 @@ export async function runAssist(
   const c: AssistClient =
     client ?? _testClient ?? (new Anthropic() as unknown as AssistClient);
   const response = await c.messages.create({
-    model: "claude-sonnet-4-6",
+    model: COMMENT_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
     system,
     messages: [{ role: "user", content: user }],

@@ -2,6 +2,8 @@
 // pricing shifts (RESEARCH_PRICE_<MODEL_ID>_INPUT, _OUTPUT, _CACHE_READ,
 // _CACHE_WRITE). Unknown models return null cost — never a wrong number.
 
+import { modelPrice, type ModelPrice } from "./models";
+
 export type StageUsage = {
   name: string;
   model: string;
@@ -20,34 +22,7 @@ export type AggregateUsage = {
   cache_creation_input_tokens: number;
 };
 
-type Price = {
-  input_per_mtok: number;
-  output_per_mtok: number;
-  cache_read_per_mtok: number;
-  cache_write_per_mtok: number;
-};
-
-const DEFAULT_PRICES: Record<string, Price> = {
-  // Claude 4.x family — list prices as of 2026-05.
-  "claude-opus-4-7": {
-    input_per_mtok: 15,
-    output_per_mtok: 75,
-    cache_read_per_mtok: 1.5,
-    cache_write_per_mtok: 18.75,
-  },
-  "claude-sonnet-4-6": {
-    input_per_mtok: 3,
-    output_per_mtok: 15,
-    cache_read_per_mtok: 0.3,
-    cache_write_per_mtok: 3.75,
-  },
-  "claude-haiku-4-5": {
-    input_per_mtok: 1,
-    output_per_mtok: 5,
-    cache_read_per_mtok: 0.1,
-    cache_write_per_mtok: 1.25,
-  },
-};
+type Price = ModelPrice;
 
 const warned = new Set<string>();
 
@@ -64,7 +39,7 @@ function envOverride(model: string): Partial<Price> {
 }
 
 function priceFor(model: string): Price | null {
-  const base = DEFAULT_PRICES[model];
+  const base = modelPrice(model);
   if (!base) {
     if (!warned.has(model)) {
       // eslint-disable-next-line no-console

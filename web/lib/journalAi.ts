@@ -9,6 +9,7 @@
 //   - JOURNAL_CONTEXT_MAX: max prior entries included as context.
 //   - MAX_OUTPUT_TOKENS: model output ceiling.
 
+import { JOURNAL_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   formatDocumentContextForPrompt,
@@ -220,7 +221,7 @@ export async function runJournalReply(
   const c: JournalClient =
     client ?? _testClient ?? (new Anthropic() as unknown as JournalClient);
   const response = await c.messages.create({
-    model: "claude-sonnet-4-6",
+    model: JOURNAL_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
     system,
     messages: [{ role: "user", content: user }],
