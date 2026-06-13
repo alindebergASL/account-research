@@ -33,6 +33,16 @@ import { buildParityReport } from "../lib/accountGraph/briefParity";
 import { validateAccountGraph } from "../lib/accountGraph/validation";
 import { classifyBrief } from "../lib/accountGraph/backfillReport";
 import { Brief as BriefSchema } from "../lib/schema";
+// Operator-seam parity: reuse the product-side admin model gate so the CLI
+// real-adapter path and the product surface share ONE source of truth for
+// which models are admin-only and what acknowledgement they require. `models`
+// is a pure catalog module (no SDK/network/fs), so this import does not violate
+// the runner's hard safety guarantees above.
+import {
+  modelRequiresAdmin,
+  collectAdminModelRefusals,
+  ADMIN_MODEL_DATA_POSTURE_WARNING,
+} from "../lib/models";
 import {
   buildBudgetReportBlock,
   budgetExceeded,
@@ -154,6 +164,10 @@ export type CliArgs = {
   provider?: string;
   /** Task 7: exact provider model id (operator-supplied; never hardcoded). */
   model?: string;
+  /** Operator-seam parity: explicit acknowledgement of an admin-only model's
+   * weaker data posture (30-day retention, no ZDR, higher cost). Required only
+   * when --model is an admin-only model (e.g. ADMIN_STRATEGIC_MODEL / Fable). */
+  acknowledgedDataPosture: boolean;
 };
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -165,6 +179,7 @@ export function parseArgs(argv: string[]): CliArgs {
     allowCostOver25: false,
     allowHighCost: false,
     allowRealModel: false,
+    acknowledgedDataPosture: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -189,6 +204,8 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "--allow-real-model") args.allowRealModel = true;
     else if (a === "--provider") args.provider = argv[++i];
     else if (a === "--model") args.model = argv[++i];
+    else if (a === "--acknowledge-data-posture")
+      args.acknowledgedDataPosture = true;
   }
   if (args.mode !== "fixture" && args.mode !== "model") {
     throw new Error(
@@ -1808,6 +1825,9 @@ export type RealAdapterRefusalContext = {
   corpus: string | undefined;
   out: string | undefined;
   outExplicit: boolean;
+  /** Operator-seam parity: did the operator pass --acknowledge-data-posture?
+   * Only consulted when --model is an admin-only model. */
+  acknowledgedDataPosture: boolean;
 };
 
 /**
@@ -1850,6 +1870,23 @@ export function collectRealAdapterRefusals(
     reasons.push(
       "--model is required for --adapter real (operator-supplied; no hardcoded model id)",
     );
+  } else if (modelRequiresAdmin(ctx.model)) {
+    // Operator-seam parity with the product admin gate (web/lib/models.ts).
+    // The real-adapter operator IS the admin (the path already demands
+    // --allow-real-model and operator-supplied flags), so the only outstanding
+    // requirement is an EXPLICIT per-run acknowledgement of the model's weaker
+    // data posture. Delegate the decision to the shared gate so the CLI and
+    // product surfaces cannot drift on which models need it or under what
+    // conditions; surface a CLI-flavoured reason naming the flag to pass.
+    const adminRefusal = collectAdminModelRefusals(ctx.model, {
+      isAdmin: true,
+      acknowledgedDataPosture: ctx.acknowledgedDataPosture,
+    });
+    if (adminRefusal) {
+      reasons.push(
+        `--acknowledge-data-posture is required for --model ${ctx.model}: ${ADMIN_MODEL_DATA_POSTURE_WARNING}`,
+      );
+    }
   }
   if (!ctx.maxCostExplicit) {
     reasons.push(
@@ -1930,6 +1967,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         corpus: args.corpus,
         out: args.out,
         outExplicit: args.outExplicit,
+        acknowledgedDataPosture: args.acknowledgedDataPosture,
       });
       if (refusal) {
         console.error(`[run-account-graph-validation] ${refusal.message}`);
