@@ -195,10 +195,11 @@ HARD RULES — these are past failure modes; do not repeat them:
 - rating MUST be an integer 1-5.
 - generated_at and accessed MUST be ISO YYYY-MM-DD.`;
 
-// Stage 1 prompt — Haiku source-discovery scout. Cheap, fast, broad. Produces
-// a JSON array of candidate URLs that the Opus deep-research stage uses as a
-// head start. No structured-output schema (keeps grammar small); we rely on
-// prompt discipline + a simple JSON.parse on the way out.
+// Stage 1 prompt — source-discovery scout (SOURCE_SCOUT_MODEL, Sonnet 4.6).
+// Cheap, fast, broad. Produces a JSON array of candidate URLs that the heavy
+// deep-research stage (RESEARCH_HEAVY_MODEL, Opus 4.8) uses as a head start.
+// No structured-output schema (keeps grammar small); we rely on prompt
+// discipline + a simple JSON.parse on the way out.
 export const SOURCE_DISCOVERY_PROMPT = `You are a research scout. Your single job is to find a broad, high-quality set of public sources about a target organization. A downstream research model will use your list to write an account brief.
 
 Use the web_search tool aggressively — issue 6-10 distinct search queries from different angles to maximize source diversity. Do NOT visit pages; just discover and return URLs.

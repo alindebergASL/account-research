@@ -158,8 +158,16 @@ async function findSources(
       const response = await client.messages.create({
         model: SOURCE_SCOUT_MODEL,
         max_tokens: 8000,
+        // Cache the frozen scout prompt (tools + system) across jobs; the
+        // top-level breakpoint caches the message tail across continuations.
         cache_control: { type: "ephemeral" } as any,
-        system: SOURCE_DISCOVERY_PROMPT,
+        system: [
+          {
+            type: "text",
+            text: SOURCE_DISCOVERY_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ] as any,
         tools: [
           {
             type: "web_search_20260209" as const,
@@ -243,9 +251,19 @@ async function runResearchLoop(
       model: cfg.model,
       max_tokens: cfg.maxOutputTokens,
       thinking: cfg.thinking as any,
+      // Two cache breakpoints. The block-level one on the frozen SYSTEM_PROMPT
+      // caches tools + system as a prefix that is byte-identical across every
+      // job, continuation, and account — so the large shared prompt is reused
+      // at ~0.1x input cost instead of re-billed in full each call. The
+      // top-level breakpoint additionally caches the growing message tail
+      // across continuations within a single job. Top-level ALONE auto-places
+      // on the last (per-account) message block, which would never let the big
+      // system prefix be reused across jobs.
       cache_control: { type: "ephemeral" } as any,
       ...(outputConfig ? { output_config: outputConfig } : {}),
-      system: SYSTEM_PROMPT,
+      system: [
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      ] as any,
       tools,
       messages,
     });
@@ -280,8 +298,13 @@ async function repairJson(
     const response = await client.messages.create({
       model: JSON_REPAIR_MODEL,
       max_tokens: 16000,
-      cache_control: { type: "ephemeral" } as any,
-      system: SYSTEM_PROMPT,
+      // Cache the frozen SYSTEM_PROMPT (with its large schema) as the prefix so
+      // a second repair in the same job reuses it. No top-level breakpoint here:
+      // the partial-output user turn is unique per call, so caching it would pay
+      // the write premium for a span that is never read back.
+      system: [
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      ] as any,
       messages: [
         {
           role: "user",
