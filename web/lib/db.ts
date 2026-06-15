@@ -681,6 +681,38 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: "024_journal_tasks",
+    // Hierarchical to-do checklists scoped to a brief's journal. parent_id is a
+    // self-reference (NULL = top-level); position orders siblings; done/done_by/
+    // done_at record completion; deleted_at soft-deletes (the app layer cascades
+    // the soft-delete to descendants). FK cascade on brief delete and on parent
+    // hard-delete keeps orphans out at the DB level too.
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_tasks (
+          id         TEXT PRIMARY KEY,
+          brief_id   TEXT NOT NULL,
+          parent_id  TEXT,
+          body       TEXT NOT NULL,
+          done       INTEGER NOT NULL DEFAULT 0,
+          done_by    TEXT,
+          done_at    INTEGER,
+          position   INTEGER NOT NULL DEFAULT 0,
+          created_by TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          deleted_at INTEGER,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (parent_id) REFERENCES journal_tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (done_by) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_tasks_brief
+          ON journal_tasks(brief_id, parent_id, position);
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -719,6 +751,21 @@ export type JournalDocumentRow = {
   content_text: string;
   created_at: number;
   source_url: string | null;
+};
+
+export type JournalTaskRow = {
+  id: string;
+  brief_id: string;
+  parent_id: string | null;
+  body: string;
+  done: 0 | 1;
+  done_by: string | null;
+  done_at: number | null;
+  position: number;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+  deleted_at: number | null;
 };
 
 export type JournalReviewCandidateRow = {

@@ -88,6 +88,7 @@ import {
   trustedLegendStart,
 } from "./journal/helpers";
 import { Badge, type BadgeTone, Card, EmptyState, SectionHeader } from "./journal/ui";
+import JournalTasks from "./journal/JournalTasks";
 
 function renderCitationChips(
   entry: Entry,
@@ -180,7 +181,7 @@ export default function JournalSection({
   const [paletteQuery, setPaletteQuery] = useState("");
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [activeFullView, setActiveFullView] = useState<
-    "sources" | "intelligence" | "review" | null
+    "sources" | "intelligence" | "review" | "tasks" | null
   >(null);
   function goToComposer() {
     setActiveFullView(null);
@@ -1620,6 +1621,7 @@ export default function JournalSection({
           [
             ["journal", "Journal", !activeFullView && centerTab === "timeline"],
             ["team", "Team Room", !activeFullView && centerTab === "team"],
+            ["tasks", "To-dos", activeFullView === "tasks"],
             ["sources", "Sources", activeFullView === "sources"],
             ["review", "Review Queue", activeFullView === "review"],
           ] as const
@@ -1846,6 +1848,9 @@ export default function JournalSection({
               </button>
             </div>
             <div className="p-5">
+      {activeFullView === "tasks" && (
+        <JournalTasks briefId={briefId} currentUserId={currentUserId} />
+      )}
       {activeFullView === "intelligence" && (
         <div className="mb-4 space-y-4">
           <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
