@@ -103,19 +103,37 @@ ${JSON.stringify(monitorContext, null, 2)}${leadsBlock}`;
 // ---- Two-tier scan: usage + a cheap Sonnet triage gate ------------------
 
 export type MonitorUsage = {
+  // Aggregate input (base + cache_read + cache_creation) per tier. Kept with
+  // its original meaning so existing usage_json rows stay comparable.
   triage_input_tokens: number;
   triage_output_tokens: number;
   deep_input_tokens: number;
   deep_output_tokens: number;
+  // Cache breakdown of the aggregate input above. Lets us see how much input
+  // was served cheaply from the prompt cache (~0.1x) vs billed at full base
+  // rate — the whole point of adding cache_control to the monitor loops.
+  triage_cache_read_input_tokens: number;
+  triage_cache_creation_input_tokens: number;
+  deep_cache_read_input_tokens: number;
+  deep_cache_creation_input_tokens: number;
+  // Per-tier model-call counts (how many continuation iterations actually ran).
+  triage_calls: number;
+  deep_calls: number;
   web_searches: number;
 };
 
-function emptyMonitorUsage(): MonitorUsage {
+export function emptyMonitorUsage(): MonitorUsage {
   return {
     triage_input_tokens: 0,
     triage_output_tokens: 0,
     deep_input_tokens: 0,
     deep_output_tokens: 0,
+    triage_cache_read_input_tokens: 0,
+    triage_cache_creation_input_tokens: 0,
+    deep_cache_read_input_tokens: 0,
+    deep_cache_creation_input_tokens: 0,
+    triage_calls: 0,
+    deep_calls: 0,
     web_searches: 0,
   };
 }
@@ -125,18 +143,26 @@ function accumulateUsage(
   response: { usage?: any },
   tier: "triage" | "deep",
 ) {
+  // Count the call even if the provider returned no usage block, so call
+  // counts reflect iterations actually issued.
+  if (tier === "triage") usage.triage_calls += 1;
+  else usage.deep_calls += 1;
+
   const u = response?.usage;
   if (!u) return;
-  const inp =
-    (u.input_tokens || 0) +
-    (u.cache_read_input_tokens || 0) +
-    (u.cache_creation_input_tokens || 0);
+  const cacheRead = u.cache_read_input_tokens || 0;
+  const cacheCreation = u.cache_creation_input_tokens || 0;
+  const inp = (u.input_tokens || 0) + cacheRead + cacheCreation;
   const out = u.output_tokens || 0;
   if (tier === "triage") {
     usage.triage_input_tokens += inp;
+    usage.triage_cache_read_input_tokens += cacheRead;
+    usage.triage_cache_creation_input_tokens += cacheCreation;
     usage.triage_output_tokens += out;
   } else {
     usage.deep_input_tokens += inp;
+    usage.deep_cache_read_input_tokens += cacheRead;
+    usage.deep_cache_creation_input_tokens += cacheCreation;
     usage.deep_output_tokens += out;
   }
   usage.web_searches += u.server_tool_use?.web_search_requests || 0;
@@ -216,6 +242,11 @@ export async function runMonitorTriage(
     const response = await c.messages.create({
       model: MONITOR_TRIAGE_MODEL,
       max_tokens: TRIAGE_MAX_TOKENS,
+      // Cache the growing conversation prefix across continuation iterations
+      // within this triage run (system + accumulated web_search results). Each
+      // iteration re-sends the prior turns; without this they are re-billed at
+      // full input price. Same low-risk top-level placement as the research loop.
+      cache_control: { type: "ephemeral" } as any,
       system,
       ...(containerId ? { container: containerId } : {}),
       tools: [
@@ -259,13 +290,19 @@ export type MonitorCheckResult = {
 
 // Orchestrates the two-tier check: cheap triage first, deep scan only when the
 // triage says something may be new. This is what the worker calls.
+//
+// `usage` may be supplied by the caller (the worker) so that usage accumulated
+// before a mid-check throw is still observable on the failed run — accumulation
+// mutates the object in place, so the worker's reference holds the partial
+// counts even if a later model/tool call rejects. When omitted, a fresh object
+// is used (the returned result still carries it).
 export async function runMonitorCheck(
   input: MonitorScanInput,
   client?: MonitorClient,
+  usage: MonitorUsage = emptyMonitorUsage(),
 ): Promise<MonitorCheckResult> {
   const c: MonitorClient =
     client ?? _testClient ?? (new Anthropic() as unknown as MonitorClient);
-  const usage = emptyMonitorUsage();
   const triage = await runMonitorTriage(input, c, usage);
   if (!triage.anythingNew) {
     return {
@@ -334,6 +371,11 @@ export async function runMonitorScan(
     const response = await c.messages.create({
       model: MONITOR_SCAN_MODEL,
       max_tokens: MAX_OUTPUT_TOKENS,
+      // Cache the growing conversation prefix across the deep-scan continuation
+      // loop (system + accumulated web_search results). This is the dominant
+      // token sink — up to 6 iterations re-sending large search context — so
+      // caching it cuts the input bill substantially.
+      cache_control: { type: "ephemeral" } as any,
       system,
       ...(containerId ? { container: containerId } : {}),
       tools: [
