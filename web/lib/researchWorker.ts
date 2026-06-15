@@ -31,7 +31,7 @@ import {
   logJobCompleted,
 } from "./briefEvents";
 import { applyPatches, type BriefPatch } from "./briefPatches";
-import { runMonitorCheck } from "./monitor";
+import { emptyMonitorUsage, runMonitorCheck } from "./monitor";
 import { insertJournalEntry } from "./journal";
 import { recordMonitorRun, type MonitorRunTier } from "./monitorRuns";
 import { listBriefEmailRecipients } from "./briefRecipients";
@@ -631,7 +631,9 @@ export async function executeMonitorJob(job: ResearchJobRow) {
   // block does not double-record a run that already succeeded.
   let recorded = false;
   let checkTier: MonitorRunTier = "deep";
-  let checkUsageJson: string | null = null;
+  const checkUsage = emptyMonitorUsage();
+  const monitorUsageJson = () => JSON.stringify(checkUsage);
+  let checkUsageJson: string | null = monitorUsageJson();
 
   try {
     const row = db()
@@ -666,10 +668,10 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     const check = await runMonitorCheck({
       brief: parsed.data,
       lastMonitoredAt: row.last_monitored_at,
-    });
+    }, undefined, checkUsage);
     const findings = check.findings;
     checkTier = check.tier;
-    checkUsageJson = JSON.stringify(check.usage);
+    checkUsageJson = monitorUsageJson();
     const now = Date.now();
     if (!monitorMayCommit(job, briefId)) return;
 
@@ -830,6 +832,7 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     }
     if (!recorded) {
       try {
+        checkUsageJson = monitorUsageJson();
         recordMonitorRun({ briefId, jobId: job.id, outcome: "failed", tier: checkTier, usageJson: checkUsageJson });
       } catch {
         // history is best-effort; never mask the original failure

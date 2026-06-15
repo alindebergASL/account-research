@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
 const { db, initDb } = require("../web/lib/db") as typeof import("../web/lib/db");
 const { newId } = require("../web/lib/password") as typeof import("../web/lib/password");
 const { executeMonitorJob } = require("../web/lib/researchWorker") as typeof import("../web/lib/researchWorker");
-const { runMonitorScan, __setTestMonitorClient } = require("../web/lib/monitor") as typeof import("../web/lib/monitor");
+const { runMonitorCheck, runMonitorScan, runMonitorTriage, __setTestMonitorClient } = require("../web/lib/monitor") as typeof import("../web/lib/monitor");
 const { cancelActiveMonitorJobsForBrief } = require("../web/lib/monitorScheduler") as typeof import("../web/lib/monitorScheduler");
 
 initDb();
@@ -175,6 +175,149 @@ test("monitor prompt excludes internal strategy fields while preserving public m
   assert.doesNotMatch(systemPrompt, /SECRET_INTERNAL_BUYING_PATH/);
   assert.doesNotMatch(systemPrompt, /SECRET_INTERNAL_RISK/);
   assert.doesNotMatch(systemPrompt, /private persona note/);
+});
+
+test("monitor Anthropic calls request top-level prompt caching", async () => {
+  const brief = makeBrief("Cache Control Court");
+  const calls: any[] = [];
+  await runMonitorTriage(
+    { brief, lastMonitoredAt: Date.UTC(2026, 5, 1) },
+    {
+      messages: {
+        create: async (args: any) => {
+          calls.push(args);
+          return {
+            stop_reason: "tool_use",
+            content: [{ type: "tool_use", name: "record_triage", id: "triage", input: { anything_new: false, leads: [] } }],
+          };
+        },
+      },
+    },
+  );
+  await runMonitorScan(
+    { brief, lastMonitoredAt: Date.UTC(2026, 5, 1) },
+    {
+      messages: {
+        create: async (args: any) => {
+          calls.push(args);
+          return {
+            stop_reason: "tool_use",
+            content: [{ type: "tool_use", name: "record_monitor_findings", id: "findings", input: { has_updates: false, summary: "", patches: [] } }],
+          };
+        },
+      },
+    },
+  );
+
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.deepEqual(call.cache_control, { type: "ephemeral" });
+  }
+});
+
+test("monitor usage records cache tokens and web searches separately by tier", async () => {
+  const brief = makeBrief("Usage Court");
+  let call = 0;
+  const check = await runMonitorCheck(
+    { brief, lastMonitoredAt: Date.UTC(2026, 5, 1) },
+    {
+      messages: {
+        create: async () => {
+          call += 1;
+          if (call === 1) {
+            return {
+              stop_reason: "tool_use",
+              usage: {
+                input_tokens: 10,
+                cache_read_input_tokens: 20,
+                cache_creation_input_tokens: 30,
+                output_tokens: 4,
+                server_tool_use: { web_search_requests: 1 },
+              },
+              content: [{ type: "tool_use", name: "record_triage", id: "triage", input: { anything_new: true, leads: ["new filing"] } }],
+            };
+          }
+          return {
+            stop_reason: "tool_use",
+            usage: {
+              input_tokens: 100,
+              cache_read_input_tokens: 200,
+              cache_creation_input_tokens: 300,
+              output_tokens: 40,
+              server_tool_use: { web_search_requests: 2 },
+            },
+            content: [{ type: "tool_use", name: "record_monitor_findings", id: "findings", input: { has_updates: false, summary: "", patches: [] } }],
+          };
+        },
+      },
+    },
+  );
+
+  assert.equal(check.tier, "deep");
+  assert.equal(check.usage.triage_input_tokens, 10);
+  assert.equal(check.usage.triage_cache_read_input_tokens, 20);
+  assert.equal(check.usage.triage_cache_creation_input_tokens, 30);
+  assert.equal(check.usage.triage_total_input_tokens, 60);
+  assert.equal(check.usage.triage_output_tokens, 4);
+  assert.equal(check.usage.triage_calls, 1);
+  assert.equal(check.usage.triage_web_searches, 1);
+  assert.equal(check.usage.deep_input_tokens, 100);
+  assert.equal(check.usage.deep_cache_read_input_tokens, 200);
+  assert.equal(check.usage.deep_cache_creation_input_tokens, 300);
+  assert.equal(check.usage.deep_total_input_tokens, 600);
+  assert.equal(check.usage.deep_output_tokens, 40);
+  assert.equal(check.usage.deep_calls, 1);
+  assert.equal(check.usage.deep_web_searches, 2);
+  assert.equal(check.usage.web_searches, 3);
+});
+
+test("failed monitor jobs preserve partial usage telemetry from completed model calls", async () => {
+  const owner = ownerId();
+  const briefId = insertBrief(owner, makeBrief("Partial Usage Monitor"), true);
+  let call = 0;
+  __setTestMonitorClient({
+    messages: {
+      create: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stop_reason: "tool_use",
+            usage: {
+              input_tokens: 11,
+              cache_read_input_tokens: 22,
+              cache_creation_input_tokens: 33,
+              output_tokens: 5,
+              server_tool_use: { web_search_requests: 1 },
+            },
+            content: [{ type: "tool_use", name: "record_triage", id: "triage", input: { anything_new: true, leads: ["new RFP"] } }],
+          };
+        }
+        throw new Error("provider unavailable after triage");
+      },
+    },
+  });
+
+  try {
+    const job = insertMonitorJob(briefId, owner, "Partial Usage Monitor");
+    await executeMonitorJob(job);
+    const jobAfter = db().prepare("SELECT status FROM research_jobs WHERE id = ?").get(job.id) as any;
+    assert.equal(jobAfter.status, "failed");
+    const run = db()
+      .prepare("SELECT outcome, usage_json FROM monitor_runs WHERE job_id = ?")
+      .get(job.id) as any;
+    assert.equal(run.outcome, "failed");
+    const usage = JSON.parse(run.usage_json);
+    assert.equal(usage.triage_input_tokens, 11);
+    assert.equal(usage.triage_cache_read_input_tokens, 22);
+    assert.equal(usage.triage_cache_creation_input_tokens, 33);
+    assert.equal(usage.triage_total_input_tokens, 66);
+    assert.equal(usage.triage_output_tokens, 5);
+    assert.equal(usage.triage_calls, 1);
+    assert.equal(usage.deep_calls, 0);
+    assert.equal(usage.web_searches, 1);
+  } finally {
+    __setTestMonitorClient(null);
+  }
 });
 
 test("monitor cancelled while scan is in flight exits without side effects", async () => {

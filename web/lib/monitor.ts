@@ -104,20 +104,44 @@ ${JSON.stringify(monitorContext, null, 2)}${leadsBlock}`;
 
 export type MonitorUsage = {
   triage_input_tokens: number;
+  triage_cache_read_input_tokens: number;
+  triage_cache_creation_input_tokens: number;
+  triage_total_input_tokens: number;
   triage_output_tokens: number;
+  triage_calls: number;
+  triage_web_searches: number;
   deep_input_tokens: number;
+  deep_cache_read_input_tokens: number;
+  deep_cache_creation_input_tokens: number;
+  deep_total_input_tokens: number;
   deep_output_tokens: number;
+  deep_calls: number;
+  deep_web_searches: number;
   web_searches: number;
 };
 
-function emptyMonitorUsage(): MonitorUsage {
+export function emptyMonitorUsage(): MonitorUsage {
   return {
     triage_input_tokens: 0,
+    triage_cache_read_input_tokens: 0,
+    triage_cache_creation_input_tokens: 0,
+    triage_total_input_tokens: 0,
     triage_output_tokens: 0,
+    triage_calls: 0,
+    triage_web_searches: 0,
     deep_input_tokens: 0,
+    deep_cache_read_input_tokens: 0,
+    deep_cache_creation_input_tokens: 0,
+    deep_total_input_tokens: 0,
     deep_output_tokens: 0,
+    deep_calls: 0,
+    deep_web_searches: 0,
     web_searches: 0,
   };
+}
+
+function numericUsageField(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function accumulateUsage(
@@ -127,19 +151,30 @@ function accumulateUsage(
 ) {
   const u = response?.usage;
   if (!u) return;
-  const inp =
-    (u.input_tokens || 0) +
-    (u.cache_read_input_tokens || 0) +
-    (u.cache_creation_input_tokens || 0);
-  const out = u.output_tokens || 0;
+  const input = numericUsageField(u.input_tokens);
+  const cacheRead = numericUsageField(u.cache_read_input_tokens);
+  const cacheCreation = numericUsageField(u.cache_creation_input_tokens);
+  const totalInput = input + cacheRead + cacheCreation;
+  const out = numericUsageField(u.output_tokens);
+  const webSearches = numericUsageField(u.server_tool_use?.web_search_requests);
   if (tier === "triage") {
-    usage.triage_input_tokens += inp;
+    usage.triage_input_tokens += input;
+    usage.triage_cache_read_input_tokens += cacheRead;
+    usage.triage_cache_creation_input_tokens += cacheCreation;
+    usage.triage_total_input_tokens += totalInput;
     usage.triage_output_tokens += out;
+    usage.triage_calls += 1;
+    usage.triage_web_searches += webSearches;
   } else {
-    usage.deep_input_tokens += inp;
+    usage.deep_input_tokens += input;
+    usage.deep_cache_read_input_tokens += cacheRead;
+    usage.deep_cache_creation_input_tokens += cacheCreation;
+    usage.deep_total_input_tokens += totalInput;
     usage.deep_output_tokens += out;
+    usage.deep_calls += 1;
+    usage.deep_web_searches += webSearches;
   }
-  usage.web_searches += u.server_tool_use?.web_search_requests || 0;
+  usage.web_searches += webSearches;
 }
 
 const TRIAGE_MAX_ITERATIONS = 3;
@@ -217,6 +252,7 @@ export async function runMonitorTriage(
       model: MONITOR_TRIAGE_MODEL,
       max_tokens: TRIAGE_MAX_TOKENS,
       system,
+      cache_control: { type: "ephemeral" } as any,
       ...(containerId ? { container: containerId } : {}),
       tools: [
         { type: "web_search_20260209" as const, name: "web_search" } as any,
@@ -262,10 +298,10 @@ export type MonitorCheckResult = {
 export async function runMonitorCheck(
   input: MonitorScanInput,
   client?: MonitorClient,
+  usage: MonitorUsage = emptyMonitorUsage(),
 ): Promise<MonitorCheckResult> {
   const c: MonitorClient =
     client ?? _testClient ?? (new Anthropic() as unknown as MonitorClient);
-  const usage = emptyMonitorUsage();
   const triage = await runMonitorTriage(input, c, usage);
   if (!triage.anythingNew) {
     return {
@@ -335,6 +371,7 @@ export async function runMonitorScan(
       model: MONITOR_SCAN_MODEL,
       max_tokens: MAX_OUTPUT_TOKENS,
       system,
+      cache_control: { type: "ephemeral" } as any,
       ...(containerId ? { container: containerId } : {}),
       tools: [
         { type: "web_search_20260209" as const, name: "web_search" } as any,
