@@ -31,7 +31,7 @@ import {
   logJobCompleted,
 } from "./briefEvents";
 import { applyPatches, type BriefPatch } from "./briefPatches";
-import { runMonitorCheck } from "./monitor";
+import { runMonitorCheck, emptyMonitorUsage } from "./monitor";
 import { insertJournalEntry } from "./journal";
 import { recordMonitorRun, type MonitorRunTier } from "./monitorRuns";
 import { listBriefEmailRecipients } from "./briefRecipients";
@@ -632,6 +632,10 @@ export async function executeMonitorJob(job: ResearchJobRow) {
   let recorded = false;
   let checkTier: MonitorRunTier = "deep";
   let checkUsageJson: string | null = null;
+  // Owned by the worker (not runMonitorCheck) so usage accumulated before a
+  // mid-scan throw is still persisted on the failed run. accumulateUsage
+  // mutates this object in place, so it holds partial counts even on failure.
+  const monitorUsage = emptyMonitorUsage();
 
   try {
     const row = db()
@@ -663,10 +667,14 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
 
-    const check = await runMonitorCheck({
-      brief: parsed.data,
-      lastMonitoredAt: row.last_monitored_at,
-    });
+    const check = await runMonitorCheck(
+      {
+        brief: parsed.data,
+        lastMonitoredAt: row.last_monitored_at,
+      },
+      undefined,
+      monitorUsage,
+    );
     const findings = check.findings;
     checkTier = check.tier;
     checkUsageJson = JSON.stringify(check.usage);
@@ -829,8 +837,17 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
     if (!recorded) {
+      // Persist whatever usage was accumulated before the throw. If the failure
+      // happened mid-check, checkUsageJson is still null but monitorUsage holds
+      // the partial counts — otherwise failed runs (the current blind spot)
+      // record real Claude spend as zero.
+      const failedUsageJson =
+        checkUsageJson ??
+        (monitorUsage.triage_calls + monitorUsage.deep_calls > 0
+          ? JSON.stringify(monitorUsage)
+          : null);
       try {
-        recordMonitorRun({ briefId, jobId: job.id, outcome: "failed", tier: checkTier, usageJson: checkUsageJson });
+        recordMonitorRun({ briefId, jobId: job.id, outcome: "failed", tier: checkTier, usageJson: failedUsageJson });
       } catch {
         // history is best-effort; never mask the original failure
       }
