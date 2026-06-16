@@ -18,6 +18,9 @@ const authMod = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const journalRoute = require("../web/app/api/briefs/[id]/journal/route") as typeof import("../web/app/api/briefs/[id]/journal/route");
 const documentsRoute = require("../web/app/api/briefs/[id]/journal/documents/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/route");
 const documentDetailRoute = require("../web/app/api/briefs/[id]/journal/documents/[documentId]/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/[documentId]/route");
+const documentRawRoute = require("../web/app/api/briefs/[id]/journal/documents/[documentId]/raw/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/[documentId]/raw/route");
+const journalLib = require("../web/lib/journal") as typeof import("../web/lib/journal");
+const docStorage = require("../web/lib/journalDocumentStorage") as typeof import("../web/lib/journalDocumentStorage");
 const journalDocuments = require("../web/lib/journalDocuments") as typeof import("../web/lib/journalDocuments");
 const linksRoute = require("../web/app/api/briefs/[id]/journal/links/route") as typeof import("../web/app/api/briefs/[id]/journal/links/route");
 const journalLinks = require("../web/lib/journalLinks") as typeof import("../web/lib/journalLinks");
@@ -3113,4 +3116,124 @@ test("document detail route 404s once the owning journal entry is soft-deleted",
     { params: { id: "brief-doc", documentId: docId } },
   );
   assert.equal(afterDelete.status, 404);
+});
+
+test("inline allowlist: PDF and images inline; HTML/SVG/others forced to download", () => {
+  for (const m of ["application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"]) {
+    assert.equal(docStorage.canServeInline(m), true, m);
+  }
+  for (const m of ["text/html", "image/svg+xml", "application/octet-stream", "text/plain", "application/zip"]) {
+    assert.equal(docStorage.canServeInline(m), false, m);
+  }
+});
+
+test("uploading a file stores the original bytes; raw route downloads non-inline types", async () => {
+  const ownerSession = makeSessionFor("owner-doc");
+  const content = "RAW_BYTES_MARKER original file bytes for download";
+  const form = new FormData();
+  form.append("file", new File([content], "report.txt", { type: "text/plain" }));
+  const up = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: "1024" }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(up.status, 200);
+  const upData = await jsonOf(up);
+  assert.equal(upData.document.has_original, true);
+  const docId = upData.document.id as string;
+
+  const raw = await documentRawRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(raw.status, 200);
+  // text/plain is not allowlisted → opaque octet-stream attachment.
+  assert.equal(raw.headers.get("content-type"), "application/octet-stream");
+  assert.match(raw.headers.get("content-disposition") || "", /^attachment; filename="report.txt"/);
+  assert.equal(raw.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(await raw.text(), content);
+
+  // Access gating.
+  const outsiderSession = makeSessionFor("outsider-doc");
+  const blocked = await documentRawRoute.GET(
+    makeJsonReq({ sessionId: outsiderSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(blocked.status, 404);
+  const missing = await documentRawRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: "nope" } },
+  );
+  assert.equal(missing.status, 404);
+});
+
+test("raw route serves allowlisted types inline, and 404s once the owning entry is deleted", async () => {
+  const ownerSession = makeSessionFor("owner-doc");
+  const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 1, 2, 3, 4, 5]); // "%PDF" + bytes
+  const contentHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  const storagePath = docStorage.writeOriginalBytes(contentHash, bytes);
+  const entryId = journalLib.insertJournalEntry({
+    briefId: "brief-doc",
+    userId: "owner-doc",
+    authorType: "user",
+    body: "pdf upload",
+    replyTo: null,
+  });
+  const docId = journalDocuments.insertJournalDocument({
+    briefId: "brief-doc",
+    journalEntryId: entryId,
+    userId: "owner-doc",
+    document: {
+      filename: "deck.pdf",
+      mimeType: "application/pdf",
+      byteSize: bytes.length,
+      contentHash,
+      contentText: "extracted pdf text",
+    },
+    storagePath,
+  });
+
+  const raw = await documentRawRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(raw.status, 200);
+  assert.equal(raw.headers.get("content-type"), "application/pdf");
+  assert.match(raw.headers.get("content-disposition") || "", /^inline; filename="deck.pdf"/);
+  assert.deepEqual(new Uint8Array(await raw.arrayBuffer()), bytes);
+
+  db().prepare(`UPDATE journal_entries SET deleted_at = ? WHERE id = ?`).run(Date.now(), entryId);
+  const afterDelete = await documentRawRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(afterDelete.status, 404);
+});
+
+test("raw route 404s for a document with no stored original bytes (older extract-only docs)", async () => {
+  const ownerSession = makeSessionFor("owner-doc");
+  const entryId = journalLib.insertJournalEntry({
+    briefId: "brief-doc",
+    userId: "owner-doc",
+    authorType: "user",
+    body: "text only",
+    replyTo: null,
+  });
+  const docId = journalDocuments.insertJournalDocument({
+    briefId: "brief-doc",
+    journalEntryId: entryId,
+    userId: "owner-doc",
+    document: {
+      filename: "old.txt",
+      mimeType: "text/plain",
+      byteSize: 5,
+      contentHash: "deadbeefdeadbeef",
+      contentText: "hello",
+    },
+    // no storagePath → null
+  });
+  const raw = await documentRawRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(raw.status, 404);
 });

@@ -16,6 +16,8 @@ export type JournalDocument = {
   created_at: number;
   content_preview: string;
   source_url: string | null;
+  // True when the original uploaded bytes are stored and can be viewed/downloaded.
+  has_original?: boolean;
 };
 
 export type Entry = {

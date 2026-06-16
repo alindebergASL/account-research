@@ -10,6 +10,12 @@ const DB_PATH =
   process.env.BRIEF_DB_PATH ||
   path.join(process.cwd(), "data", "briefs.sqlite");
 
+// Directory that holds the SQLite DB and other persisted data (e.g. original
+// uploaded document bytes under journal-docs/). Co-located with the DB so the
+// production backup of `web/data` captures it, and so tests that point
+// BRIEF_DB_PATH at a tmp dir keep their blobs isolated too.
+export const DATA_DIR = path.dirname(DB_PATH);
+
 let _db: Database.Database | null = null;
 
 export function initDb(): Database.Database {
@@ -713,6 +719,21 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "025_journal_document_storage_path",
+    // PR3: original uploaded bytes are now persisted on disk (content-addressed
+    // under web/data/journal-docs). storage_path holds the relative path when
+    // bytes are available (NULL for older extract-only docs and for imported
+    // links, which keep source_url instead).
+    up: (c) => {
+      const cols = c
+        .prepare("PRAGMA table_info(journal_documents)")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "storage_path")) {
+        c.exec("ALTER TABLE journal_documents ADD COLUMN storage_path TEXT");
+      }
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -751,6 +772,7 @@ export type JournalDocumentRow = {
   content_text: string;
   created_at: number;
   source_url: string | null;
+  storage_path: string | null;
 };
 
 export type JournalTaskRow = {

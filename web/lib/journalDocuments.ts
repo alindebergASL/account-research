@@ -72,6 +72,8 @@ export type JournalDocumentDto = {
   created_at: number;
   content_preview: string;
   source_url: string | null;
+  // True when the original uploaded bytes are stored and downloadable.
+  has_original: boolean;
 };
 
 export type ExtractedJournalDocument = {
@@ -551,13 +553,16 @@ export function insertJournalDocument(args: {
   journalEntryId: string;
   userId: string | null;
   document: ExtractedJournalDocument;
+  // Relative path to the persisted original bytes (file uploads). Null for
+  // imported links and any path where bytes were not stored.
+  storagePath?: string | null;
 }): string {
   const id = newId();
   db()
     .prepare(
       `INSERT INTO journal_documents
-         (id, brief_id, journal_entry_id, user_id, filename, mime_type, byte_size, content_hash, content_text, source_url, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, brief_id, journal_entry_id, user_id, filename, mime_type, byte_size, content_hash, content_text, source_url, storage_path, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -570,6 +575,7 @@ export function insertJournalDocument(args: {
       args.document.contentHash,
       args.document.contentText,
       args.document.sourceUrl ?? null,
+      args.storagePath ?? null,
       Date.now(),
     );
   return id;
@@ -587,6 +593,7 @@ export function rowToJournalDocumentDto(row: JournalDocumentRow): JournalDocumen
         ? `${row.content_text.slice(0, 500)}…`
         : row.content_text,
     source_url: row.source_url ?? null,
+    has_original: row.storage_path != null,
   };
 }
 
@@ -605,6 +612,8 @@ export type JournalDocumentDetailDto = {
   // True when extraction hit the cap, so the UI can say the text is truncated.
   truncated: boolean;
   source_url: string | null;
+  // True when the original uploaded bytes are stored and downloadable.
+  has_original: boolean;
 };
 
 export function rowToJournalDocumentDetailDto(
@@ -621,16 +630,18 @@ export function rowToJournalDocumentDetailDto(
     content_chars: row.content_text.length,
     truncated: row.content_text.length >= MAX_EXTRACTED_TEXT_CHARS,
     source_url: row.source_url ?? null,
+    has_original: row.storage_path != null,
   };
 }
 
-export function loadJournalDocumentDetail(
+// Loads a document row only when its owning journal entry is live — matching
+// the list/prompt-context paths. Without this, a document would stay reachable
+// after its owning journal entry is soft-deleted. Used by both the full-text
+// detail and the original-bytes download paths.
+export function loadLiveJournalDocumentRow(
   briefId: string,
   documentId: string,
-): JournalDocumentDetailDto | null {
-  // Join journal_entries and require the owning entry to be live — matching the
-  // list/prompt-context paths. Without this, a document's full text would stay
-  // fetchable after its owning journal entry is soft-deleted.
+): JournalDocumentRow | null {
   const row = db()
     .prepare(
       `SELECT d.*
@@ -639,6 +650,14 @@ export function loadJournalDocumentDetail(
         WHERE d.id = ? AND d.brief_id = ? AND j.brief_id = ? AND j.deleted_at IS NULL`,
     )
     .get(documentId, briefId, briefId) as JournalDocumentRow | undefined;
+  return row ?? null;
+}
+
+export function loadJournalDocumentDetail(
+  briefId: string,
+  documentId: string,
+): JournalDocumentDetailDto | null {
+  const row = loadLiveJournalDocumentRow(briefId, documentId);
   return row ? rowToJournalDocumentDetailDto(row) : null;
 }
 
