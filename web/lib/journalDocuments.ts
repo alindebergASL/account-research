@@ -590,6 +590,58 @@ export function rowToJournalDocumentDto(row: JournalDocumentRow): JournalDocumen
   };
 }
 
+// Full-document detail (the entire extracted text, up to
+// MAX_EXTRACTED_TEXT_CHARS) for the document viewer. The list/preview path only
+// carries a 500-char excerpt; this is the "view file content" surface.
+export type JournalDocumentDetailDto = {
+  id: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  content_hash: string;
+  created_at: number;
+  content_text: string;
+  content_chars: number;
+  // True when extraction hit the cap, so the UI can say the text is truncated.
+  truncated: boolean;
+  source_url: string | null;
+};
+
+export function rowToJournalDocumentDetailDto(
+  row: JournalDocumentRow,
+): JournalDocumentDetailDto {
+  return {
+    id: row.id,
+    filename: row.filename,
+    mime_type: row.mime_type,
+    byte_size: row.byte_size,
+    content_hash: row.content_hash,
+    created_at: row.created_at,
+    content_text: row.content_text,
+    content_chars: row.content_text.length,
+    truncated: row.content_text.length >= MAX_EXTRACTED_TEXT_CHARS,
+    source_url: row.source_url ?? null,
+  };
+}
+
+export function loadJournalDocumentDetail(
+  briefId: string,
+  documentId: string,
+): JournalDocumentDetailDto | null {
+  // Join journal_entries and require the owning entry to be live — matching the
+  // list/prompt-context paths. Without this, a document's full text would stay
+  // fetchable after its owning journal entry is soft-deleted.
+  const row = db()
+    .prepare(
+      `SELECT d.*
+         FROM journal_documents d
+         JOIN journal_entries j ON j.id = d.journal_entry_id
+        WHERE d.id = ? AND d.brief_id = ? AND j.brief_id = ? AND j.deleted_at IS NULL`,
+    )
+    .get(documentId, briefId, briefId) as JournalDocumentRow | undefined;
+  return row ? rowToJournalDocumentDetailDto(row) : null;
+}
+
 export function listDocumentsForEntries(entryIds: string[]): Map<string, JournalDocumentDto[]> {
   const result = new Map<string, JournalDocumentDto[]>();
   if (entryIds.length === 0) return result;
