@@ -912,6 +912,16 @@ export default function JournalSection({
             )}
           </>
         )}
+        {selectedSource.has_original && (
+          <a
+            href={`/api/briefs/${briefId}/journal/documents/${selectedSource.id}/raw`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--info-text)] hover:underline"
+          >
+            <FileText className="size-3" /> Open file ↗
+          </a>
+        )}
         {selectedSource.source_url && (
           <a
             href={selectedSource.source_url}

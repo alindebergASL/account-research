@@ -11,6 +11,7 @@ import {
   MAX_DOCUMENT_BYTES,
   MAX_UPLOAD_BODY_BYTES,
 } from "@/lib/journalDocuments";
+import { writeOriginalBytes } from "@/lib/journalDocumentStorage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -97,6 +98,7 @@ export async function POST(
   }
 
   let extracted;
+  let storagePath: string | null = null;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     extracted = await extractJournalDocument({
@@ -104,6 +106,14 @@ export async function POST(
       mimeType: file.type || "application/octet-stream",
       bytes,
     });
+    // Persist the original bytes (content-addressed) so the file can be viewed
+    // or downloaded later. Best-effort: if storage fails, fall back to the
+    // text-only document rather than failing the whole upload.
+    try {
+      storagePath = writeOriginalBytes(extracted.contentHash, bytes);
+    } catch {
+      storagePath = null;
+    }
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "Document extraction failed" },
@@ -127,6 +137,7 @@ export async function POST(
         journalEntryId: entryId,
         userId: user.id,
         document: extracted,
+        storagePath,
       });
       return { entryId, documentId };
     })();
