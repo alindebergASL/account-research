@@ -628,7 +628,17 @@ export function loadJournalDocumentDetail(
   briefId: string,
   documentId: string,
 ): JournalDocumentDetailDto | null {
-  const row = loadJournalDocument(briefId, documentId);
+  // Join journal_entries and require the owning entry to be live — matching the
+  // list/prompt-context paths. Without this, a document's full text would stay
+  // fetchable after its owning journal entry is soft-deleted.
+  const row = db()
+    .prepare(
+      `SELECT d.*
+         FROM journal_documents d
+         JOIN journal_entries j ON j.id = d.journal_entry_id
+        WHERE d.id = ? AND d.brief_id = ? AND j.brief_id = ? AND j.deleted_at IS NULL`,
+    )
+    .get(documentId, briefId, briefId) as JournalDocumentRow | undefined;
   return row ? rowToJournalDocumentDetailDto(row) : null;
 }
 

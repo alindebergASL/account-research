@@ -3080,3 +3080,37 @@ test("document detail route returns the full extracted text, gated by brief acce
   );
   assert.equal(missing.status, 404);
 });
+
+test("document detail route 404s once the owning journal entry is soft-deleted", async () => {
+  const ownerSession = makeSessionFor("owner-doc");
+  const form = new FormData();
+  form.append(
+    "file",
+    new File(["SECRET_DELETED_DETAIL_TEXT for the deleted-entry boundary test"], "deleted-detail.md", {
+      type: "text/markdown",
+    }),
+  );
+  const up = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: "1024" }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(up.status, 200);
+  const upData = await jsonOf(up);
+  const docId = upData.document.id as string;
+  const entryId = upData.entry.id as string;
+
+  // Reachable while the owning entry is live.
+  const live = await documentDetailRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(live.status, 200);
+
+  // Soft-delete the owning entry; the document text must no longer be fetchable.
+  db().prepare(`UPDATE journal_entries SET deleted_at = ? WHERE id = ?`).run(Date.now(), entryId);
+  const afterDelete = await documentDetailRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(afterDelete.status, 404);
+});
