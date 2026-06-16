@@ -17,6 +17,7 @@ const { db, initDb } = require("../web/lib/db") as typeof import("../web/lib/db"
 const authMod = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const journalRoute = require("../web/app/api/briefs/[id]/journal/route") as typeof import("../web/app/api/briefs/[id]/journal/route");
 const documentsRoute = require("../web/app/api/briefs/[id]/journal/documents/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/route");
+const documentDetailRoute = require("../web/app/api/briefs/[id]/journal/documents/[documentId]/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/[documentId]/route");
 const journalDocuments = require("../web/lib/journalDocuments") as typeof import("../web/lib/journalDocuments");
 const linksRoute = require("../web/app/api/briefs/[id]/journal/links/route") as typeof import("../web/app/api/briefs/[id]/journal/links/route");
 const journalLinks = require("../web/lib/journalLinks") as typeof import("../web/lib/journalLinks");
@@ -3033,4 +3034,49 @@ test("brief chat prompt includes uploaded document excerpts and tells writable c
   assert.match(system, /secure AI infrastructure/);
   assert.match(system, /When the user's current message asks to apply document-derived findings/);
   assert.match(system, /update_brief/);
+});
+
+test("document detail route returns the full extracted text, gated by brief access", async () => {
+  const ownerSession = makeSessionFor("owner-doc");
+  const longText =
+    "NEEDLE_FULLTEXT_MARKER " +
+    "lorem ipsum dolor sit amet consectetur adipiscing ".repeat(30);
+  assert.ok(longText.length > 500);
+
+  const form = new FormData();
+  form.append("file", new File([longText], "notes.txt", { type: "text/plain" }));
+  const up = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form, contentLength: String(longText.length + 200) }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(up.status, 200);
+  const upData = await jsonOf(up);
+  const docId = upData.document.id as string;
+  // The list/preview path only carries a truncated excerpt.
+  assert.ok(upData.document.content_preview.endsWith("…"));
+
+  // Detail returns the whole extracted text.
+  const detail = await documentDetailRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(detail.status, 200);
+  const detailData = await jsonOf(detail);
+  assert.ok(detailData.document.content_text.includes("NEEDLE_FULLTEXT_MARKER"));
+  assert.ok(detailData.document.content_text.length > 500);
+  assert.equal(detailData.document.content_chars, detailData.document.content_text.length);
+  assert.equal(detailData.document.truncated, false);
+
+  // No access for an outsider; unknown ids are 404.
+  const outsiderSession = makeSessionFor("outsider-doc");
+  const blocked = await documentDetailRoute.GET(
+    makeJsonReq({ sessionId: outsiderSession }),
+    { params: { id: "brief-doc", documentId: docId } },
+  );
+  assert.equal(blocked.status, 404);
+  const missing = await documentDetailRoute.GET(
+    makeJsonReq({ sessionId: ownerSession }),
+    { params: { id: "brief-doc", documentId: "does-not-exist" } },
+  );
+  assert.equal(missing.status, 404);
 });

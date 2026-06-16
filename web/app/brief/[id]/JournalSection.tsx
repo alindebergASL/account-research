@@ -147,6 +147,13 @@ export default function JournalSection({
   const [newCandidateRisk, setNewCandidateRisk] = useState("");
   const [newCandidateSourceEntryId, setNewCandidateSourceEntryId] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<JournalSource | null>(null);
+  // Full extracted text for the document viewer, fetched on demand (the list
+  // preview only carries a 500-char excerpt). Keyed by document id so it only
+  // applies to the source it was loaded for.
+  const [fullText, setFullText] = useState<
+    { id: string; text: string; chars: number; truncated: boolean } | null
+  >(null);
+  const [fullTextLoading, setFullTextLoading] = useState(false);
   const [selectedCitationContext, setSelectedCitationContext] = useState<SelectedCitationContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -831,6 +838,29 @@ export default function JournalSection({
     );
   }
 
+  async function loadDocumentFullText(documentId: string) {
+    setFullTextLoading(true);
+    try {
+      const r = await fetch(
+        `/api/briefs/${briefId}/journal/documents/${documentId}`,
+        { cache: "no-store" },
+      );
+      if (!r.ok) throw new Error("Failed to load document text");
+      const data = await r.json();
+      const doc = data.document;
+      setFullText({
+        id: doc.id,
+        text: doc.content_text || "",
+        chars: doc.content_chars ?? 0,
+        truncated: !!doc.truncated,
+      });
+    } catch (e: any) {
+      setError(e?.message || "Failed to load document text");
+    } finally {
+      setFullTextLoading(false);
+    }
+  }
+
   function renderSourcePreview() {
     if (!selectedSource) return null;
     const isSelectedSourceExcluded = excludedDocumentIds.includes(selectedSource.id);
@@ -855,9 +885,43 @@ export default function JournalSection({
             <X className="size-4" />
           </button>
         </div>
-        <p className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--surface-muted)] p-3 text-sm text-ink">
-          {selectedSource.content_preview || "No text preview extracted."}
-        </p>
+        {fullText?.id === selectedSource.id ? (
+          <>
+            <p className="mt-4 max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--surface-muted)] p-3 text-sm text-ink">
+              {fullText.text || "No text extracted."}
+            </p>
+            <p className="mt-1 text-[11px] text-muted">
+              Showing full extracted text · {fullText.chars.toLocaleString()} characters
+              {fullText.truncated ? " · truncated at the extraction limit" : ""}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--surface-muted)] p-3 text-sm text-ink">
+              {selectedSource.content_preview || "No text preview extracted."}
+            </p>
+            {selectedSource.content_preview.endsWith("…") && (
+              <button
+                type="button"
+                onClick={() => loadDocumentFullText(selectedSource.id)}
+                disabled={fullTextLoading}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] disabled:opacity-50"
+              >
+                <FileText className="size-3" /> {fullTextLoading ? "Loading…" : "View full text"}
+              </button>
+            )}
+          </>
+        )}
+        {selectedSource.source_url && (
+          <a
+            href={selectedSource.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 ml-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--info-text)] hover:underline"
+          >
+            Open original ↗
+          </a>
+        )}
         {selectedSource.entryBody && (
           <p className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-white p-3 text-xs text-muted">
             Attached journal note: {selectedSource.entryBody}
