@@ -5,6 +5,7 @@ import {
   type JournalDocumentDto,
 } from "@/lib/journalDocuments";
 import type { JournalEntryTag } from "@/lib/journalEntryTags";
+import type { JournalMentionDto } from "@/lib/journalMentions";
 
 // Insert a journal entry and return its id. Shared by the journal POST route
 // and background jobs (e.g. the daily monitor) that post an `assistant` entry.
@@ -64,6 +65,7 @@ export type JournalEntryDto = {
   documents: JournalDocumentDto[];
   pinned_at: number | null;
   tags: JournalEntryTag[];
+  mentions: JournalMentionDto[];
 };
 
 // Pin / unpin a journal entry (team-wide). No own-entry / time-window
@@ -162,6 +164,7 @@ export function rowToJournalDto(
   r: JournalListRow,
   documents: JournalDocumentDto[] = [],
   tags: JournalEntryTag[] = [],
+  mentions: JournalMentionDto[] = [],
 ): JournalEntryDto {
   const deleted = r.deleted_at !== null;
   const base: Omit<JournalEntryDto, "author"> = {
@@ -173,9 +176,10 @@ export function rowToJournalDto(
     edited_at: r.edited_at,
     deleted_at: r.deleted_at,
     documents: deleted ? [] : documents,
-    // A soft-deleted entry shows neither pin nor tags.
+    // A soft-deleted entry shows neither pin, tags, nor mentions.
     pinned_at: deleted ? null : r.pinned_at,
     tags: deleted ? [] : tags,
+    mentions: deleted ? [] : mentions,
   };
   if (deleted) {
     return { ...base, author: null };

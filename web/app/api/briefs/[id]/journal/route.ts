@@ -27,6 +27,11 @@ import {
 } from "@/lib/journalDocuments";
 import { listTagsForEntries } from "@/lib/journalEntryTags";
 import {
+  listEntryIdsMentioningUser,
+  listMentionsForEntries,
+  syncEntryMentionsFromBody,
+} from "@/lib/journalMentions";
+import {
   isJournalCatchUpWindow,
   journalCatchUpExcludedDocumentKey,
   journalCatchUpScopedDocumentKey,
@@ -79,7 +84,8 @@ function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
     .get(entryId, briefId) as JournalListRow;
   const docs = listDocumentsForEntries([entryId]).get(entryId) ?? [];
   const tags = listTagsForEntries([entryId]).get(entryId) ?? [];
-  return rowToJournalDto(row, docs, tags);
+  const mentions = listMentionsForEntries([entryId]).get(entryId) ?? [];
+  return rowToJournalDto(row, docs, tags, mentions);
 }
 
 export async function GET(
@@ -98,13 +104,37 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const rows = listEntryRowsForBrief(params.id);
+  const allRows = listEntryRowsForBrief(params.id);
+  // Optional server-side "mentions me" filter. Keeps whole threads intact: a
+  // root surfaces when it OR any of its replies mentions the viewer, so the
+  // filtered feed never shows an orphaned reply without its root.
+  const mentionsMe = req.nextUrl?.searchParams.get("mentions") === "me";
+  let rows = allRows;
+  if (mentionsMe) {
+    const mentionedIds = listEntryIdsMentioningUser(params.id, user.id);
+    const matchedThreadRoots = new Set<string>();
+    for (const r of allRows) {
+      // Only a *live* mentioning entry surfaces its thread. A soft-deleted
+      // entry keeps its mention rows but hides them in the DTO, so letting it
+      // trigger a match would show a thread with no visible live mention.
+      if (r.deleted_at === null && mentionedIds.has(r.id)) {
+        matchedThreadRoots.add(r.reply_to ?? r.id);
+      }
+    }
+    rows = allRows.filter((r) => matchedThreadRoots.has(r.reply_to ?? r.id));
+  }
   const entryIds = rows.map((r) => r.id);
   const docsByEntry = listDocumentsForEntries(entryIds);
   const tagsByEntry = listTagsForEntries(entryIds);
+  const mentionsByEntry = listMentionsForEntries(entryIds);
   return NextResponse.json({
     entries: rows.map((r) =>
-      rowToJournalDto(r, docsByEntry.get(r.id) ?? [], tagsByEntry.get(r.id) ?? []),
+      rowToJournalDto(
+        r,
+        docsByEntry.get(r.id) ?? [],
+        tagsByEntry.get(r.id) ?? [],
+        mentionsByEntry.get(r.id) ?? [],
+      ),
     ),
   });
 }
@@ -225,6 +255,7 @@ export async function POST(
       body: text,
       replyTo: replyRoot,
     });
+    syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
     const userEntry = loadEntryDto(params.id, userEntryId);
     return NextResponse.json({ entries: [userEntry] });
   }
@@ -256,6 +287,7 @@ export async function POST(
     body: text,
     replyTo: replyRoot,
   });
+  syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
   const userEntry = loadEntryDto(params.id, userEntryId);
   // The assistant reply joins the same thread: the explicit reply root when
   // threading, otherwise the just-posted user entry (which becomes the root).

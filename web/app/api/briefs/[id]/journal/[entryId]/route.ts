@@ -6,6 +6,7 @@ import {
   canReadBrief,
   requireUser,
 } from "@/lib/auth";
+import { syncEntryMentionsFromBody } from "@/lib/journalMentions";
 
 export const runtime = "nodejs";
 
@@ -77,6 +78,9 @@ export async function PATCH(
   db()
     .prepare(`UPDATE journal_entries SET body = ?, edited_at = ? WHERE id = ?`)
     .run(text, now, params.entryId);
+  // Keep mentions in sync with the edited body: a handle added or removed in
+  // the edit is reflected immediately (resolved against current brief members).
+  syncEntryMentionsFromBody({ briefId: params.id, entryId: params.entryId, body: text });
 
   return NextResponse.json({ ok: true, edited_at: now });
 }
