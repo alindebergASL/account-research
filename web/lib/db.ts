@@ -777,6 +777,32 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "028_journal_entry_mentions",
+    // PR6: @mentions resolved against brief members (owner + shares) at write
+    // time. One row per (entry, mentioned user); cascade-deleted with the
+    // entry / brief, and SET NULL is not needed since the mentioned user is the
+    // key — a removed user's rows go away with the user via ON DELETE CASCADE.
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_entry_mentions (
+          id                 TEXT PRIMARY KEY,
+          brief_id           TEXT NOT NULL,
+          journal_entry_id   TEXT NOT NULL,
+          mentioned_user_id  TEXT NOT NULL,
+          created_at         INTEGER NOT NULL,
+          UNIQUE (journal_entry_id, mentioned_user_id),
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+          FOREIGN KEY (mentioned_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_entry_mentions_entry
+          ON journal_entry_mentions(journal_entry_id);
+        CREATE INDEX IF NOT EXISTS idx_journal_entry_mentions_brief_user
+          ON journal_entry_mentions(brief_id, mentioned_user_id);
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
