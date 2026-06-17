@@ -3237,3 +3237,75 @@ test("raw route 404s for a document with no stored original bytes (older extract
   );
   assert.equal(raw.status, 404);
 });
+
+test("threaded reply bypasses catch-up cache load and save", async () => {
+  const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
+  const cache = require("../web/lib/journalCatchUpCache") as typeof import("../web/lib/journalCatchUpCache");
+  const now = Date.now();
+  const contextSince = now - 24 * 60 * 60 * 1000;
+
+  // A live root to reply to, and a catch-up cache entry that an identical
+  // non-threaded request would serve (matching window/keys/fingerprint).
+  const rootId = journalLib.insertJournalEntry({
+    briefId: "brief-doc",
+    userId: "owner-doc",
+    authorType: "user",
+    body: "thread root for catch-up bypass",
+    replyTo: null,
+  });
+  const fingerprint = cache.refreshCockpitSourceFingerprint("brief-doc");
+  const cacheKey = {
+    briefId: "brief-doc",
+    window: "24h" as const,
+    contextSince,
+    excludedDocumentKey: cache.journalCatchUpExcludedDocumentKey([]),
+    scopedDocumentKey: cache.journalCatchUpScopedDocumentKey([], false),
+    cockpitSourceFingerprint: fingerprint,
+  };
+  cache.saveJournalCatchUpCache({
+    ...cacheKey,
+    summaryText: "SEEDED catch-up summary that must not be served or overwritten.",
+    sourceEntryId: "assistant-seeded",
+    now,
+  });
+
+  let modelCalls = 0;
+  journalAi.__setTestJournalClient({
+    messages: {
+      async create() {
+        modelCalls += 1;
+        return { content: [{ type: "text", text: "Threaded reply generated fresh, not from cache." }] };
+      },
+    },
+  } as any);
+  try {
+    const res = await journalRoute.POST(
+      makeJsonReq({
+        sessionId: ownerSession,
+        body: {
+          body: "Replying within the thread, with a catch-up window set.",
+          ask_ai: true,
+          reply_to: rootId,
+          journal_context_since: contextSince,
+          journal_catch_up_window: "24h",
+        },
+      }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 200);
+    const payload = await jsonOf(res);
+    // Load bypass: the seeded cache is ignored, the model runs.
+    assert.equal(payload.ai_cache_hit, false);
+    assert.equal(modelCalls, 1);
+    assert.match(payload.entries[1].body, /generated fresh, not from cache/);
+    // The assistant reply threads onto the root (assistantReplyTo === root).
+    assert.equal(payload.entries[1].reply_to, rootId);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+
+  // Save bypass: the threaded reply did not overwrite the seeded cache entry.
+  const stillSeeded = cache.loadJournalCatchUpCache({ ...cacheKey, now: now + 1 });
+  assert.ok(stillSeeded, "seeded catch-up cache entry should still exist");
+  assert.match(stillSeeded!.summary_text, /SEEDED catch-up summary/);
+});

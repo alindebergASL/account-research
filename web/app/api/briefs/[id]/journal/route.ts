@@ -5,6 +5,8 @@ import {
   insertJournalEntry,
   listEntryRowsForBrief,
   listRecentEntryRowsForBrief,
+  listThreadEntryRows,
+  resolveThreadRoot,
   rowToJournalDto,
   type JournalEntryDto,
   type JournalListRow,
@@ -128,6 +130,7 @@ export async function POST(
   let body: {
     body?: unknown;
     ask_ai?: unknown;
+    reply_to?: unknown;
     source_document_ids?: unknown;
     excluded_source_document_ids?: unknown;
     journal_context_since?: unknown;
@@ -147,6 +150,16 @@ export async function POST(
       { error: `Entry too long (max ${MAX_BODY_CHARS} chars)` },
       { status: 400 },
     );
+  }
+  // Optional reply target. Normalized to the thread root (single-level
+  // threading): a reply to a reply collapses onto the original root.
+  const replyToRaw = typeof body.reply_to === "string" ? body.reply_to.trim() : "";
+  let replyRoot: string | null = null;
+  if (replyToRaw) {
+    replyRoot = resolveThreadRoot(params.id, replyToRaw);
+    if (!replyRoot) {
+      return NextResponse.json({ error: "Reply target not found" }, { status: 400 });
+    }
   }
   const askAi = body.ask_ai === true;
   const journalContextSince = askAi && body.journal_context_since !== undefined
@@ -210,7 +223,7 @@ export async function POST(
       userId: user.id,
       authorType: "user",
       body: text,
-      replyTo: null,
+      replyTo: replyRoot,
     });
     const userEntry = loadEntryDto(params.id, userEntryId);
     return NextResponse.json({ entries: [userEntry] });
@@ -223,7 +236,9 @@ export async function POST(
   const catchUpCacheScopedKey = catchUpWindow
     ? journalCatchUpScopedDocumentKey(effectiveScopedDocumentIds, hasScopedDocumentScope)
     : "";
-  const catchUpCacheHit = catchUpWindow && catchUpCacheFingerprint
+  // A threaded reply always computes fresh thread-scoped context, so it must
+  // not be served (or seed) the brief-wide catch-up cache.
+  const catchUpCacheHit = catchUpWindow && catchUpCacheFingerprint && !replyRoot
     ? loadJournalCatchUpCache({
         briefId: params.id,
         window: catchUpWindow,
@@ -239,9 +254,12 @@ export async function POST(
     userId: user.id,
     authorType: "user",
     body: text,
-    replyTo: null,
+    replyTo: replyRoot,
   });
   const userEntry = loadEntryDto(params.id, userEntryId);
+  // The assistant reply joins the same thread: the explicit reply root when
+  // threading, otherwise the just-posted user entry (which becomes the root).
+  const assistantReplyTo = replyRoot ?? userEntryId;
 
   if (catchUpCacheHit) {
     const aiEntryId = insertJournalEntry({
@@ -249,7 +267,7 @@ export async function POST(
       userId: user.id,
       authorType: "assistant",
       body: catchUpCacheHit.summary_text,
-      replyTo: userEntryId,
+      replyTo: assistantReplyTo,
     });
     const aiEntry = loadEntryDto(params.id, aiEntryId);
     return NextResponse.json({ entries: [userEntry, aiEntry], ai_cache_hit: true });
@@ -285,18 +303,32 @@ export async function POST(
 
   // Build context from the recent non-deleted feed including the just-posted
   // user entry. Query a bounded slice so large journals do not make assistant
-  // requests increasingly expensive over time.
+  // requests increasingly expensive over time. When replying within a thread,
+  // that thread's entries are merged in first (and exempt from the recency
+  // cutoff) so the assistant stays grounded in the sub-conversation — then the
+  // recent feed fills in the rest ("both").
   const recentEntryRows = listRecentEntryRowsForBrief(params.id);
-  const documentsByRecentEntry = listDocumentsForEntries(recentEntryRows.map((row) => row.id));
+  const threadEntryRows = replyRoot ? listThreadEntryRows(params.id, replyRoot) : [];
+  const threadIdSet = new Set(threadEntryRows.map((row) => row.id));
+  const mergedSeen = new Set<string>();
+  const mergedEntryRows = [...threadEntryRows, ...recentEntryRows]
+    .filter((row) => {
+      if (mergedSeen.has(row.id)) return false;
+      mergedSeen.add(row.id);
+      return true;
+    })
+    .sort((a, b) => a.created_at - b.created_at);
+  const documentsByRecentEntry = listDocumentsForEntries(mergedEntryRows.map((row) => row.id));
   const entryUsesExcludedDocumentLegend = (row: JournalListRow): boolean => {
     if (row.author_type !== "assistant" || excludedDocumentLegendTexts.size === 0) return false;
     return parseSourceLegendEntries(row.body ?? "").some(
       (entry) => entry.kind === "document" && excludedDocumentLegendTexts.has(entry.text.trim()),
     );
   };
-  const contextEntries: JournalContextEntry[] = recentEntryRows
+  const contextEntries: JournalContextEntry[] = mergedEntryRows
     .filter((row) => {
-      if (journalContextSince !== null && row.created_at < journalContextSince) return false;
+      const inThread = threadIdSet.has(row.id);
+      if (!inThread && journalContextSince !== null && row.created_at < journalContextSince) return false;
       if (entryMentionsExcludedDocument(row)) return false;
       if (entryUsesExcludedDocumentLegend(row)) return false;
       const attachedDocuments = documentsByRecentEntry.get(row.id) ?? [];
@@ -308,6 +340,8 @@ export async function POST(
         r.author_type === "assistant" ? "Assistant" : r.author_display_name,
       body: r.body,
       created_at: r.created_at,
+      // Thread entries are exempt from the context cap (see selectJournalContext).
+      priority: threadIdSet.has(r.id),
     }));
 
   const documents = hasScopedDocumentScope
@@ -336,10 +370,10 @@ export async function POST(
       userId: user.id,
       authorType: "assistant",
       body: assistantBody,
-      replyTo: userEntryId,
+      replyTo: assistantReplyTo,
     });
     const aiEntry = loadEntryDto(params.id, aiEntryId);
-    if (catchUpWindow) {
+    if (catchUpWindow && !replyRoot) {
       const catchUpSaveFingerprint = refreshCockpitSourceFingerprint(params.id);
       saveJournalCatchUpCache({
         briefId: params.id,
