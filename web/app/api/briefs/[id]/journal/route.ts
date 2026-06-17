@@ -23,6 +23,7 @@ import {
   listDocumentsForEntries,
   listRecentDocumentsForBrief,
 } from "@/lib/journalDocuments";
+import { listTagsForEntries } from "@/lib/journalEntryTags";
 import {
   isJournalCatchUpWindow,
   journalCatchUpExcludedDocumentKey,
@@ -75,7 +76,8 @@ function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
     )
     .get(entryId, briefId) as JournalListRow;
   const docs = listDocumentsForEntries([entryId]).get(entryId) ?? [];
-  return rowToJournalDto(row, docs);
+  const tags = listTagsForEntries([entryId]).get(entryId) ?? [];
+  return rowToJournalDto(row, docs, tags);
 }
 
 export async function GET(
@@ -95,9 +97,13 @@ export async function GET(
   }
 
   const rows = listEntryRowsForBrief(params.id);
-  const docsByEntry = listDocumentsForEntries(rows.map((r) => r.id));
+  const entryIds = rows.map((r) => r.id);
+  const docsByEntry = listDocumentsForEntries(entryIds);
+  const tagsByEntry = listTagsForEntries(entryIds);
   return NextResponse.json({
-    entries: rows.map((r) => rowToJournalDto(r, docsByEntry.get(r.id) ?? [])),
+    entries: rows.map((r) =>
+      rowToJournalDto(r, docsByEntry.get(r.id) ?? [], tagsByEntry.get(r.id) ?? []),
+    ),
   });
 }
 

@@ -12,10 +12,12 @@ import {
   MessageSquare,
   Paperclip,
   Pencil,
+  Pin,
   Search,
   Link2,
   Send,
   Sparkles,
+  Tag,
   Trash2,
   X,
 } from "lucide-react";
@@ -59,6 +61,7 @@ import type {
   SourceHealthStatus,
   TimelineFilter,
 } from "./journal/types";
+import { JOURNAL_TAG_VALUES, JOURNAL_TAG_LABELS } from "./journal/types";
 import {
   EDIT_WINDOW_MS,
   INTELLIGENCE_ACTIONS,
@@ -154,6 +157,11 @@ export default function JournalSection({
     { id: string; text: string; chars: number; truncated: boolean } | null
   >(null);
   const [fullTextLoading, setFullTextLoading] = useState(false);
+  // Pins + tags (organize the feed). tagFilter narrows the timeline to one tag;
+  // tagMenuFor is the entry whose tag picker is open.
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [tagMenuFor, setTagMenuFor] = useState<string | null>(null);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
   const [selectedCitationContext, setSelectedCitationContext] = useState<SelectedCitationContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -861,6 +869,50 @@ export default function JournalSection({
     }
   }
 
+  async function organizeMutate(fn: () => Promise<Response>) {
+    if (organizeBusy) return;
+    setOrganizeBusy(true);
+    try {
+      const r = await fn();
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || "Action failed");
+      }
+      await load();
+    } catch (e: any) {
+      setError(e?.message || "Action failed");
+    } finally {
+      setOrganizeBusy(false);
+    }
+  }
+  function togglePin(e: Entry) {
+    const pinned = e.pinned_at != null;
+    void organizeMutate(() =>
+      fetch(`/api/briefs/${briefId}/journal/${e.id}/pin`, {
+        method: pinned ? "DELETE" : "POST",
+      }),
+    );
+  }
+  function addEntryTag(e: Entry, tag: string) {
+    setTagMenuFor(null);
+    void organizeMutate(() =>
+      fetch(`/api/briefs/${briefId}/journal/${e.id}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      }),
+    );
+  }
+  function removeEntryTag(e: Entry, tag: string) {
+    void organizeMutate(() =>
+      fetch(`/api/briefs/${briefId}/journal/${e.id}/tags`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      }),
+    );
+  }
+
   function renderSourcePreview() {
     if (!selectedSource) return null;
     const isSelectedSourceExcluded = excludedDocumentIds.includes(selectedSource.id);
@@ -1271,6 +1323,22 @@ export default function JournalSection({
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {!deleted && (
+                <button
+                  type="button"
+                  onClick={() => togglePin(e)}
+                  disabled={organizeBusy}
+                  aria-pressed={e.pinned_at != null}
+                  title={e.pinned_at != null ? "Unpin" : "Pin to top"}
+                  className={`inline-flex items-center gap-1 text-xs ${
+                    e.pinned_at != null
+                      ? "text-[var(--warning-text)]"
+                      : "text-muted hover:text-ink"
+                  }`}
+                >
+                  <Pin className="size-3" /> {e.pinned_at != null ? "Pinned" : "Pin"}
+                </button>
+              )}
               {canEdit && !editing && (
                 <button
                   type="button"
@@ -1333,6 +1401,51 @@ export default function JournalSection({
                 displayEntryBody(e)
               )}
             </p>
+          )}
+
+          {!editing && !deleted && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {(e.tags ?? []).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => removeEntryTag(e, t)}
+                  disabled={organizeBusy}
+                  title="Remove tag"
+                  className="group inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--risk-text)]"
+                >
+                  {JOURNAL_TAG_LABELS[t] ?? t}
+                  <X className="size-2.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                </button>
+              ))}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setTagMenuFor(tagMenuFor === e.id ? null : e.id)}
+                  disabled={organizeBusy}
+                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--line)] px-2 py-0.5 text-xs text-muted hover:text-ink"
+                >
+                  <Tag className="size-2.5" /> Tag
+                </button>
+                {tagMenuFor === e.id && (
+                  <div className="absolute z-10 mt-1 w-36 rounded-lg border border-[var(--line)] bg-white p-1 shadow-md">
+                    {JOURNAL_TAG_VALUES.filter((t) => !(e.tags ?? []).includes(t)).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => addEntryTag(e, t)}
+                        className="block w-full rounded px-2 py-1 text-left text-xs text-ink hover:bg-[var(--surface-muted)]"
+                      >
+                        {JOURNAL_TAG_LABELS[t]}
+                      </button>
+                    ))}
+                    {JOURNAL_TAG_VALUES.every((t) => (e.tags ?? []).includes(t)) && (
+                      <p className="px-2 py-1 text-xs text-muted">All tags added</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {isAssistant && !editing && !deleted && renderCitationChips(e, openCitationContext)}
@@ -1568,10 +1681,13 @@ export default function JournalSection({
       if (timelineFilter === "documents") return visibleAuditEntries.filter((e) => (e.documents?.length ?? 0) > 0);
       return visibleAuditEntries;
     })();
-    return journalSearchResult.isActive
-      ? timelineEntries.filter((entry) => searchEntryIds.has(entry.id))
+    const tagFiltered = tagFilter
+      ? timelineEntries.filter((e) => (e.tags ?? []).includes(tagFilter))
       : timelineEntries;
-  }, [entries, timelineFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
+    return journalSearchResult.isActive
+      ? tagFiltered.filter((entry) => searchEntryIds.has(entry.id))
+      : tagFiltered;
+  }, [entries, timelineFilter, tagFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
 
 
   function toggleExpanded(id: string) {
@@ -2590,13 +2706,50 @@ export default function JournalSection({
 
       {!activeFullView &&
         centerTab === "timeline" &&
+        (tagFilter || entries?.some((e) => (e.tags?.length ?? 0) > 0)) && (
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted">Filter by tag:</span>
+            {JOURNAL_TAG_VALUES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                aria-pressed={tagFilter === t}
+                className={`rounded-full border px-2 py-0.5 text-xs ${
+                  tagFilter === t
+                    ? "border-[var(--active-dark)] bg-[var(--active-dark)] text-white"
+                    : "border-[var(--line)] text-[var(--text-secondary)] hover:bg-[var(--surface-muted)]"
+                }`}
+              >
+                {JOURNAL_TAG_LABELS[t]}
+              </button>
+            ))}
+            {tagFilter && (
+              <button
+                type="button"
+                onClick={() => setTagFilter(null)}
+                className="text-xs text-muted underline hover:text-ink"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+
+      {!activeFullView &&
+        centerTab === "timeline" &&
         filteredEntries &&
         filteredEntries.length > 0 && (
           <>
           <div className="overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)]">
             {(() => {
-              // Newest first for the collapsed activity stream, grouped by day.
-              const ordered = [...filteredEntries].sort((a, b) => b.created_at - a.created_at);
+              // Pinned entries float to the top; otherwise newest first.
+              const ordered = [...filteredEntries].sort((a, b) => {
+                const ap = a.pinned_at != null ? 1 : 0;
+                const bp = b.pinned_at != null ? 1 : 0;
+                if (ap !== bp) return bp - ap;
+                return b.created_at - a.created_at;
+              });
               const visible = showAllEntries ? ordered : ordered.slice(0, 8);
               let lastGroup: string | null = null;
               return visible.map((e) => {
