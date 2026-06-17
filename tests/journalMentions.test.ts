@@ -205,6 +205,50 @@ test("?mentions=me filters to the viewer's mentions and keeps whole threads", as
   );
 });
 
+test("?mentions=me ignores soft-deleted entries as the matching trigger", async () => {
+  // A live root whose only mention of reader is in a reply we then delete.
+  const rootRes = await journalRoute.POST(
+    makeReq({ sessionId: ownerSession, body: { body: "soft-delete trigger root" } }),
+    { params: { id: "brief-1" } },
+  );
+  const rootId = (await rootRes.json()).entries[0].id;
+  const replyRes = await journalRoute.POST(
+    makeReq({ sessionId: ownerSession, body: { body: "transient ping @reader", reply_to: rootId } }),
+    { params: { id: "brief-1" } },
+  );
+  const replyId = (await replyRes.json()).entries[0].id;
+
+  // While the reply is live, the thread surfaces for reader.
+  let filtered = await listEntries(readerSession, "mentions=me");
+  assert.ok(filtered.data.entries.some((e: any) => e.id === rootId));
+
+  // Soft-delete the only mentioning entry; the thread must drop out entirely.
+  const del = await entryRoute.DELETE(makeReq({ sessionId: ownerSession }), {
+    params: { id: "brief-1", entryId: replyId },
+  });
+  assert.equal(del.status, 200);
+
+  filtered = await listEntries(readerSession, "mentions=me");
+  const ids = new Set(filtered.data.entries.map((e: any) => e.id));
+  assert.ok(!ids.has(rootId), "root no longer surfaces once its only mention is deleted");
+  assert.ok(!ids.has(replyId), "deleted reply itself is not surfaced");
+
+  // A root that itself mentions reader but is soft-deleted also stays out.
+  const selfRes = await journalRoute.POST(
+    makeReq({ sessionId: ownerSession, body: { body: "deleted root pinging @reader" } }),
+    { params: { id: "brief-1" } },
+  );
+  const selfId = (await selfRes.json()).entries[0].id;
+  await entryRoute.DELETE(makeReq({ sessionId: ownerSession }), {
+    params: { id: "brief-1", entryId: selfId },
+  });
+  filtered = await listEntries(readerSession, "mentions=me");
+  assert.ok(
+    !filtered.data.entries.some((e: any) => e.id === selfId),
+    "soft-deleted root mentioning the viewer is excluded",
+  );
+});
+
 test("assistant entries never carry user mentions even if body contains a handle", () => {
   const aiId = journalLib.insertJournalEntry({
     briefId: "brief-1",

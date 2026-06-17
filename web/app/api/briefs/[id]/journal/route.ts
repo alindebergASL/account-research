@@ -114,7 +114,12 @@ export async function GET(
     const mentionedIds = listEntryIdsMentioningUser(params.id, user.id);
     const matchedThreadRoots = new Set<string>();
     for (const r of allRows) {
-      if (mentionedIds.has(r.id)) matchedThreadRoots.add(r.reply_to ?? r.id);
+      // Only a *live* mentioning entry surfaces its thread. A soft-deleted
+      // entry keeps its mention rows but hides them in the DTO, so letting it
+      // trigger a match would show a thread with no visible live mention.
+      if (r.deleted_at === null && mentionedIds.has(r.id)) {
+        matchedThreadRoots.add(r.reply_to ?? r.id);
+      }
     }
     rows = allRows.filter((r) => matchedThreadRoots.has(r.reply_to ?? r.id));
   }
