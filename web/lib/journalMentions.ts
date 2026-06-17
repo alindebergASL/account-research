@@ -25,6 +25,12 @@ export function listBriefMembers(briefId: string): BriefMember[] {
     .all({ briefId }) as BriefMember[];
 }
 
+// The canonical @handle to insert for a member: the email local-part, which
+// resolveMentionedUserIds always matches. Used by the composer autocomplete.
+export function memberHandle(member: BriefMember): string {
+  return member.email.split("@")[0] ?? member.email;
+}
+
 // Surfaced on each entry's DTO so a renderer can highlight who was mentioned.
 export type JournalMentionDto = {
   user_id: string;

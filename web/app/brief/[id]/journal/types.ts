@@ -8,6 +8,23 @@ export type Author = {
   email: string;
 };
 
+// Mirrors JournalMentionDto (web/lib/journalMentions.ts) — the brief members
+// @mentioned in an entry, surfaced for highlight rendering.
+export type EntryMention = {
+  user_id: string;
+  display_name: string | null;
+  email: string;
+};
+
+// A brief member who can be @mentioned, as returned by the members endpoint
+// for the composer autocomplete. `handle` is the canonical token to insert.
+export type BriefMemberOption = {
+  id: string;
+  display_name: string | null;
+  email: string;
+  handle: string;
+};
+
 export type JournalDocument = {
   id: string;
   filename: string;
@@ -32,6 +49,7 @@ export type Entry = {
   documents?: JournalDocument[];
   pinned_at?: number | null;
   tags?: string[];
+  mentions?: EntryMention[];
 };
 
 // Curated journal entry tags (mirrors web/lib/journalEntryTags.ts). Label map

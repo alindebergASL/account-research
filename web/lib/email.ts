@@ -275,6 +275,23 @@ export async function sendCommentNotificationEmail(args: {
   });
 }
 
+export async function sendJournalMentionNotificationEmail(args: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  scopeId: string;
+}): Promise<EmailSendResult> {
+  return send({
+    to: args.to,
+    scope: "journal_mention",
+    id: args.scopeId,
+    subject: args.subject,
+    text: args.text,
+    html: args.html,
+  });
+}
+
 export function escapeHtmlExternal(s: string): string {
   return escapeHtml(s);
 }

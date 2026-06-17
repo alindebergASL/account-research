@@ -8,6 +8,7 @@ import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
 import type {
   CockpitDisplay,
   Entry,
+  EntryMention,
   JournalSource,
   ReviewCandidate,
   ReviewCandidateType,
@@ -144,6 +145,55 @@ export function displayEntryBody(entry: Entry): string | null {
   if (!base) return base;
   // Defensive: never surface raw source-legend metadata comments as body text.
   return base.replace(/<!--\s*JOURNAL_SOURCE_LEGEND:[\s\S]*?-->/g, "").trim();
+}
+
+// A run of body text, optionally a resolved @mention. Lets the renderer wrap
+// mentions in a highlight without putting JSX in this pure module.
+export type BodySegment =
+  | { kind: "text"; text: string }
+  | { kind: "mention"; text: string; member: EntryMention };
+
+// Same token shape and normalization the server resolver uses, so a highlight
+// appears only where the server actually stored a mention for this entry.
+const MENTION_TOKEN = /(^|[^A-Za-z0-9._-])@([A-Za-z0-9._-]{1,64})/g;
+function normalizeMentionHandle(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]/g, "");
+}
+
+// Split displayed body text into plain runs and resolved-mention runs. A
+// `@handle` is highlighted only when it maps to one of the entry's stored
+// mentions (by email local-part or normalized display name) — typed handles
+// that didn't resolve stay plain text.
+export function splitBodyMentions(
+  text: string | null,
+  mentions: EntryMention[] | undefined,
+): BodySegment[] {
+  if (!text) return [];
+  const list = mentions ?? [];
+  if (list.length === 0) return [{ kind: "text", text }];
+  const byHandle = new Map<string, EntryMention>();
+  for (const m of list) {
+    const candidates = [
+      normalizeMentionHandle(m.email.split("@")[0] ?? ""),
+      m.display_name ? normalizeMentionHandle(m.display_name) : "",
+    ].filter(Boolean);
+    for (const c of candidates) if (!byHandle.has(c)) byHandle.set(c, m);
+  }
+  const segments: BodySegment[] = [];
+  let last = 0;
+  for (const match of text.matchAll(MENTION_TOKEN)) {
+    const member = byHandle.get(match[2].toLowerCase());
+    if (!member) continue;
+    const lead = match[1] ?? "";
+    const atIndex = (match.index ?? 0) + lead.length;
+    if (atIndex > last) segments.push({ kind: "text", text: text.slice(last, atIndex) });
+    const mentionText = `@${match[2]}`;
+    segments.push({ kind: "mention", text: mentionText, member });
+    last = atIndex + mentionText.length;
+  }
+  if (segments.length === 0) return [{ kind: "text", text }];
+  if (last < text.length) segments.push({ kind: "text", text: text.slice(last) });
+  return segments;
 }
 
 export function collectJournalSources(entries: Entry[] | null): JournalSource[] {

@@ -48,6 +48,7 @@ import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
 import type {
   Author,
+  BriefMemberOption,
   CockpitDisplay,
   Entry,
   IntelligenceAction,
@@ -87,6 +88,7 @@ import {
   relativeTime,
   sourceFingerprint,
   sourceHealthBadges,
+  splitBodyMentions,
   summarizeDocumentPrompt,
   trustedLegendStart,
 } from "./journal/helpers";
@@ -134,6 +136,10 @@ export default function JournalSection({
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
+  // Server-side "mentions me" filter (?mentions=me). Unlike the other filters
+  // (applied client-side) this one re-fetches, since the server scopes whole
+  // threads to ones that mention the viewer.
+  const [mentionsMeFilter, setMentionsMeFilter] = useState(false);
   const [showDeletedEntries, setShowDeletedEntries] = useState(false);
   const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
   const [cockpitModel, setCockpitModel] = useState<JournalCockpitReadModel | null>(null);
@@ -193,6 +199,11 @@ export default function JournalSection({
   const [heroExpanded, setHeroExpanded] = useState(false);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
+  // @mention autocomplete in the composer. Members are loaded once; the
+  // dropdown opens while typing an `@handle` token at the caret.
+  const [mentionMembers, setMentionMembers] = useState<BriefMemberOption[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [centerTab, setCenterTab] = useState<"timeline" | "team">("timeline");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -231,7 +242,8 @@ export default function JournalSection({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`/api/briefs/${briefId}/journal`, {
+      const qs = mentionsMeFilter ? "?mentions=me" : "";
+      const r = await fetch(`/api/briefs/${briefId}/journal${qs}`, {
         cache: "no-store",
       });
       if (!r.ok) {
@@ -246,7 +258,7 @@ export default function JournalSection({
     } finally {
       setLoading(false);
     }
-  }, [briefId]);
+  }, [briefId, mentionsMeFilter]);
 
   const loadCockpitModel = useCallback(async () => {
     setCockpitLoading(true);
@@ -293,6 +305,82 @@ export default function JournalSection({
     loadReviewCandidates();
     loadCockpitModel();
   }, [load, loadReviewCandidates, loadCockpitModel]);
+
+  // Load mentionable members once for the composer autocomplete. Best-effort:
+  // a failure just leaves the dropdown empty (typing still works).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/briefs/${briefId}/journal/members`, { cache: "no-store" });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancelled) setMentionMembers(data.members ?? []);
+      } catch {
+        /* ignore — autocomplete is non-essential */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [briefId]);
+
+  // Members matching the in-progress @handle query (case-insensitive, by handle
+  // or display name), capped for a compact dropdown.
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    return mentionMembers
+      .filter((m) => {
+        if (!q) return true;
+        return (
+          m.handle.toLowerCase().includes(q) ||
+          (m.display_name ?? "").toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 6);
+  }, [mentionMembers, mentionQuery]);
+
+  // Detect an @handle token ending at the caret so we know whether to show the
+  // dropdown and which text range to replace on selection.
+  // Reads the live textarea value (not the possibly-stale state) so it is
+  // correct when called from within onChange.
+  const mentionTokenAtCaret = useCallback((): { start: number; caret: number; query: string } | null => {
+    const el = composeRef.current;
+    if (!el) return null;
+    const caret = el.selectionStart ?? 0;
+    const upto = el.value.slice(0, caret);
+    const m = /(^|[^A-Za-z0-9._-])@([A-Za-z0-9._-]*)$/.exec(upto);
+    if (!m) return null;
+    return { start: m.index + (m[1]?.length ?? 0), caret, query: m[2] };
+  }, []);
+
+  const syncMentionDropdown = useCallback(() => {
+    const token = mentionTokenAtCaret();
+    setMentionQuery(token ? token.query : null);
+    setMentionActiveIndex(0);
+  }, [mentionTokenAtCaret]);
+
+  const insertMention = useCallback(
+    (member: BriefMemberOption) => {
+      const el = composeRef.current;
+      if (!el) return;
+      const token = mentionTokenAtCaret();
+      if (!token) return;
+      const before = el.value.slice(0, token.start);
+      const after = el.value.slice(token.caret);
+      const inserted = `@${member.handle} `;
+      const next = before + inserted + after;
+      setComposeText(next);
+      setMentionQuery(null);
+      const nextCaret = before.length + inserted.length;
+      window.setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+      }, 0);
+    },
+    [mentionTokenAtCaret],
+  );
 
   const excludedDocumentSnapshotKey = useMemo(
     () => documentIdSnapshotKey(excludedDocumentIds),
@@ -1307,7 +1395,7 @@ export default function JournalSection({
       !deleted && (isOwnUser || isAdmin || canManage);
     const editing = editingId === e.id;
     return (
-      <div key={e.id} className="mt-4">
+      <div key={e.id} id={`journal-entry-${e.id}`} className="mt-4 scroll-mt-24">
         <div
           className={`rounded-xl border p-4 ${
             isAssistant
@@ -1410,7 +1498,19 @@ export default function JournalSection({
                   This entry was deleted.
                 </span>
               ) : (
-                displayEntryBody(e)
+                splitBodyMentions(displayEntryBody(e), e.mentions).map((seg, i) =>
+                  seg.kind === "mention" ? (
+                    <span
+                      key={i}
+                      className="rounded bg-[var(--primary)]/10 px-1 font-medium text-[var(--primary)]"
+                      title={seg.member.email}
+                    >
+                      {seg.text}
+                    </span>
+                  ) : (
+                    <span key={i}>{seg.text}</span>
+                  ),
+                )
               )}
             </p>
           )}
@@ -2775,6 +2875,19 @@ export default function JournalSection({
                 {timelineFilterLabels[filter]}
               </button>
             ))}
+            <button
+              type="button"
+              aria-pressed={mentionsMeFilter}
+              onClick={() => setMentionsMeFilter((value) => !value)}
+              title="Show only threads that mention you"
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                mentionsMeFilter
+                  ? "bg-[var(--active-dark)] text-white"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+              }`}
+            >
+              Mentions me
+            </button>
           </div>
           {deletedEntryCount > 0 && (
             <button
@@ -3039,14 +3152,79 @@ export default function JournalSection({
             </div>
           </div>
         )}
-        <textarea
-          ref={composeRef}
-          value={composeText}
-          onChange={(e) => setComposeText(e.target.value)}
-          placeholder="Ask, add a note, or drop evidence…"
-          rows={2}
-          className="w-full resize-none rounded-xl border border-[var(--line)] bg-white p-3 text-sm text-ink placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none"
-        />
+        <div className="relative">
+          <textarea
+            ref={composeRef}
+            value={composeText}
+            onChange={(e) => {
+              setComposeText(e.target.value);
+              syncMentionDropdown();
+            }}
+            onClick={syncMentionDropdown}
+            onKeyUp={(e) => {
+              // Caret moves (arrows/home/end) update the active token, but not
+              // while we're driving the dropdown with the same keys.
+              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+                syncMentionDropdown();
+              }
+            }}
+            onKeyDown={(e) => {
+              if (mentionQuery === null || mentionMatches.length === 0) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setMentionActiveIndex((i) => (i + 1) % mentionMatches.length);
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setMentionActiveIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
+              } else if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                insertMention(mentionMatches[Math.min(mentionActiveIndex, mentionMatches.length - 1)]);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setMentionQuery(null);
+              }
+            }}
+            onBlur={() => {
+              // Let a click on a dropdown option register before closing.
+              window.setTimeout(() => setMentionQuery(null), 150);
+            }}
+            placeholder="Ask, add a note, or drop evidence… use @ to mention a teammate"
+            rows={2}
+            className="w-full resize-none rounded-xl border border-[var(--line)] bg-white p-3 text-sm text-ink placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none"
+          />
+          {mentionQuery !== null && mentionMatches.length > 0 && (
+            <ul
+              role="listbox"
+              className="absolute left-2 top-full z-20 mt-1 w-72 max-w-[90%] overflow-hidden rounded-lg border border-[var(--line)] bg-white py-1 shadow-lg"
+            >
+              {mentionMatches.map((m, i) => (
+                <li key={m.id} role="option" aria-selected={i === mentionActiveIndex}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      // Prevent the textarea blur from firing before the click.
+                      e.preventDefault();
+                      insertMention(m);
+                    }}
+                    onMouseEnter={() => setMentionActiveIndex(i)}
+                    className={`flex w-full flex-col items-start px-3 py-1.5 text-left text-sm ${
+                      i === mentionActiveIndex
+                        ? "bg-[var(--surface-muted)] text-ink"
+                        : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)]"
+                    }`}
+                  >
+                    <span className="font-medium text-ink">
+                      {m.display_name || m.handle}
+                    </span>
+                    <span className="text-xs text-[var(--text-muted)]">
+                      @{m.handle} · {m.email}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1 overflow-x-auto" role="group" aria-label="Journal compose mode">
             <button
