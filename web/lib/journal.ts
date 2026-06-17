@@ -4,6 +4,7 @@ import {
   listDocumentsForEntries,
   type JournalDocumentDto,
 } from "@/lib/journalDocuments";
+import type { JournalEntryTag } from "@/lib/journalEntryTags";
 
 // Insert a journal entry and return its id. Shared by the journal POST route
 // and background jobs (e.g. the daily monitor) that post an `assistant` entry.
@@ -61,7 +62,33 @@ export type JournalEntryDto = {
   deleted_at: number | null;
   author: { id: string; display_name: string | null; email: string } | null;
   documents: JournalDocumentDto[];
+  pinned_at: number | null;
+  tags: JournalEntryTag[];
 };
+
+// Pin / unpin a journal entry (team-wide). No own-entry / time-window
+// restriction — pinning is a shared organizing action, like tagging.
+export function setEntryPinned(args: {
+  briefId: string;
+  entryId: string;
+  pinned: boolean;
+  userId: string | null;
+}): boolean {
+  const now = Date.now();
+  const result = db()
+    .prepare(
+      `UPDATE journal_entries
+          SET pinned_at = ?, pinned_by = ?
+        WHERE id = ? AND brief_id = ? AND deleted_at IS NULL`,
+    )
+    .run(
+      args.pinned ? now : null,
+      args.pinned ? args.userId : null,
+      args.entryId,
+      args.briefId,
+    );
+  return result.changes > 0;
+}
 
 export function listEntryRowsForBrief(briefId: string): JournalListRow[] {
   return db()
@@ -95,6 +122,7 @@ export function listRecentEntryRowsForBrief(
 export function rowToJournalDto(
   r: JournalListRow,
   documents: JournalDocumentDto[] = [],
+  tags: JournalEntryTag[] = [],
 ): JournalEntryDto {
   const deleted = r.deleted_at !== null;
   const base: Omit<JournalEntryDto, "author"> = {
@@ -106,6 +134,9 @@ export function rowToJournalDto(
     edited_at: r.edited_at,
     deleted_at: r.deleted_at,
     documents: deleted ? [] : documents,
+    // A soft-deleted entry shows neither pin nor tags.
+    pinned_at: deleted ? null : r.pinned_at,
+    tags: deleted ? [] : tags,
   };
   if (deleted) {
     return { ...base, author: null };

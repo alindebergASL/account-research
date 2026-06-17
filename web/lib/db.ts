@@ -734,6 +734,49 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: "026_journal_entry_pins",
+    // PR4: pinning a journal entry surfaces it in a strip atop the timeline.
+    // Team-wide (the journal is shared), so a single pinned_at/pinned_by on the
+    // entry — not a per-user pin.
+    up: (c) => {
+      const cols = c
+        .prepare("PRAGMA table_info(journal_entries)")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((r) => r.name === "pinned_at")) {
+        c.exec("ALTER TABLE journal_entries ADD COLUMN pinned_at INTEGER");
+      }
+      if (!cols.some((r) => r.name === "pinned_by")) {
+        c.exec("ALTER TABLE journal_entries ADD COLUMN pinned_by TEXT");
+      }
+    },
+  },
+  {
+    id: "027_journal_entry_tags",
+    // PR4: lightweight curated labels on entries (decision / risk / follow_up /
+    // question / idea) for organizing and filtering the feed. One row per
+    // (entry, tag); cascade-deleted with the entry / brief.
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_entry_tags (
+          id              TEXT PRIMARY KEY,
+          brief_id        TEXT NOT NULL,
+          journal_entry_id TEXT NOT NULL,
+          tag             TEXT NOT NULL,
+          created_by      TEXT,
+          created_at      INTEGER NOT NULL,
+          UNIQUE (journal_entry_id, tag),
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+          FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_entry_tags_entry
+          ON journal_entry_tags(journal_entry_id);
+        CREATE INDEX IF NOT EXISTS idx_journal_entry_tags_brief_tag
+          ON journal_entry_tags(brief_id, tag);
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -758,6 +801,8 @@ export type JournalEntryRow = {
   created_at: number;
   edited_at: number | null;
   deleted_at: number | null;
+  pinned_at: number | null;
+  pinned_by: string | null;
 };
 
 export type JournalDocumentRow = {

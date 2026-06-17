@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
 import { insertJournalEntry, rowToJournalDto, type JournalListRow } from "@/lib/journal";
+import { listTagsForEntries } from "@/lib/journalEntryTags";
 import { db } from "@/lib/db";
 import {
   extractJournalDocument,
@@ -39,7 +40,8 @@ function loadEntryDto(briefId: string, entryId: string) {
     )
     .get(entryId, briefId) as JournalListRow;
   const docs = listDocumentsForEntries([entryId]).get(entryId) ?? [];
-  return rowToJournalDto(row, docs);
+  const tags = listTagsForEntries([entryId]).get(entryId) ?? [];
+  return rowToJournalDto(row, docs, tags);
 }
 
 export async function POST(

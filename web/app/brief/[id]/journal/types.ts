@@ -30,6 +30,25 @@ export type Entry = {
   deleted_at: number | null;
   author: Author | null;
   documents?: JournalDocument[];
+  pinned_at?: number | null;
+  tags?: string[];
+};
+
+// Curated journal entry tags (mirrors web/lib/journalEntryTags.ts). Label map
+// keeps the UI human-readable; values must match the server's allowlist.
+export const JOURNAL_TAG_VALUES = [
+  "decision",
+  "risk",
+  "follow_up",
+  "question",
+  "idea",
+] as const;
+export const JOURNAL_TAG_LABELS: Record<string, string> = {
+  decision: "Decision",
+  risk: "Risk",
+  follow_up: "Follow-up",
+  question: "Question",
+  idea: "Idea",
 };
 
 export type JournalWorkspace =
