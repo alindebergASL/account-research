@@ -119,6 +119,35 @@ export function listRecentEntryRowsForBrief(
   return rows.reverse();
 }
 
+// Single-level threading: the root id a reply attaches to. If the target is
+// itself a reply, collapse onto its root so threads never nest beyond one
+// level. Returns null when the target isn't a live entry in the brief.
+export function resolveThreadRoot(briefId: string, targetEntryId: string): string | null {
+  const row = db()
+    .prepare(
+      `SELECT id, reply_to FROM journal_entries
+        WHERE id = ? AND brief_id = ? AND deleted_at IS NULL`,
+    )
+    .get(targetEntryId, briefId) as { id: string; reply_to: string | null } | undefined;
+  if (!row) return null;
+  return row.reply_to ?? row.id;
+}
+
+// A thread's entries (root + its direct replies), oldest first, for scoping the
+// assistant's context to the conversation a reply belongs to.
+export function listThreadEntryRows(briefId: string, rootId: string): JournalListRow[] {
+  return db()
+    .prepare(
+      `SELECT j.*, u.display_name AS author_display_name, u.email AS author_email
+         FROM journal_entries j
+         LEFT JOIN users u ON u.id = j.user_id
+        WHERE j.brief_id = ? AND j.deleted_at IS NULL
+          AND (j.id = ? OR j.reply_to = ?)
+        ORDER BY j.created_at ASC, j.rowid ASC`,
+    )
+    .all(briefId, rootId, rootId) as JournalListRow[];
+}
+
 export function rowToJournalDto(
   r: JournalListRow,
   documents: JournalDocumentDto[] = [],

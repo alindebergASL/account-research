@@ -162,6 +162,8 @@ export default function JournalSection({
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [tagMenuFor, setTagMenuFor] = useState<string | null>(null);
   const [organizeBusy, setOrganizeBusy] = useState(false);
+  // Threading: the entry the composer is replying to (null = new root entry).
+  const [replyingTo, setReplyingTo] = useState<{ id: string; label: string } | null>(null);
   const [selectedCitationContext, setSelectedCitationContext] = useState<SelectedCitationContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -349,6 +351,7 @@ export default function JournalSection({
     forceSourceDocumentScope = false,
     journalContextSince: number | null = null,
     journalCatchUpWindow: JournalCatchUpWindow | null = null,
+    replyTo: string | null = null,
   ) {
     const trimmed = text.trim();
     if (!trimmed || posting) return false;
@@ -364,6 +367,7 @@ export default function JournalSection({
         body: JSON.stringify({
           body: trimmed,
           ask_ai: askAssistant,
+          ...(replyTo ? { reply_to: replyTo } : {}),
           ...(askAssistant && (forceSourceDocumentScope || safeSourceDocumentIds.length > 0)
             ? { source_document_ids: safeSourceDocumentIds }
             : {}),
@@ -384,6 +388,7 @@ export default function JournalSection({
       }
       const data = await r.json();
       setComposeText("");
+      setReplyingTo(null);
       setRequireSourceDocumentScope(false);
       setScopedDocumentIds([]);
       setPendingJournalContextSince(null);
@@ -402,7 +407,14 @@ export default function JournalSection({
   }
 
   async function submit() {
-    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope, pendingJournalContextSince, pendingCatchUpWindow);
+    await postJournalEntry(composeText, askAi, scopedDocumentIds, [], requireSourceDocumentScope, pendingJournalContextSince, pendingCatchUpWindow, replyingTo?.id ?? null);
+  }
+
+  function startReply(root: Entry) {
+    const who = root.author_type === "assistant" ? "Assistant" : authorName(root);
+    const snippet = (displayEntryBody(root) || "").replace(/\s+/g, " ").trim().slice(0, 60);
+    setReplyingTo({ id: root.id, label: snippet ? `${who}: ${snippet}` : who });
+    goToComposer();
   }
 
   async function runIntelligenceAction(prompt: string) {
@@ -1672,12 +1684,33 @@ export default function JournalSection({
   }
 
   const deletedEntryCount = entries?.filter((entry) => entry.deleted_at !== null).length ?? 0;
-  // One collapsed activity-stream row. `groupLabel` renders a day header above
-  // the row when non-null (the pinned strip passes null — it isn't day-grouped).
+
+  // Replies grouped by their thread root (oldest first). Soft-deleted replies
+  // are hidden unless the audit toggle is on, matching the root stream.
+  const repliesByRoot = useMemo(() => {
+    const m = new Map<string, Entry[]>();
+    if (!entries) return m;
+    for (const e of entries) {
+      if (!e.reply_to) continue;
+      if (e.deleted_at !== null && !showDeletedEntries) continue;
+      const list = m.get(e.reply_to) ?? [];
+      list.push(e);
+      m.set(e.reply_to, list);
+    }
+    for (const list of m.values()) list.sort((a, b) => a.created_at - b.created_at);
+    return m;
+  }, [entries, showDeletedEntries]);
+
+  const repliesFor = (rootId: string): Entry[] => repliesByRoot.get(rootId) ?? [];
+
+  // One collapsed activity-stream row for a thread root. `groupLabel` renders a
+  // day header above the row when non-null (the pinned strip isn't day-grouped).
+  // Expanding shows the root entry, its replies (indented), and a Reply action.
   function renderActivityRow(e: Entry, groupLabel: string | null) {
     const expanded = expandedEntries.includes(e.id);
     const { title, badge, tone } = recentResearchSummary(e);
     const isPinned = e.pinned_at != null;
+    const replies = repliesFor(e.id);
     return (
       <div key={e.id} className="border-b border-[var(--border-subtle)] last:border-0">
         {groupLabel && (
@@ -1698,6 +1731,11 @@ export default function JournalSection({
             {rowTimeLabel(e.created_at)}
           </span>
           <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
+          {replies.length > 0 && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-xs text-[var(--text-muted)]">
+              <MessageSquare className="size-3" /> {replies.length}
+            </span>
+          )}
           {isPinned && (
             <Pin className="size-3.5 shrink-0 text-[var(--warning-text)]" aria-label="Pinned" />
           )}
@@ -1706,7 +1744,25 @@ export default function JournalSection({
             className={`size-4 shrink-0 text-[var(--text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
           />
         </button>
-        {expanded && <div className="px-3 pb-3">{renderEntry(e)}</div>}
+        {expanded && (
+          <div className="px-3 pb-3">
+            {renderEntry(e)}
+            {replies.length > 0 && (
+              <div className="ml-4 border-l-2 border-[var(--border-subtle)] pl-2">
+                {replies.map((r) => renderEntry(r))}
+              </div>
+            )}
+            {e.deleted_at === null && (
+              <button
+                type="button"
+                onClick={() => startReply(e)}
+                className="ml-1 mt-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--text-secondary)] hover:text-ink"
+              >
+                <MessageSquare className="size-3" /> Reply
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -1714,19 +1770,27 @@ export default function JournalSection({
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
     const visibleAuditEntries = entries.filter((entry) => entry.deleted_at === null || showDeletedEntries);
+    const visibleIds = new Set(visibleAuditEntries.map((e) => e.id));
+    // The stream is headed by thread roots; a reply's thread is the root plus
+    // its visible replies, and filters match if any entry in the thread does.
+    const roots = visibleAuditEntries.filter((e) => !e.reply_to);
+    const threadOf = (root: Entry): Entry[] => [
+      root,
+      ...(repliesByRoot.get(root.id) ?? []).filter((r) => visibleIds.has(r.id)),
+    ];
     const timelineEntries = (() => {
-      if (timelineFilter === "notes") return visibleAuditEntries.filter((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0);
-      if (timelineFilter === "assistant") return visibleAuditEntries.filter((e) => e.author_type === "assistant");
-      if (timelineFilter === "documents") return visibleAuditEntries.filter((e) => (e.documents?.length ?? 0) > 0);
-      return visibleAuditEntries;
+      if (timelineFilter === "notes") return roots.filter((root) => threadOf(root).some((e) => e.author_type === "user" && (e.documents?.length ?? 0) === 0));
+      if (timelineFilter === "assistant") return roots.filter((root) => threadOf(root).some((e) => e.author_type === "assistant"));
+      if (timelineFilter === "documents") return roots.filter((root) => threadOf(root).some((e) => (e.documents?.length ?? 0) > 0));
+      return roots;
     })();
     const tagFiltered = tagFilter
-      ? timelineEntries.filter((e) => (e.tags ?? []).includes(tagFilter))
+      ? timelineEntries.filter((root) => threadOf(root).some((e) => (e.tags ?? []).includes(tagFilter)))
       : timelineEntries;
     return journalSearchResult.isActive
-      ? tagFiltered.filter((entry) => searchEntryIds.has(entry.id))
+      ? tagFiltered.filter((root) => threadOf(root).some((e) => searchEntryIds.has(e.id)))
       : tagFiltered;
-  }, [entries, timelineFilter, tagFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
+  }, [entries, repliesByRoot, timelineFilter, tagFilter, journalSearchResult.isActive, searchEntryIds, showDeletedEntries]);
 
 
   function toggleExpanded(id: string) {
@@ -2843,6 +2907,21 @@ export default function JournalSection({
 
       {!activeFullView ? (
       <div className="sticky bottom-4 z-10 mt-6 rounded-[18px] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-sm">
+        {replyingTo && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+            <MessageSquare className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              Replying to <span className="font-medium text-ink">{replyingTo.label}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setReplyingTo(null)}
+              className="shrink-0 font-medium underline underline-offset-2 hover:opacity-80"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         {askAi && activeScopedDocumentIds.length > 0 && (
           <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--info-bg)] px-3 py-2 text-xs text-[var(--info-text)]">
             <FileText className="size-3.5" />
