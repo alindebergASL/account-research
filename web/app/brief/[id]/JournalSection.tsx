@@ -1672,6 +1672,45 @@ export default function JournalSection({
   }
 
   const deletedEntryCount = entries?.filter((entry) => entry.deleted_at !== null).length ?? 0;
+  // One collapsed activity-stream row. `groupLabel` renders a day header above
+  // the row when non-null (the pinned strip passes null — it isn't day-grouped).
+  function renderActivityRow(e: Entry, groupLabel: string | null) {
+    const expanded = expandedEntries.includes(e.id);
+    const { title, badge, tone } = recentResearchSummary(e);
+    const isPinned = e.pinned_at != null;
+    return (
+      <div key={e.id} className="border-b border-[var(--border-subtle)] last:border-0">
+        {groupLabel && (
+          <div className="bg-[var(--surface-muted)] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+            {groupLabel}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => toggleExpanded(e.id)}
+          aria-expanded={expanded}
+          className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
+        >
+          <span
+            className="w-16 shrink-0 text-xs text-[var(--text-muted)]"
+            title={new Date(e.created_at).toLocaleString()}
+          >
+            {rowTimeLabel(e.created_at)}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
+          {isPinned && (
+            <Pin className="size-3.5 shrink-0 text-[var(--warning-text)]" aria-label="Pinned" />
+          )}
+          <Badge tone={tone}>{badge}</Badge>
+          <ChevronDown
+            className={`size-4 shrink-0 text-[var(--text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        </button>
+        {expanded && <div className="px-3 pb-3">{renderEntry(e)}</div>}
+      </div>
+    );
+  }
+
   const filteredEntries = useMemo(() => {
     if (!entries) return null;
     const visibleAuditEntries = entries.filter((entry) => entry.deleted_at === null || showDeletedEntries);
@@ -2740,69 +2779,53 @@ export default function JournalSection({
         centerTab === "timeline" &&
         filteredEntries &&
         filteredEntries.length > 0 && (
-          <>
-          <div className="overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)]">
-            {(() => {
-              // Pinned entries float to the top; otherwise newest first.
-              const ordered = [...filteredEntries].sort((a, b) => {
-                const ap = a.pinned_at != null ? 1 : 0;
-                const bp = b.pinned_at != null ? 1 : 0;
-                if (ap !== bp) return bp - ap;
-                return b.created_at - a.created_at;
-              });
-              const visible = showAllEntries ? ordered : ordered.slice(0, 8);
-              let lastGroup: string | null = null;
-              return visible.map((e) => {
-                const expanded = expandedEntries.includes(e.id);
-                const { title, badge, tone } = recentResearchSummary(e);
-                const group = dayGroupLabel(e.created_at);
-                const showGroup = group !== lastGroup;
-                lastGroup = group;
-                return (
-                  <div key={e.id} className="border-b border-[var(--border-subtle)] last:border-0">
-                    {showGroup && (
-                      <div className="bg-[var(--surface-muted)] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                        {group}
-                      </div>
-                    )}
+          (() => {
+            // Pinned entries get their own strip (newest pin first); the main
+            // stream holds the rest, newest activity first and day-grouped.
+            const pinned = filteredEntries
+              .filter((e) => e.pinned_at != null)
+              .sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0));
+            const unpinned = filteredEntries
+              .filter((e) => e.pinned_at == null)
+              .sort((a, b) => b.created_at - a.created_at);
+            const visibleUnpinned = showAllEntries ? unpinned : unpinned.slice(0, 8);
+            let lastGroup: string | null = null;
+            return (
+              <>
+                {pinned.length > 0 && (
+                  <div className="mb-3 overflow-hidden rounded-[20px] border border-[var(--warning-border,var(--line))] bg-[var(--surface)]">
+                    <div className="flex items-center gap-1.5 bg-[var(--surface-muted)] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                      <Pin className="size-3 text-[var(--warning-text)]" /> Pinned
+                    </div>
+                    {pinned.map((e) => renderActivityRow(e, null))}
+                  </div>
+                )}
+                {visibleUnpinned.length > 0 && (
+                  <div className="overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)]">
+                    {visibleUnpinned.map((e) => {
+                      const group = dayGroupLabel(e.created_at);
+                      const showGroup = group !== lastGroup;
+                      lastGroup = group;
+                      return renderActivityRow(e, showGroup ? group : null);
+                    })}
+                  </div>
+                )}
+                {(unpinned.length > 8 || showAllEntries || deletedEntryCount > 0) && (
+                  <div className="mt-2 text-center">
                     <button
                       type="button"
-                      onClick={() => toggleExpanded(e.id)}
-                      aria-expanded={expanded}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
+                      onClick={() => setShowAllEntries((v) => !v)}
+                      className="text-sm font-medium text-[var(--text-secondary)] underline-offset-4 transition-colors hover:text-ink hover:underline"
                     >
-                      <span
-                        className="w-16 shrink-0 text-xs text-[var(--text-muted)]"
-                        title={new Date(e.created_at).toLocaleString()}
-                      >
-                        {rowTimeLabel(e.created_at)}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
-                      <Badge tone={tone}>{badge}</Badge>
-                      <ChevronDown
-                        className={`size-4 shrink-0 text-[var(--text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
-                      />
+                      {showAllEntries
+                        ? "Show recent only"
+                        : `View all entries (${unpinned.length})`}
                     </button>
-                    {expanded && <div className="px-3 pb-3">{renderEntry(e)}</div>}
                   </div>
-                );
-              });
-            })()}
-          </div>
-          {(filteredEntries.length > 8 || showAllEntries || deletedEntryCount > 0) && (
-            <div className="mt-2 text-center">
-              <button
-                type="button"
-                onClick={() => setShowAllEntries((v) => !v)}
-                className="text-sm font-medium text-[var(--text-secondary)] underline-offset-4 transition-colors hover:text-ink hover:underline"
-              >
-                {showAllEntries
-                  ? "Show recent only"
-                  : `View all entries (${filteredEntries.length})`}
-              </button>
-            </div>
-          )}
-          </>
+                )}
+              </>
+            );
+          })()
         )}
 
       {aiError && (
