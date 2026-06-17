@@ -340,6 +340,8 @@ export async function POST(
         r.author_type === "assistant" ? "Assistant" : r.author_display_name,
       body: r.body,
       created_at: r.created_at,
+      // Thread entries are exempt from the context cap (see selectJournalContext).
+      priority: threadIdSet.has(r.id),
     }));
 
   const documents = hasScopedDocumentScope

@@ -1335,7 +1335,7 @@ export default function JournalSection({
               </span>
             </div>
             <div className="flex items-center gap-2">
-              {!deleted && (
+              {!deleted && e.reply_to === null && (
                 <button
                   type="button"
                   onClick={() => togglePin(e)}
@@ -1703,6 +1703,17 @@ export default function JournalSection({
 
   const repliesFor = (rootId: string): Entry[] => repliesByRoot.get(rootId) ?? [];
 
+  // Latest visible activity timestamp for a thread — the root's own time, or the
+  // most recent visible reply if newer. Used to order the stream and label rows
+  // so a new reply bumps an older thread up instead of leaving it buried.
+  const threadActivityAt = (root: Entry): number => {
+    let latest = root.created_at;
+    for (const r of repliesFor(root.id)) {
+      if (r.created_at > latest) latest = r.created_at;
+    }
+    return latest;
+  };
+
   // One collapsed activity-stream row for a thread root. `groupLabel` renders a
   // day header above the row when non-null (the pinned strip isn't day-grouped).
   // Expanding shows the root entry, its replies (indented), and a Reply action.
@@ -1726,9 +1737,13 @@ export default function JournalSection({
         >
           <span
             className="w-16 shrink-0 text-xs text-[var(--text-muted)]"
-            title={new Date(e.created_at).toLocaleString()}
+            title={
+              replies.length > 0
+                ? `Started ${new Date(e.created_at).toLocaleString()} · last activity ${new Date(threadActivityAt(e)).toLocaleString()}`
+                : new Date(e.created_at).toLocaleString()
+            }
           >
-            {rowTimeLabel(e.created_at)}
+            {rowTimeLabel(threadActivityAt(e))}
           </span>
           <span className="min-w-0 flex-1 truncate text-sm text-ink">{title}</span>
           {replies.length > 0 && (
@@ -2851,7 +2866,7 @@ export default function JournalSection({
               .sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0));
             const unpinned = filteredEntries
               .filter((e) => e.pinned_at == null)
-              .sort((a, b) => b.created_at - a.created_at);
+              .sort((a, b) => threadActivityAt(b) - threadActivityAt(a));
             const visibleUnpinned = showAllEntries ? unpinned : unpinned.slice(0, 8);
             let lastGroup: string | null = null;
             return (
@@ -2867,7 +2882,7 @@ export default function JournalSection({
                 {visibleUnpinned.length > 0 && (
                   <div className="overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)]">
                     {visibleUnpinned.map((e) => {
-                      const group = dayGroupLabel(e.created_at);
+                      const group = dayGroupLabel(threadActivityAt(e));
                       const showGroup = group !== lastGroup;
                       lastGroup = group;
                       return renderActivityRow(e, showGroup ? group : null);

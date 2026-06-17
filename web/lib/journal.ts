@@ -130,7 +130,17 @@ export function resolveThreadRoot(briefId: string, targetEntryId: string): strin
     )
     .get(targetEntryId, briefId) as { id: string; reply_to: string | null } | undefined;
   if (!row) return null;
-  return row.reply_to ?? row.id;
+  if (!row.reply_to) return row.id;
+  // Target is itself a reply: verify its root is still a live entry in the brief
+  // before attaching new replies, so a soft-deleted root can't accrue a hidden
+  // live sub-thread.
+  const root = db()
+    .prepare(
+      `SELECT id FROM journal_entries
+        WHERE id = ? AND brief_id = ? AND deleted_at IS NULL`,
+    )
+    .get(row.reply_to, briefId) as { id: string } | undefined;
+  return root ? root.id : null;
 }
 
 // A thread's entries (root + its direct replies), oldest first, for scoping the

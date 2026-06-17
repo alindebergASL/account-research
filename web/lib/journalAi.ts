@@ -31,6 +31,10 @@ export type JournalContextEntry = {
   author_display_name: string | null;
   body: string;
   created_at: number;
+  // Thread-scoped entries (root + replies of the conversation a reply belongs
+  // to) are marked priority so the bounded context never evicts them in favor
+  // of newer unrelated feed entries. Undefined for normal/catch-up context.
+  priority?: boolean;
 };
 
 export type JournalReplyInput = {
@@ -67,11 +71,26 @@ export function truncateBriefForPrompt(briefJson: unknown): string {
   return raw.slice(0, BRIEF_INPUT_CHAR_CAP) + "\n…[truncated]";
 }
 
-// Keep the most recent slice of the journal so context stays bounded.
+// Keep the journal context bounded to JOURNAL_CONTEXT_MAX entries. When some
+// entries are marked `priority` (the thread a reply belongs to), they are kept
+// first so the cap never evicts the sub-conversation the assistant is answering
+// — only the remaining budget is filled with the most recent non-priority feed
+// entries (recent-feed fallback). The result is re-sorted chronologically so
+// the just-answered entry remains last.
 export function selectJournalContext(
   entries: JournalContextEntry[],
 ): JournalContextEntry[] {
-  return entries.slice(-JOURNAL_CONTEXT_MAX);
+  if (entries.length <= JOURNAL_CONTEXT_MAX) return entries;
+  const priority = entries.filter((e) => e.priority);
+  if (priority.length === 0) return entries.slice(-JOURNAL_CONTEXT_MAX);
+  // If the thread alone exceeds the cap, keep its most recent entries.
+  const keptPriority = priority.slice(-JOURNAL_CONTEXT_MAX);
+  const remaining = JOURNAL_CONTEXT_MAX - keptPriority.length;
+  const fallback =
+    remaining > 0 ? entries.filter((e) => !e.priority).slice(-remaining) : [];
+  return [...keptPriority, ...fallback].sort(
+    (a, b) => a.created_at - b.created_at,
+  );
 }
 
 function neutralizeCitationLikeLabels(text: string): string {
