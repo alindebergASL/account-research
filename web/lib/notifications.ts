@@ -1,0 +1,149 @@
+import { db } from "@/lib/db";
+import { newId } from "@/lib/password";
+
+// In-app notification types. Generic table; today only journal @mentions write
+// rows, but the shape (actor + brief + source entry) is reusable.
+export type NotificationType = "journal_mention";
+
+const EXCERPT_CHARS = 160;
+
+export type NotificationDto = {
+  id: string;
+  type: NotificationType;
+  brief_id: string | null;
+  brief_account_name: string | null;
+  source_entry_id: string | null;
+  entry_deleted: boolean;
+  excerpt: string | null;
+  actor: { id: string; display_name: string | null; email: string } | null;
+  created_at: number;
+  read_at: number | null;
+};
+
+function truncate(s: string, n: number): string {
+  const clean = s.replace(/<!--\s*JOURNAL_SOURCE_LEGEND:[\s\S]*?-->/g, "").trim();
+  return clean.length <= n ? clean : clean.slice(0, n).trimEnd() + "…";
+}
+
+// Create one in-app notification per recipient for a journal mention. Idempotent
+// via UNIQUE (user_id, type, source_entry_id): re-resolving or editing an entry
+// never duplicates a recipient's row. The actor is never notified about their
+// own mention. Recipients are expected to already be brief members (the journal
+// route resolves mentions against membership), so no access check is repeated
+// here — callers pass a trusted list.
+export function createMentionNotifications(args: {
+  briefId: string;
+  entryId: string;
+  actorId: string;
+  recipientUserIds: string[];
+}): number {
+  if (args.recipientUserIds.length === 0) return 0;
+  const insert = db().prepare(
+    `INSERT OR IGNORE INTO notifications
+       (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+     VALUES (?, ?, 'journal_mention', ?, ?, ?, ?)`,
+  );
+  const now = Date.now();
+  let created = 0;
+  const seen = new Set<string>();
+  for (const userId of args.recipientUserIds) {
+    if (userId === args.actorId || seen.has(userId)) continue;
+    seen.add(userId);
+    const res = insert.run(newId(), userId, args.briefId, args.entryId, args.actorId, now);
+    created += res.changes;
+  }
+  return created;
+}
+
+type NotificationRow = {
+  id: string;
+  type: NotificationType;
+  brief_id: string | null;
+  brief_account_name: string | null;
+  source_entry_id: string | null;
+  entry_body: string | null;
+  entry_deleted_at: number | null;
+  actor_id: string | null;
+  actor_display_name: string | null;
+  actor_email: string | null;
+  created_at: number;
+  read_at: number | null;
+};
+
+// A recipient's notifications, newest first. Joins actor, brief, and the source
+// journal entry so the client renders without extra round-trips. A deleted
+// source entry still lists (the mention happened) but exposes no excerpt.
+export function listNotifications(
+  userId: string,
+  opts: { limit?: number; unreadOnly?: boolean } = {},
+): NotificationDto[] {
+  const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
+  const rows = db()
+    .prepare(
+      `SELECT n.id, n.type, n.brief_id, n.source_entry_id, n.created_at, n.read_at,
+              b.account_name AS brief_account_name,
+              j.body         AS entry_body,
+              j.deleted_at   AS entry_deleted_at,
+              a.id           AS actor_id,
+              a.display_name AS actor_display_name,
+              a.email        AS actor_email
+         FROM notifications n
+         LEFT JOIN briefs b ON b.id = n.brief_id
+         LEFT JOIN journal_entries j ON j.id = n.source_entry_id
+         LEFT JOIN users a ON a.id = n.actor_id
+        WHERE n.user_id = ?
+          ${opts.unreadOnly ? "AND n.read_at IS NULL" : ""}
+        ORDER BY n.created_at DESC, n.rowid DESC
+        LIMIT ?`,
+    )
+    .all(userId, limit) as NotificationRow[];
+  return rows.map((r) => {
+    const deleted = r.entry_deleted_at !== null;
+    return {
+      id: r.id,
+      type: r.type,
+      brief_id: r.brief_id,
+      brief_account_name: r.brief_account_name,
+      source_entry_id: r.source_entry_id,
+      entry_deleted: deleted,
+      excerpt: deleted || !r.entry_body ? null : truncate(r.entry_body, EXCERPT_CHARS),
+      actor: r.actor_id
+        ? { id: r.actor_id, display_name: r.actor_display_name, email: r.actor_email ?? "" }
+        : null,
+      created_at: r.created_at,
+      read_at: r.read_at,
+    };
+  });
+}
+
+export function countUnreadNotifications(userId: string): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read_at IS NULL`,
+    )
+    .get(userId) as { c: number };
+  return row.c;
+}
+
+// Mark specific notifications read (scoped to the owner). Returns how many rows
+// transitioned unread -> read.
+export function markNotificationsRead(userId: string, ids: string[]): number {
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => "?").join(",");
+  const res = db()
+    .prepare(
+      `UPDATE notifications SET read_at = ?
+        WHERE user_id = ? AND read_at IS NULL AND id IN (${placeholders})`,
+    )
+    .run(Date.now(), userId, ...ids);
+  return res.changes;
+}
+
+export function markAllNotificationsRead(userId: string): number {
+  const res = db()
+    .prepare(
+      `UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL`,
+    )
+    .run(Date.now(), userId);
+  return res.changes;
+}
