@@ -70,9 +70,23 @@ type NotificationRow = {
   read_at: number | null;
 };
 
+// SQL predicate that admits a notification only if the recipient can STILL read
+// its brief: brief-less notifications are always theirs; otherwise owner OR
+// admin OR a current brief_shares row. This mirrors canUserAccessBrief exactly
+// and is applied at read time so a revoked share immediately stops leaking the
+// account name / entry excerpt (the row stays, it just becomes invisible). Uses
+// @userId named param so list and count bind it identically.
+const ACCESSIBLE_BRIEF_CLAUSE = `(
+  n.brief_id IS NULL
+  OR n.brief_id IN (SELECT b2.id FROM briefs b2 WHERE b2.user_id = @userId)
+  OR (SELECT u2.role FROM users u2 WHERE u2.id = @userId) = 'admin'
+  OR n.brief_id IN (SELECT s.brief_id FROM brief_shares s WHERE s.user_id = @userId)
+)`;
+
 // A recipient's notifications, newest first. Joins actor, brief, and the source
 // journal entry so the client renders without extra round-trips. A deleted
 // source entry still lists (the mention happened) but exposes no excerpt.
+// Notifications for briefs the user can no longer read are excluded.
 export function listNotifications(
   userId: string,
   opts: { limit?: number; unreadOnly?: boolean } = {},
@@ -91,12 +105,13 @@ export function listNotifications(
          LEFT JOIN briefs b ON b.id = n.brief_id
          LEFT JOIN journal_entries j ON j.id = n.source_entry_id
          LEFT JOIN users a ON a.id = n.actor_id
-        WHERE n.user_id = ?
+        WHERE n.user_id = @userId
           ${opts.unreadOnly ? "AND n.read_at IS NULL" : ""}
+          AND ${ACCESSIBLE_BRIEF_CLAUSE}
         ORDER BY n.created_at DESC, n.rowid DESC
-        LIMIT ?`,
+        LIMIT @limit`,
     )
-    .all(userId, limit) as NotificationRow[];
+    .all({ userId, limit }) as NotificationRow[];
   return rows.map((r) => {
     const deleted = r.entry_deleted_at !== null;
     return {
@@ -116,12 +131,18 @@ export function listNotifications(
   });
 }
 
+// Unread count, scoped the same way as listNotifications: a revoked share must
+// not keep inflating the badge for a brief the user can no longer read.
 export function countUnreadNotifications(userId: string): number {
   const row = db()
     .prepare(
-      `SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read_at IS NULL`,
+      `SELECT COUNT(*) AS c
+         FROM notifications n
+        WHERE n.user_id = @userId
+          AND n.read_at IS NULL
+          AND ${ACCESSIBLE_BRIEF_CLAUSE}`,
     )
-    .get(userId) as { c: number };
+    .get({ userId }) as { c: number };
   return row.c;
 }
 

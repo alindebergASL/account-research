@@ -190,6 +190,99 @@ test("a deleted source entry keeps the notification but drops its excerpt", asyn
   assert.equal(n.excerpt, null);
 });
 
+test("revoking a share hides the notification and excludes it from the unread count", async () => {
+  // Reader is mentioned while they have access...
+  seedUser("rev", "rev@example.com");
+  seedBrief("brief-rev", "owner");
+  seedShare("brief-rev", "rev", "owner");
+  const revSession = authMod.createSession("rev").id;
+  // Re-resolve mentions against current members: post via the route so the
+  // mention row + notification are created for an actual member.
+  const post = await journalRoute.POST(
+    makeReq({ sessionId: ownerSession, body: { body: "secret plan @rev inside" } }),
+    { params: { id: "brief-rev" } },
+  );
+  assert.equal(post.status, 200);
+
+  // While shared, the reader sees it with account name + excerpt.
+  const before = (await getNotifs(revSession)).data;
+  const n = before.notifications.find((x: any) => x.brief_id === "brief-rev");
+  assert.ok(n, "notification visible while shared");
+  assert.equal(n.brief_account_name, "Acme");
+  assert.match(n.excerpt, /secret plan/);
+  const unreadBefore = before.unread_count;
+  assert.ok(unreadBefore >= 1);
+
+  // Owner revokes the share.
+  db().prepare(`DELETE FROM brief_shares WHERE brief_id = ? AND user_id = ?`).run("brief-rev", "rev");
+
+  // The notification (and its account name / excerpt) is no longer returned,
+  // and the unread count drops it too.
+  const after = (await getNotifs(revSession)).data;
+  assert.equal(
+    after.notifications.find((x: any) => x.brief_id === "brief-rev"),
+    undefined,
+    "notification hidden after revocation",
+  );
+  assert.equal(after.unread_count, unreadBefore - 1, "unread count excludes the revoked-brief notification");
+  // ?count=1 (the badge poll path) must agree.
+  const countOnly = (await getNotifs(revSession, "count=1")).data;
+  assert.equal(countOnly.unread_count, after.unread_count);
+});
+
+test("an admin can still see a notification for a brief they neither own nor are shared on", async () => {
+  db().prepare(`UPDATE users SET role = 'admin' WHERE id = ?`).run("third");
+  // Notification addressed to the admin user for a brief they don't own/share.
+  const adminBrief = "brief-admin-vis";
+  seedBrief(adminBrief, "owner");
+  notif.createMentionNotifications({
+    briefId: adminBrief,
+    entryId: "no-such-entry",
+    actorId: "owner",
+    recipientUserIds: ["third"],
+  });
+  const list = (await getNotifs(authMod.createSession("third").id)).data;
+  assert.ok(
+    list.notifications.some((x: any) => x.brief_id === adminBrief),
+    "admin sees the notification despite no ownership/share",
+  );
+  db().prepare(`UPDATE users SET role = 'member' WHERE id = ?`).run("third");
+});
+
+test("mark-read is not an oracle: it only touches the caller's own rows", async () => {
+  // reader marks-read an id belonging to someone else → no effect, no leak.
+  seedUser("victim", "victim@example.com");
+  seedShare("brief-1", "victim", "owner");
+  const victimSession = authMod.createSession("victim").id;
+  await postEntry(ownerSession, { body: "oracle target @victim" });
+  const victimNotif = (await getNotifs(victimSession)).data.notifications[0];
+
+  const res = await readRoute.POST(
+    makeReq({ sessionId: readerSession, body: { ids: [victimNotif.id] } }),
+  );
+  const data = await res.json();
+  assert.equal(data.marked, 0, "cannot mark another user's notification read");
+  // Victim's notification is untouched.
+  const stillUnread = (await getNotifs(victimSession)).data.notifications.find(
+    (x: any) => x.id === victimNotif.id,
+  );
+  assert.equal(stillUnread.read_at, null);
+});
+
+test("the read endpoint dedupes and caps the ids array", async () => {
+  seedUser("cap", "cap@example.com");
+  seedShare("brief-1", "cap", "owner");
+  const capSession = authMod.createSession("cap").id;
+  await postEntry(ownerSession, { body: "cap test @cap" });
+  const id = (await getNotifs(capSession)).data.notifications[0].id;
+  // 1000 duplicate ids + the real one — must not error, marks exactly 1.
+  const ids = [...Array(1000).fill(id), id];
+  const res = await readRoute.POST(makeReq({ sessionId: capSession, body: { ids } }));
+  const data = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(data.marked, 1);
+});
+
 test("notifications are scoped per-user (no cross-user leakage)", async () => {
   await postEntry(ownerSession, { body: "scoped ping @reader only" });
   const readerList = (await getNotifs(readerSession)).data;

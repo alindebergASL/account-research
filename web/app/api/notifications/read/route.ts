@@ -28,7 +28,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ marked, unread_count: countUnreadNotifications(s.user.id) });
   }
   if (Array.isArray(body.ids)) {
-    const ids = body.ids.filter((id): id is string => typeof id === "string");
+    // Dedupe and cap so a pathological payload can't blow up the IN (...) clause.
+    const ids = [
+      ...new Set(body.ids.filter((id): id is string => typeof id === "string")),
+    ].slice(0, 500);
     const marked = markNotificationsRead(s.user.id, ids);
     return NextResponse.json({ marked, unread_count: countUnreadNotifications(s.user.id) });
   }
