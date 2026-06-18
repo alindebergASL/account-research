@@ -31,6 +31,7 @@ import {
   listMentionsForEntries,
   syncEntryMentionsFromBody,
 } from "@/lib/journalMentions";
+import { notifyJournalMentions } from "@/lib/journalMentionNotifications";
 import {
   isJournalCatchUpWindow,
   journalCatchUpExcludedDocumentKey,
@@ -255,7 +256,18 @@ export async function POST(
       body: text,
       replyTo: replyRoot,
     });
-    syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
+    const mentionedUserIds = syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
+    // Fire-and-forget: email everyone newly mentioned (never the author).
+    void notifyJournalMentions({
+      briefId: params.id,
+      entryId: userEntryId,
+      body: text,
+      createdAt: Date.now(),
+      authorId: user.id,
+      authorDisplayName: user.display_name,
+      authorEmail: user.email,
+      mentionedUserIds,
+    });
     const userEntry = loadEntryDto(params.id, userEntryId);
     return NextResponse.json({ entries: [userEntry] });
   }
@@ -287,7 +299,17 @@ export async function POST(
     body: text,
     replyTo: replyRoot,
   });
-  syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
+  const mentionedUserIds = syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
+  void notifyJournalMentions({
+    briefId: params.id,
+    entryId: userEntryId,
+    body: text,
+    createdAt: Date.now(),
+    authorId: user.id,
+    authorDisplayName: user.display_name,
+    authorEmail: user.email,
+    mentionedUserIds,
+  });
   const userEntry = loadEntryDto(params.id, userEntryId);
   // The assistant reply joins the same thread: the explicit reply root when
   // threading, otherwise the just-posted user entry (which becomes the root).

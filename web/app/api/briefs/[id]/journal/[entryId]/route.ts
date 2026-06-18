@@ -6,7 +6,11 @@ import {
   canReadBrief,
   requireUser,
 } from "@/lib/auth";
-import { syncEntryMentionsFromBody } from "@/lib/journalMentions";
+import {
+  listMentionsForEntry,
+  syncEntryMentionsFromBody,
+} from "@/lib/journalMentions";
+import { notifyJournalMentions } from "@/lib/journalMentionNotifications";
 
 export const runtime = "nodejs";
 
@@ -75,12 +79,27 @@ export async function PATCH(
   }
 
   const now = Date.now();
+  // Capture who was already mentioned so we only notify people the edit adds.
+  const previouslyMentioned = new Set(
+    listMentionsForEntry(params.entryId).map((m) => m.user_id),
+  );
   db()
     .prepare(`UPDATE journal_entries SET body = ?, edited_at = ? WHERE id = ?`)
     .run(text, now, params.entryId);
   // Keep mentions in sync with the edited body: a handle added or removed in
   // the edit is reflected immediately (resolved against current brief members).
-  syncEntryMentionsFromBody({ briefId: params.id, entryId: params.entryId, body: text });
+  const mentionedUserIds = syncEntryMentionsFromBody({ briefId: params.id, entryId: params.entryId, body: text });
+  const newlyMentioned = mentionedUserIds.filter((id) => !previouslyMentioned.has(id));
+  void notifyJournalMentions({
+    briefId: params.id,
+    entryId: params.entryId,
+    body: text,
+    createdAt: now,
+    authorId: user.id,
+    authorDisplayName: user.display_name,
+    authorEmail: user.email,
+    mentionedUserIds: newlyMentioned,
+  });
 
   return NextResponse.json({ ok: true, edited_at: now });
 }

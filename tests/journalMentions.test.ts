@@ -19,6 +19,8 @@ const journalLib = require("../web/lib/journal") as typeof import("../web/lib/jo
 const mentions = require("../web/lib/journalMentions") as typeof import("../web/lib/journalMentions");
 const journalRoute = require("../web/app/api/briefs/[id]/journal/route") as typeof import("../web/app/api/briefs/[id]/journal/route");
 const entryRoute = require("../web/app/api/briefs/[id]/journal/[entryId]/route") as typeof import("../web/app/api/briefs/[id]/journal/[entryId]/route");
+const membersRoute = require("../web/app/api/briefs/[id]/journal/members/route") as typeof import("../web/app/api/briefs/[id]/journal/members/route");
+const renderHelpers = require("../web/app/brief/[id]/journal/helpers") as typeof import("../web/app/brief/[id]/journal/helpers");
 
 initDb();
 
@@ -247,6 +249,43 @@ test("?mentions=me ignores soft-deleted entries as the matching trigger", async 
     !filtered.data.entries.some((e: any) => e.id === selfId),
     "soft-deleted root mentioning the viewer is excluded",
   );
+});
+
+test("members endpoint returns owner + active shares with handles, 404 for non-readers", async () => {
+  const ok = await membersRoute.GET(makeReq({ sessionId: ownerSession }), { params: { id: "brief-1" } });
+  assert.equal(ok.status, 200);
+  const { members } = await ok.json();
+  const byId = new Map<string, any>(members.map((m: any) => [m.id, m]));
+  assert.ok(byId.has("owner") && byId.has("reader") && byId.has("alice"));
+  assert.ok(!byId.has("ghost"), "disabled member excluded");
+  assert.ok(!byId.has("outsider"), "non-member excluded");
+  // Handle is the email local-part (always resolvable).
+  assert.equal(byId.get("alice").handle, "asmith");
+
+  const outsiderSession = authMod.createSession("outsider").id;
+  const denied = await membersRoute.GET(makeReq({ sessionId: outsiderSession }), { params: { id: "brief-1" } });
+  assert.equal(denied.status, 404);
+});
+
+test("splitBodyMentions highlights only resolved handles, leaves the rest plain", () => {
+  const mentionsList = [
+    { user_id: "reader", display_name: "reader", email: "reader@example.com" },
+  ];
+  const segs = renderHelpers.splitBodyMentions("hi @reader and @ghost ok", mentionsList);
+  assert.deepEqual(
+    segs,
+    [
+      { kind: "text", text: "hi " },
+      { kind: "mention", text: "@reader", member: mentionsList[0] },
+      { kind: "text", text: " and @ghost ok" },
+    ],
+  );
+  // No mentions on the entry → a single plain text run.
+  assert.deepEqual(renderHelpers.splitBodyMentions("plain @reader", []), [
+    { kind: "text", text: "plain @reader" },
+  ]);
+  // Null body → empty.
+  assert.deepEqual(renderHelpers.splitBodyMentions(null, mentionsList), []);
 });
 
 test("assistant entries never carry user mentions even if body contains a handle", () => {
