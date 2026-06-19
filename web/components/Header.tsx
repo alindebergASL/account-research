@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldCheck } from "lucide-react";
 import ResearchTray from "./ResearchTray";
+import NotificationBell from "./NotificationBell";
 
 type Me = {
   id: string;
@@ -91,6 +92,7 @@ export default function Header() {
         </Link>
         <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3 text-sm" ref={menuRef}>
           {me && me.role !== "viewer" && <ResearchTray />}
+          {me && <NotificationBell />}
           {me && (
             <div className="relative">
               <button

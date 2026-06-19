@@ -11,6 +11,7 @@ import {
   syncEntryMentionsFromBody,
 } from "@/lib/journalMentions";
 import { notifyJournalMentions } from "@/lib/journalMentionNotifications";
+import { createMentionNotifications } from "@/lib/notifications";
 
 export const runtime = "nodejs";
 
@@ -90,6 +91,7 @@ export async function PATCH(
   // the edit is reflected immediately (resolved against current brief members).
   const mentionedUserIds = syncEntryMentionsFromBody({ briefId: params.id, entryId: params.entryId, body: text });
   const newlyMentioned = mentionedUserIds.filter((id) => !previouslyMentioned.has(id));
+  createMentionNotifications({ briefId: params.id, entryId: params.entryId, actorId: user.id, recipientUserIds: newlyMentioned });
   void notifyJournalMentions({
     briefId: params.id,
     entryId: params.entryId,
