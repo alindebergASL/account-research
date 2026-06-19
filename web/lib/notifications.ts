@@ -146,25 +146,44 @@ export function countUnreadNotifications(userId: string): number {
   return row.c;
 }
 
-// Mark specific notifications read (scoped to the owner). Returns how many rows
-// transitioned unread -> read.
+// Mark specific notifications read (scoped to the owner AND to briefs the user
+// can currently read). Returns how many rows transitioned unread -> read. A
+// stale id for a now-inaccessible brief is a no-op, so the marked count can't be
+// used to probe the existence of a hidden notification.
 export function markNotificationsRead(userId: string, ids: string[]): number {
   if (ids.length === 0) return 0;
-  const placeholders = ids.map(() => "?").join(",");
+  const idKeys = ids.map((_, i) => `@id${i}`);
+  const params: Record<string, unknown> = { userId, now: Date.now() };
+  ids.forEach((id, i) => (params[`id${i}`] = id));
   const res = db()
     .prepare(
-      `UPDATE notifications SET read_at = ?
-        WHERE user_id = ? AND read_at IS NULL AND id IN (${placeholders})`,
+      `UPDATE notifications SET read_at = @now
+        WHERE id IN (
+          SELECT n.id FROM notifications n
+           WHERE n.user_id = @userId
+             AND n.read_at IS NULL
+             AND n.id IN (${idKeys.join(", ")})
+             AND ${ACCESSIBLE_BRIEF_CLAUSE}
+        )`,
     )
-    .run(Date.now(), userId, ...ids);
+    .run(params);
   return res.changes;
 }
 
+// Mark every currently-readable unread notification read. Scoped the same way as
+// the list/count so an inaccessible (revoked-share) notification is neither
+// counted nor cleared — the marked total can't reveal a hidden one exists.
 export function markAllNotificationsRead(userId: string): number {
   const res = db()
     .prepare(
-      `UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL`,
+      `UPDATE notifications SET read_at = @now
+        WHERE id IN (
+          SELECT n.id FROM notifications n
+           WHERE n.user_id = @userId
+             AND n.read_at IS NULL
+             AND ${ACCESSIBLE_BRIEF_CLAUSE}
+        )`,
     )
-    .run(Date.now(), userId);
+    .run({ userId, now: Date.now() });
   return res.changes;
 }

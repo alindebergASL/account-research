@@ -228,6 +228,34 @@ test("revoking a share hides the notification and excludes it from the unread co
   // ?count=1 (the badge poll path) must agree.
   const countOnly = (await getNotifs(revSession, "count=1")).data;
   assert.equal(countOnly.unread_count, after.unread_count);
+
+  // The write path agrees too: mark-all must not clear (or even count) the now
+  // hidden notification — marked: 0 reveals nothing about its existence.
+  const markAll = await readRoute.POST(makeReq({ sessionId: revSession, body: { all: true } }));
+  const markAllData = await markAll.json();
+  assert.equal(markAllData.marked, 0, "mark-all after revoke touches no hidden rows");
+});
+
+test("mark-read by id is a no-op for a notification whose brief access was revoked", async () => {
+  seedUser("revid", "revid@example.com");
+  seedBrief("brief-revid", "owner");
+  seedShare("brief-revid", "revid", "owner");
+  const session = authMod.createSession("revid").id;
+  const post = await journalRoute.POST(
+    makeReq({ sessionId: ownerSession, body: { body: "capture me @revid" } }),
+    { params: { id: "brief-revid" } },
+  );
+  assert.equal(post.status, 200);
+  // Capture the id while still accessible.
+  const id = (await getNotifs(session)).data.notifications.find(
+    (x: any) => x.brief_id === "brief-revid",
+  ).id;
+
+  db().prepare(`DELETE FROM brief_shares WHERE brief_id = ? AND user_id = ?`).run("brief-revid", "revid");
+
+  const res = await readRoute.POST(makeReq({ sessionId: session, body: { ids: [id] } }));
+  const data = await res.json();
+  assert.equal(data.marked, 0, "stale id for a revoked brief cannot be marked read");
 });
 
 test("an admin can still see a notification for a brief they neither own nor are shared on", async () => {
