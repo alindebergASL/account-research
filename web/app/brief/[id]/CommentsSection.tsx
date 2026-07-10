@@ -101,6 +101,27 @@ export default function CommentsSection({
     load();
   }, [load]);
 
+  // Deep-link support: land on #comment-<id> (notification bell + email links
+  // both use this anchor) once comments have loaded, and re-run on same-page
+  // hash changes. Scroll + brief highlight, mirroring the journal behavior.
+  useEffect(() => {
+    if (!comments) return;
+    const applyHash = () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#comment-")) return;
+      const el = document.getElementById(hash.slice(1));
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      window.setTimeout(() => {
+        el.classList.remove("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      }, 2200);
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [comments]);
+
   const { roots, childrenByParent } = useMemo(() => {
     const map = new Map<string, Comment[]>();
     const top: Comment[] = [];
@@ -230,7 +251,10 @@ export default function CommentsSection({
         key={c.id}
         className={depth > 0 ? "ml-8 mt-3" : "mt-4"}
       >
-        <div className="rounded-xl border border-[var(--line)] bg-white p-4">
+        <div
+          id={`comment-${c.id}`}
+          className="rounded-xl border border-[var(--line)] bg-white p-4 scroll-mt-24"
+        >
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
               <span className="font-medium text-ink">

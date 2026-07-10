@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, LogOut, ShieldCheck } from "lucide-react";
 import ResearchTray from "./ResearchTray";
 import NotificationBell from "./NotificationBell";
+import { useDismissable } from "./useDismissable";
 
 type Me = {
   id: string;
@@ -20,8 +21,7 @@ export default function Header() {
   const router = useRouter();
   const [me, setMe] = useState<Me>(null);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const { open, setOpen, ref: menuRef } = useDismissable<HTMLDivElement>();
 
   const hidden =
     pathname === "/login" ||
@@ -49,22 +49,6 @@ export default function Header() {
       })
       .catch(() => setMe(null));
   }, [pathname, router, hidden]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   if (hidden) return null;
 

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
 import { notifyCommentCreated } from "@/lib/commentNotifications";
+import { createCommentNotification } from "@/lib/notifications";
 import {
   listCommentRowsForBrief,
   rowToAuthenticatedDto,
@@ -124,6 +125,15 @@ export async function POST(
         WHERE c.id = ?`,
     )
     .get(id) as CommentListRow;
+
+  // In-app inbox (synchronous, reliable): reply -> parent author, top-level ->
+  // brief owner; never the author. Mirrors the email recipient rule below.
+  createCommentNotification({
+    briefId: params.id,
+    commentId: id,
+    parentCommentId: parentId,
+    actorId: user.id,
+  });
 
   // Fire-and-forget: notification path must never block or fail the POST.
   // Any error inside notifyCommentCreated is already swallowed there; the

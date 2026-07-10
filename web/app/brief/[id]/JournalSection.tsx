@@ -197,6 +197,9 @@ export default function JournalSection({
   const [searchOpen, setSearchOpen] = useState(false);
   const [showAllEntries, setShowAllEntries] = useState(false);
   const [heroExpanded, setHeroExpanded] = useState(false);
+  // Last #journal-entry-<id> hash already scrolled to (or given up on), so the
+  // deep-link effect never re-fires against filters the user sets afterwards.
+  const deepLinkDoneRef = useRef<string | null>(null);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   // @mention autocomplete in the composer. Members are loaded once; the
@@ -328,17 +331,28 @@ export default function JournalSection({
   // Deep-link support: when arriving at #journal-entry-<id> (e.g. from a
   // notification), scroll the entry into view and briefly highlight it once the
   // feed has loaded. If the target is past the compact cut-off, expand the
-  // timeline so it's in the DOM, then place it on the next render.
+  // timeline; if a restrictive filter (tag / kind / search) still hides it,
+  // progressively clear those so the link always lands. Each miss widens one
+  // constraint, then the effect re-runs on the next render. A hash is handled
+  // at most once (deepLinkDoneRef) so a stale hash can't clear filters the
+  // user applies later; a fresh notification click re-arms via hashchange.
   useEffect(() => {
     if (!entries) return;
     const applyHash = () => {
       const hash = window.location.hash;
       if (!hash.startsWith("#journal-entry-")) return;
+      if (deepLinkDoneRef.current === hash) return;
       const el = document.getElementById(hash.slice(1));
       if (!el) {
         if (!showAllEntries) setShowAllEntries(true);
+        else if (tagFilter !== null) setTagFilter(null);
+        else if (timelineFilter !== "all") setTimelineFilter("all");
+        else if (journalSearchQuery) setJournalSearchQuery("");
+        // Nothing left to widen and still missing (e.g. deleted entry): give up.
+        else deepLinkDoneRef.current = hash;
         return;
       }
+      deepLinkDoneRef.current = hash;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
       window.setTimeout(() => {
@@ -349,7 +363,7 @@ export default function JournalSection({
     // Same-page notification clicks change only the hash (no remount).
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [entries, showAllEntries]);
+  }, [entries, showAllEntries, tagFilter, timelineFilter, journalSearchQuery]);
 
   // Members matching the in-progress @handle query (case-insensitive, by handle
   // or display name), capped for a compact dropdown.

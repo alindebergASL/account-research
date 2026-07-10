@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, type ResearchJobRow } from "@/lib/db";
-import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
+import { HttpError, canManageBrief, canReadBrief, requireUser } from "@/lib/auth";
 import { listBriefEventsForBrief } from "@/lib/briefEvents";
 
 export const runtime = "nodejs";
@@ -58,9 +58,14 @@ export async function GET(
     queuePosition = 0;
   }
 
-  const recentEvents = linkedBriefId
-    ? listBriefEventsForBrief(linkedBriefId, 10)
-    : [];
+  // Job ownership grants access to the job's own fields, but the linked
+  // brief's event feed requires CURRENT brief access: an admin who kicked off
+  // a refresh on someone else's brief and was later demoted keeps the job row
+  // yet must not keep reading that brief's activity through it.
+  const recentEvents =
+    linkedBriefId && canReadBrief(user, linkedBriefId)
+      ? listBriefEventsForBrief(linkedBriefId, 10)
+      : [];
 
   return NextResponse.json({
     id: job.id,

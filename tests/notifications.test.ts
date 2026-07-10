@@ -20,6 +20,8 @@ const journalRoute = require("../web/app/api/briefs/[id]/journal/route") as type
 const entryRoute = require("../web/app/api/briefs/[id]/journal/[entryId]/route") as typeof import("../web/app/api/briefs/[id]/journal/[entryId]/route");
 const notifRoute = require("../web/app/api/notifications/route") as typeof import("../web/app/api/notifications/route");
 const readRoute = require("../web/app/api/notifications/read/route") as typeof import("../web/app/api/notifications/read/route");
+const commentsRoute = require("../web/app/api/briefs/[id]/comments/route") as typeof import("../web/app/api/briefs/[id]/comments/route");
+const jobRoute = require("../web/app/api/research-jobs/[id]/route") as typeof import("../web/app/api/research-jobs/[id]/route");
 
 initDb();
 
@@ -309,6 +311,123 @@ test("the read endpoint dedupes and caps the ids array", async () => {
   const data = await res.json();
   assert.equal(res.status, 200);
   assert.equal(data.marked, 1);
+});
+
+async function postComment(session: string, briefId: string, body: any) {
+  const res = await commentsRoute.POST(makeReq({ sessionId: session, body }), {
+    params: { id: briefId },
+  });
+  return { status: res.status, data: await res.json() };
+}
+
+test("a top-level comment notifies the brief owner in-app", async () => {
+  const before = notif.countUnreadNotifications("owner");
+  const post = await postComment(readerSession, "brief-1", { body: "great research, one question" });
+  assert.equal(post.status, 200);
+  assert.equal(notif.countUnreadNotifications("owner"), before + 1);
+  const n = notif.listNotifications("owner")[0];
+  assert.equal(n.type, "brief_comment");
+  assert.equal(n.actor?.id, "reader");
+  assert.equal(n.source_entry_id, post.data.comment.id);
+  assert.match(n.excerpt ?? "", /great research/);
+});
+
+test("a comment on your own brief does not notify you", async () => {
+  const before = notif.countUnreadNotifications("owner");
+  await postComment(ownerSession, "brief-1", { body: "note on my own brief" });
+  assert.equal(notif.countUnreadNotifications("owner"), before);
+});
+
+test("a reply notifies the parent comment's author, not the brief owner", async () => {
+  const parent = await postComment(readerSession, "brief-1", { body: "parent comment" });
+  const ownerBefore = notif.countUnreadNotifications("owner");
+  const readerBefore = notif.countUnreadNotifications("reader");
+  await postComment(ownerSession, "brief-1", {
+    body: "replying to you",
+    parent_id: parent.data.comment.id,
+  });
+  assert.equal(notif.countUnreadNotifications("reader"), readerBefore + 1);
+  assert.equal(notif.countUnreadNotifications("owner"), ownerBefore, "owner not notified for a reply");
+  const n = notif.listNotifications("reader")[0];
+  assert.equal(n.type, "comment_reply");
+  assert.equal(n.actor?.id, "owner");
+});
+
+test("a soft-deleted comment keeps the notification but drops its excerpt", async () => {
+  const post = await postComment(readerSession, "brief-1", { body: "soon deleted" });
+  const commentId = post.data.comment.id;
+  db().prepare(`UPDATE brief_comments SET deleted_at = ? WHERE id = ?`).run(Date.now(), commentId);
+  const n = notif
+    .listNotifications("owner")
+    .find((x) => x.source_entry_id === commentId);
+  assert.ok(n, "notification survives comment deletion");
+  assert.equal(n!.entry_deleted, true);
+  assert.equal(n!.excerpt, null);
+});
+
+test("a reply does not create a notification for a parent author who lost access", async () => {
+  seedUser("gone", "gone@example.com");
+  seedBrief("brief-gone", "owner");
+  seedShare("brief-gone", "gone", "owner");
+  const goneSession = authMod.createSession("gone").id;
+  const parent = await postComment(goneSession, "brief-gone", { body: "posted while shared" });
+  db().prepare(`DELETE FROM brief_shares WHERE brief_id = ? AND user_id = ?`).run("brief-gone", "gone");
+  const before = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'gone'`)
+    .get() as { c: number };
+  await postComment(ownerSession, "brief-gone", {
+    body: "reply after revocation",
+    parent_id: parent.data.comment.id,
+  });
+  const after = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'gone'`)
+    .get() as { c: number };
+  assert.equal(after.c, before.c, "no notification row accrues for a revoked recipient");
+});
+
+test("creating a notification prunes the recipient's read notifications past retention", async () => {
+  // Plant a read notification 91 days old, then trigger any create for owner.
+  db()
+    .prepare(
+      `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at, read_at)
+       VALUES ('stale-n', 'owner', 'journal_mention', 'brief-1', 'stale-src', 'reader', ?, ?)`,
+    )
+    .run(Date.now() - 91 * 24 * 60 * 60 * 1000, Date.now() - 90 * 24 * 60 * 60 * 1000);
+  await postComment(readerSession, "brief-1", { body: "prune trigger" });
+  const stale = db().prepare(`SELECT id FROM notifications WHERE id = 'stale-n'`).get();
+  assert.equal(stale, undefined, "old read notification pruned on create");
+});
+
+test("research-job detail withholds brief events from a demoted ex-admin job owner", async () => {
+  seedUser("exadmin", "exadmin@example.com");
+  db().prepare(`UPDATE users SET role = 'admin' WHERE id = 'exadmin'`).run();
+  seedBrief("brief-events", "owner");
+  db()
+    .prepare(
+      `INSERT INTO research_jobs (id, user_id, account_name, intake_json, mode, status, created_at, target_brief_id, intent)
+       VALUES ('job-1', 'exadmin', 'Acme', '{}', 'standard', 'succeeded', ?, 'brief-events', 'refresh')`,
+    )
+    .run(Date.now());
+  db()
+    .prepare(
+      `INSERT INTO brief_events (id, brief_id, event_type, title, summary, created_at)
+       VALUES ('ev-1', 'brief-events', 'refresh', 'Brief refreshed', 'fields: personas', ?)`,
+    )
+    .run(Date.now());
+
+  const adminSession = authMod.createSession("exadmin").id;
+  const asAdmin = await jobRoute.GET(makeReq({ sessionId: adminSession }), { params: { id: "job-1" } });
+  const adminData = await asAdmin.json();
+  assert.equal(adminData.recent_events.length, 1, "admin sees the linked brief's events");
+
+  // Demote. The job row still names exadmin as owner, so the job itself stays
+  // visible — but the linked brief's event feed must not.
+  db().prepare(`UPDATE users SET role = 'member' WHERE id = 'exadmin'`).run();
+  const demotedSession = authMod.createSession("exadmin").id;
+  const asDemoted = await jobRoute.GET(makeReq({ sessionId: demotedSession }), { params: { id: "job-1" } });
+  assert.equal(asDemoted.status, 200, "job detail itself remains accessible to the job owner");
+  const demotedData = await asDemoted.json();
+  assert.equal(demotedData.recent_events.length, 0, "brief events withheld without current brief access");
 });
 
 test("notifications are scoped per-user (no cross-user leakage)", async () => {
