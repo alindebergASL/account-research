@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
 import { notifyCommentCreated } from "@/lib/commentNotifications";
+import { createCommentNotification } from "@/lib/notifications";
 import {
   listCommentRowsForBrief,
   rowToAuthenticatedDto,
@@ -108,13 +109,25 @@ export async function POST(
   const id = newId();
   const now = Date.now();
   const aiAssisted = body.ai_assisted === true ? 1 : 0;
-  db()
-    .prepare(
-      `INSERT INTO brief_comments
-         (id, brief_id, user_id, parent_id, body, ai_assisted, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, params.id, user.id, parentId, text, aiAssisted, now);
+  // One transaction for the comment and its in-app notification (reply ->
+  // parent author, top-level -> brief owner; never the author): either both
+  // land or neither does, so a failure can't leave a comment nobody was told
+  // about — or a notification pointing at a comment that was never created.
+  db().transaction(() => {
+    db()
+      .prepare(
+        `INSERT INTO brief_comments
+           (id, brief_id, user_id, parent_id, body, ai_assisted, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, params.id, user.id, parentId, text, aiAssisted, now);
+    createCommentNotification({
+      briefId: params.id,
+      commentId: id,
+      parentCommentId: parentId,
+      actorId: user.id,
+    });
+  })();
 
   const row = db()
     .prepare(

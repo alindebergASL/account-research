@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useDismissable } from "./useDismissable";
 import {
   AlertCircle,
   CheckCircle2,
@@ -45,13 +46,12 @@ const POLL_OPEN_MS = 4000;
 const POLL_CLOSED_MS = 15000;
 
 export default function ResearchTray() {
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, ref: wrapRef } = useDismissable<HTMLDivElement>();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState<Record<string, "cancel" | "retry" | undefined>>(
     {},
   );
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const wrapRef = useRef<HTMLDivElement>(null);
   // Track previous statuses so we can fire a toast on transition.
   const prevStatusesRef = useRef<Map<string, JobView["status"]>>(new Map());
   const initializedRef = useRef(false);
@@ -127,23 +127,6 @@ export default function ResearchTray() {
     initializedRef.current = true;
     setSnapshot(s);
   }
-
-  // Close popover on outside click / Escape.
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   // Auto-dismiss toasts after 8s.
   useEffect(() => {

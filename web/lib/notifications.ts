@@ -1,11 +1,20 @@
 import { db } from "@/lib/db";
 import { newId } from "@/lib/password";
+import { canUserAccessBrief } from "@/lib/briefAccess";
 
-// In-app notification types. Generic table; today only journal @mentions write
-// rows, but the shape (actor + brief + source entry) is reusable.
-export type NotificationType = "journal_mention";
+// In-app notification types. Generic table shared by journal @mentions and
+// brief comments; the shape (actor + brief + source row) is reusable.
+//   journal_mention — you were @mentioned in a journal entry
+//   brief_comment   — someone commented top-level on a brief you own
+//   comment_reply   — someone replied to your comment
+export type NotificationType = "journal_mention" | "brief_comment" | "comment_reply";
 
 const EXCERPT_CHARS = 160;
+// Retention: notifications are an inbox, not an archive. On every create we
+// prune the recipient's read notifications older than RETENTION_DAYS and cap
+// the total per user, so the table can't grow unbounded without needing a cron.
+const RETENTION_DAYS = 90;
+const MAX_PER_USER = 500;
 
 export type NotificationDto = {
   id: string;
@@ -25,12 +34,21 @@ function truncate(s: string, n: number): string {
   return clean.length <= n ? clean : clean.slice(0, n).trimEnd() + "…";
 }
 
+// A disabled account gets no new notifications — same rule as both email
+// paths (commentNotifications.ts / journalMentionNotifications.ts).
+function isDisabled(userId: string): boolean {
+  const row = db()
+    .prepare(`SELECT disabled_at FROM users WHERE id = ?`)
+    .get(userId) as { disabled_at: number | null } | undefined;
+  return !row || row.disabled_at !== null;
+}
+
 // Create one in-app notification per recipient for a journal mention. Idempotent
 // via UNIQUE (user_id, type, source_entry_id): re-resolving or editing an entry
 // never duplicates a recipient's row. The actor is never notified about their
-// own mention. Recipients are expected to already be brief members (the journal
-// route resolves mentions against membership), so no access check is repeated
-// here — callers pass a trusted list.
+// own mention, and disabled accounts are skipped. Recipients are expected to
+// already be brief members (the journal route resolves mentions against
+// membership), so no access check is repeated here — callers pass a trusted list.
 export function createMentionNotifications(args: {
   briefId: string;
   entryId: string;
@@ -49,10 +67,74 @@ export function createMentionNotifications(args: {
   for (const userId of args.recipientUserIds) {
     if (userId === args.actorId || seen.has(userId)) continue;
     seen.add(userId);
+    if (isDisabled(userId)) continue;
     const res = insert.run(newId(), userId, args.briefId, args.entryId, args.actorId, now);
     created += res.changes;
+    if (res.changes) pruneNotifications(userId);
   }
   return created;
+}
+
+// Create one in-app notification for a new brief comment, mirroring the email
+// path's recipient rule (web/lib/commentNotifications.ts): a reply notifies the
+// parent comment's author, a top-level comment notifies the brief owner. Never
+// the actor, and only if the recipient can currently read the brief (the
+// read-time predicate is the backstop, but a revoked user shouldn't accrue
+// rows either). Unlike email this is NOT gated on email_notifications_enabled.
+// Idempotent per (recipient, type, comment) via the UNIQUE constraint.
+export function createCommentNotification(args: {
+  briefId: string;
+  commentId: string;
+  parentCommentId: string | null;
+  actorId: string;
+}): number {
+  let recipientId: string | null = null;
+  let type: NotificationType;
+  if (args.parentCommentId) {
+    type = "comment_reply";
+    const parent = db()
+      .prepare(`SELECT user_id FROM brief_comments WHERE id = ?`)
+      .get(args.parentCommentId) as { user_id: string } | undefined;
+    recipientId = parent?.user_id ?? null;
+  } else {
+    type = "brief_comment";
+    const brief = db()
+      .prepare(`SELECT user_id FROM briefs WHERE id = ?`)
+      .get(args.briefId) as { user_id: string } | undefined;
+    recipientId = brief?.user_id ?? null;
+  }
+  if (!recipientId || recipientId === args.actorId) return 0;
+  if (!canUserAccessBrief(recipientId, args.briefId)) return 0;
+  if (isDisabled(recipientId)) return 0;
+  const res = db()
+    .prepare(
+      `INSERT OR IGNORE INTO notifications
+         (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(newId(), recipientId, type, args.briefId, args.commentId, args.actorId, Date.now());
+  if (res.changes) pruneNotifications(recipientId);
+  return res.changes;
+}
+
+// Drop a recipient's read notifications past the retention window, then trim to
+// the newest MAX_PER_USER overall. Called opportunistically on create so growth
+// is bounded without a scheduled job.
+function pruneNotifications(userId: string): void {
+  const conn = db();
+  conn
+    .prepare(`DELETE FROM notifications WHERE user_id = ? AND read_at IS NOT NULL AND created_at < ?`)
+    .run(userId, Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  conn
+    .prepare(
+      `DELETE FROM notifications
+        WHERE user_id = ?
+          AND id NOT IN (
+            SELECT id FROM notifications WHERE user_id = ?
+             ORDER BY created_at DESC, rowid DESC LIMIT ?
+          )`,
+    )
+    .run(userId, userId, MAX_PER_USER);
 }
 
 type NotificationRow = {
@@ -62,6 +144,7 @@ type NotificationRow = {
   brief_account_name: string | null;
   source_entry_id: string | null;
   entry_body: string | null;
+  source_row_id: string | null;
   entry_deleted_at: number | null;
   actor_id: string | null;
   actor_display_name: string | null;
@@ -96,14 +179,18 @@ export function listNotifications(
     .prepare(
       `SELECT n.id, n.type, n.brief_id, n.source_entry_id, n.created_at, n.read_at,
               b.account_name AS brief_account_name,
-              j.body         AS entry_body,
-              j.deleted_at   AS entry_deleted_at,
+              COALESCE(j.id, c.id)                 AS source_row_id,
+              COALESCE(j.body, c.body)             AS entry_body,
+              COALESCE(j.deleted_at, c.deleted_at) AS entry_deleted_at,
               a.id           AS actor_id,
               a.display_name AS actor_display_name,
               a.email        AS actor_email
          FROM notifications n
          LEFT JOIN briefs b ON b.id = n.brief_id
-         LEFT JOIN journal_entries j ON j.id = n.source_entry_id
+         LEFT JOIN journal_entries j
+           ON j.id = n.source_entry_id AND n.type = 'journal_mention'
+         LEFT JOIN brief_comments c
+           ON c.id = n.source_entry_id AND n.type IN ('brief_comment', 'comment_reply')
          LEFT JOIN users a ON a.id = n.actor_id
         WHERE n.user_id = @userId
           ${opts.unreadOnly ? "AND n.read_at IS NULL" : ""}
@@ -113,7 +200,12 @@ export function listNotifications(
     )
     .all({ userId, limit }) as NotificationRow[];
   return rows.map((r) => {
-    const deleted = r.entry_deleted_at !== null;
+    // "Deleted" covers both a soft-deleted source and a source row that no
+    // longer exists at all (hard-deleted or never valid): either way there is
+    // nothing to link to or excerpt from.
+    const deleted =
+      r.entry_deleted_at !== null ||
+      (r.source_entry_id !== null && r.source_row_id === null);
     return {
       id: r.id,
       type: r.type,

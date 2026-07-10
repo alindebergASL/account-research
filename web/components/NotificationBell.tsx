@@ -1,13 +1,14 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import { Bell, Check } from "lucide-react";
+import { useDismissable } from "./useDismissable";
 
 type Actor = { id: string; display_name: string | null; email: string } | null;
 type Notification = {
   id: string;
-  type: "journal_mention";
+  type: "journal_mention" | "brief_comment" | "comment_reply";
   brief_id: string | null;
   brief_account_name: string | null;
   source_entry_id: string | null;
@@ -39,13 +40,33 @@ function actorName(a: Actor): string {
   return a.display_name || a.email.split("@")[0] || "Someone";
 }
 
+function actionText(type: Notification["type"]): string {
+  switch (type) {
+    case "brief_comment":
+      return "commented";
+    case "comment_reply":
+      return "replied to your comment";
+    default:
+      return "mentioned you";
+  }
+}
+
+// Deep-link target: journal mentions anchor journal entries, comment types
+// anchor comment cards (same scheme the notification emails already use).
+function targetHash(n: Notification): string {
+  if (!n.source_entry_id) return "";
+  return n.type === "journal_mention"
+    ? `#journal-entry-${n.source_entry_id}`
+    : `#comment-${n.source_entry_id}`;
+}
+
 export default function NotificationBell() {
   const router = useRouter();
+  const pathname = usePathname();
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<Notification[]>([]);
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, ref: wrapRef } = useDismissable<HTMLDivElement>();
   const [loading, setLoading] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
 
   const refreshCount = useCallback(async () => {
     try {
@@ -97,23 +118,6 @@ export default function NotificationBell() {
     if (open) loadList();
   }, [open, loadList]);
 
-  // Close on outside click / Escape (matches Header + ResearchTray).
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   async function markRead(ids: string[]) {
     if (ids.length === 0) return;
     setItems((cur) =>
@@ -152,10 +156,25 @@ export default function NotificationBell() {
   function openNotification(n: Notification) {
     if (n.read_at === null) void markRead([n.id]);
     setOpen(false);
-    if (n.brief_id && n.source_entry_id && !n.entry_deleted) {
-      router.push(`/brief/${n.brief_id}#journal-entry-${n.source_entry_id}`);
-    } else if (n.brief_id) {
-      router.push(`/brief/${n.brief_id}`);
+    if (!n.brief_id) return;
+    const path = `/brief/${n.brief_id}`;
+    const hash = n.source_entry_id && !n.entry_deleted ? targetHash(n) : "";
+    if (pathname !== path) {
+      // Different page: a fresh mount reads the committed hash itself.
+      router.push(`${path}${hash}`);
+      return;
+    }
+    if (!hash) return;
+    if (window.location.hash === hash) {
+      // Identical URL: the browser fires no hashchange, so nudge the deep-link
+      // handlers directly (they re-arm and re-run on this event).
+      window.dispatchEvent(new Event("hashchange"));
+    } else {
+      // Same page, different hash: assign the hash directly so the native
+      // hashchange fires AFTER the URL is committed. router.push here would
+      // update the hash asynchronously, and a synthetic event racing it makes
+      // handlers (including the page-level view router) read the OLD hash.
+      window.location.hash = hash;
     }
   }
 
@@ -180,7 +199,7 @@ export default function NotificationBell() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-30 mt-2 w-[360px] overflow-hidden rounded-xl border border-[var(--line)] bg-white shadow-xl"
+          className="absolute right-0 z-30 mt-2 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-[var(--line)] bg-white shadow-xl"
         >
           <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-2.5">
             <span className="text-sm font-medium text-ink">Notifications</span>
@@ -199,7 +218,8 @@ export default function NotificationBell() {
               <div className="px-4 py-6 text-center text-sm text-muted">Loading…</div>
             ) : items.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-muted">
-                You&apos;re all caught up. Mentions of you in a journal will show up here.
+                You&apos;re all caught up. Mentions, comments on your briefs, and replies to
+                your comments will show up here.
               </div>
             ) : (
               items.map((n) => (
@@ -216,7 +236,7 @@ export default function NotificationBell() {
                       <span className="size-2 shrink-0 rounded-full bg-[var(--accent,#e11d48)]" aria-hidden />
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                      <span className="font-medium">{actorName(n.actor)}</span> mentioned you
+                      <span className="font-medium">{actorName(n.actor)}</span> {actionText(n.type)}
                       {n.brief_account_name ? (
                         <span className="text-muted"> on {n.brief_account_name}</span>
                       ) : null}

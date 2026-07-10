@@ -20,6 +20,8 @@ const journalRoute = require("../web/app/api/briefs/[id]/journal/route") as type
 const entryRoute = require("../web/app/api/briefs/[id]/journal/[entryId]/route") as typeof import("../web/app/api/briefs/[id]/journal/[entryId]/route");
 const notifRoute = require("../web/app/api/notifications/route") as typeof import("../web/app/api/notifications/route");
 const readRoute = require("../web/app/api/notifications/read/route") as typeof import("../web/app/api/notifications/read/route");
+const commentsRoute = require("../web/app/api/briefs/[id]/comments/route") as typeof import("../web/app/api/briefs/[id]/comments/route");
+const jobRoute = require("../web/app/api/research-jobs/[id]/route") as typeof import("../web/app/api/research-jobs/[id]/route");
 
 initDb();
 
@@ -311,10 +313,313 @@ test("the read endpoint dedupes and caps the ids array", async () => {
   assert.equal(data.marked, 1);
 });
 
+async function postComment(session: string, briefId: string, body: any) {
+  const res = await commentsRoute.POST(makeReq({ sessionId: session, body }), {
+    params: { id: briefId },
+  });
+  return { status: res.status, data: await res.json() };
+}
+
+test("a top-level comment notifies the brief owner in-app", async () => {
+  const before = notif.countUnreadNotifications("owner");
+  const post = await postComment(readerSession, "brief-1", { body: "great research, one question" });
+  assert.equal(post.status, 200);
+  assert.equal(notif.countUnreadNotifications("owner"), before + 1);
+  const n = notif.listNotifications("owner")[0];
+  assert.equal(n.type, "brief_comment");
+  assert.equal(n.actor?.id, "reader");
+  assert.equal(n.source_entry_id, post.data.comment.id);
+  assert.match(n.excerpt ?? "", /great research/);
+});
+
+test("a comment on your own brief does not notify you", async () => {
+  const before = notif.countUnreadNotifications("owner");
+  await postComment(ownerSession, "brief-1", { body: "note on my own brief" });
+  assert.equal(notif.countUnreadNotifications("owner"), before);
+});
+
+test("a reply notifies the parent comment's author, not the brief owner", async () => {
+  const parent = await postComment(readerSession, "brief-1", { body: "parent comment" });
+  const ownerBefore = notif.countUnreadNotifications("owner");
+  const readerBefore = notif.countUnreadNotifications("reader");
+  await postComment(ownerSession, "brief-1", {
+    body: "replying to you",
+    parent_id: parent.data.comment.id,
+  });
+  assert.equal(notif.countUnreadNotifications("reader"), readerBefore + 1);
+  assert.equal(notif.countUnreadNotifications("owner"), ownerBefore, "owner not notified for a reply");
+  const n = notif.listNotifications("reader")[0];
+  assert.equal(n.type, "comment_reply");
+  assert.equal(n.actor?.id, "owner");
+});
+
+test("a soft-deleted comment keeps the notification but drops its excerpt", async () => {
+  const post = await postComment(readerSession, "brief-1", { body: "soon deleted" });
+  const commentId = post.data.comment.id;
+  db().prepare(`UPDATE brief_comments SET deleted_at = ? WHERE id = ?`).run(Date.now(), commentId);
+  const n = notif
+    .listNotifications("owner")
+    .find((x) => x.source_entry_id === commentId);
+  assert.ok(n, "notification survives comment deletion");
+  assert.equal(n!.entry_deleted, true);
+  assert.equal(n!.excerpt, null);
+});
+
+test("a reply does not create a notification for a parent author who lost access", async () => {
+  seedUser("gone", "gone@example.com");
+  seedBrief("brief-gone", "owner");
+  seedShare("brief-gone", "gone", "owner");
+  const goneSession = authMod.createSession("gone").id;
+  const parent = await postComment(goneSession, "brief-gone", { body: "posted while shared" });
+  db().prepare(`DELETE FROM brief_shares WHERE brief_id = ? AND user_id = ?`).run("brief-gone", "gone");
+  const before = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'gone'`)
+    .get() as { c: number };
+  await postComment(ownerSession, "brief-gone", {
+    body: "reply after revocation",
+    parent_id: parent.data.comment.id,
+  });
+  const after = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'gone'`)
+    .get() as { c: number };
+  assert.equal(after.c, before.c, "no notification row accrues for a revoked recipient");
+});
+
+test("creating a notification prunes the recipient's read notifications past retention", async () => {
+  // Plant a read notification 91 days old, then trigger any create for owner.
+  db()
+    .prepare(
+      `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at, read_at)
+       VALUES ('stale-n', 'owner', 'journal_mention', 'brief-1', 'stale-src', 'reader', ?, ?)`,
+    )
+    .run(Date.now() - 91 * 24 * 60 * 60 * 1000, Date.now() - 90 * 24 * 60 * 60 * 1000);
+  await postComment(readerSession, "brief-1", { body: "prune trigger" });
+  const stale = db().prepare(`SELECT id FROM notifications WHERE id = 'stale-n'`).get();
+  assert.equal(stale, undefined, "old read notification pruned on create");
+});
+
+test("research-job detail withholds brief events from a demoted ex-admin job owner", async () => {
+  seedUser("exadmin", "exadmin@example.com");
+  db().prepare(`UPDATE users SET role = 'admin' WHERE id = 'exadmin'`).run();
+  seedBrief("brief-events", "owner");
+  db()
+    .prepare(
+      `INSERT INTO research_jobs (id, user_id, account_name, intake_json, mode, status, created_at, target_brief_id, intent)
+       VALUES ('job-1', 'exadmin', 'Acme', '{}', 'standard', 'succeeded', ?, 'brief-events', 'refresh')`,
+    )
+    .run(Date.now());
+  db()
+    .prepare(
+      `INSERT INTO brief_events (id, brief_id, event_type, title, summary, created_at)
+       VALUES ('ev-1', 'brief-events', 'refresh', 'Brief refreshed', 'fields: personas', ?)`,
+    )
+    .run(Date.now());
+
+  const adminSession = authMod.createSession("exadmin").id;
+  const asAdmin = await jobRoute.GET(makeReq({ sessionId: adminSession }), { params: { id: "job-1" } });
+  const adminData = await asAdmin.json();
+  assert.equal(adminData.recent_events.length, 1, "admin sees the linked brief's events");
+
+  // Demote. The job row still names exadmin as owner, so the job itself stays
+  // visible — but the linked brief's event feed must not.
+  db().prepare(`UPDATE users SET role = 'member' WHERE id = 'exadmin'`).run();
+  const demotedSession = authMod.createSession("exadmin").id;
+  const asDemoted = await jobRoute.GET(makeReq({ sessionId: demotedSession }), { params: { id: "job-1" } });
+  assert.equal(asDemoted.status, 200, "job detail itself remains accessible to the job owner");
+  const demotedData = await asDemoted.json();
+  assert.equal(demotedData.recent_events.length, 0, "brief events withheld without current brief access");
+});
+
+test("disabled recipients are suppressed for mentions and comments", async () => {
+  seedUser("sleeper", "sleeper@example.com");
+  seedShare("brief-1", "sleeper", "owner");
+  db().prepare(`UPDATE users SET disabled_at = ? WHERE id = 'sleeper'`).run(Date.now());
+
+  await postEntry(ownerSession, { body: "hey @sleeper are you there" });
+  assert.equal(notif.countUnreadNotifications("sleeper"), 0, "no mention notification for a disabled user");
+
+  // Disable the brief owner and comment on their brief: no comment notification.
+  db().prepare(`UPDATE users SET disabled_at = ? WHERE id = 'owner'`).run(Date.now());
+  const ownerBefore = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'owner'`)
+    .get() as { c: number };
+  await postComment(readerSession, "brief-1", { body: "comment while owner disabled" });
+  const ownerAfter = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'owner'`)
+    .get() as { c: number };
+  assert.equal(ownerAfter.c, ownerBefore.c, "no comment notification for a disabled owner");
+  db().prepare(`UPDATE users SET disabled_at = NULL WHERE id = 'owner'`).run();
+});
+
+test("createCommentNotification is idempotent per comment", async () => {
+  const post = await postComment(readerSession, "brief-1", { body: "idempotent comment" });
+  const commentId = post.data.comment.id;
+  // The route already created the notification once; calling the helper again
+  // with the same args must be a no-op.
+  const again = notif.createCommentNotification({
+    briefId: "brief-1",
+    commentId,
+    parentCommentId: null,
+    actorId: "reader",
+  });
+  assert.equal(again, 0);
+  const rows = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE source_entry_id = ?`)
+    .get(commentId) as { c: number };
+  assert.equal(rows.c, 1);
+});
+
+test("comment insert and notification are atomic: a notification failure rolls back the comment", async () => {
+  db().exec(
+    `CREATE TRIGGER test_fail_notif BEFORE INSERT ON notifications
+     BEGIN SELECT RAISE(ABORT, 'injected notification failure'); END`,
+  );
+  try {
+    await assert.rejects(
+      commentsRoute.POST(
+        makeReq({ sessionId: readerSession, body: { body: "must roll back" } }),
+        { params: { id: "brief-1" } },
+      ),
+      /injected notification failure/,
+    );
+    const orphan = db()
+      .prepare(`SELECT COUNT(*) AS c FROM brief_comments WHERE body = 'must roll back'`)
+      .get() as { c: number };
+    assert.equal(orphan.c, 0, "comment insert rolled back with the failed notification");
+  } finally {
+    db().exec(`DROP TRIGGER test_fail_notif`);
+  }
+});
+
+test("the per-user cap prunes past 500 notifications on create", async () => {
+  seedUser("hoarder", "hoarder@example.com");
+  seedShare("brief-1", "hoarder", "owner");
+  const insert = db().prepare(
+    `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+     VALUES (?, 'hoarder', 'journal_mention', 'brief-1', ?, 'owner', ?)`,
+  );
+  const base = Date.now() - 1_000_000;
+  for (let i = 0; i < 520; i++) insert.run(`bulk-${i}`, `bulk-src-${i}`, base + i);
+  // Any create for this user triggers the prune.
+  await postEntry(ownerSession, { body: "cap trigger @hoarder" });
+  const count = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'hoarder'`)
+    .get() as { c: number };
+  assert.equal(count.c, 500, "inbox capped at 500");
+  const oldest = db()
+    .prepare(`SELECT id FROM notifications WHERE id = 'bulk-0'`)
+    .get();
+  assert.equal(oldest, undefined, "oldest rows were the ones dropped");
+  const newest = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'hoarder' AND source_entry_id LIKE 'bulk-src-51%'`)
+    .get() as { c: number };
+  assert.ok(newest.c > 0, "newest bulk rows survive");
+});
+
+test("type-aware joins resolve the right source when a journal entry and comment share an id", async () => {
+  seedUser("collide", "collide@example.com");
+  seedShare("brief-1", "collide", "owner");
+  const sharedId = "same-id-both-tables";
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, body, created_at)
+       VALUES (?, 'brief-1', 'owner', 'JOURNAL BODY', ?)`,
+    )
+    .run(sharedId, Date.now());
+  db()
+    .prepare(
+      `INSERT INTO brief_comments (id, brief_id, user_id, body, ai_assisted, created_at)
+       VALUES (?, 'brief-1', 'owner', 'COMMENT BODY', 0, ?)`,
+    )
+    .run(sharedId, Date.now());
+  db()
+    .prepare(
+      `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+       VALUES ('n-mention', 'collide', 'journal_mention', 'brief-1', ?, 'owner', ?),
+              ('n-comment', 'collide', 'brief_comment', 'brief-1', ?, 'owner', ?)`,
+    )
+    .run(sharedId, Date.now(), sharedId, Date.now() + 1);
+  const list = notif.listNotifications("collide");
+  const mention = list.find((n) => n.id === "n-mention");
+  const comment = list.find((n) => n.id === "n-comment");
+  assert.equal(mention?.excerpt, "JOURNAL BODY");
+  assert.equal(comment?.excerpt, "COMMENT BODY");
+});
+
+test("a notification whose source row no longer exists reads as deleted", async () => {
+  seedUser("dangler", "dangler@example.com");
+  seedShare("brief-1", "dangler", "owner");
+  db()
+    .prepare(
+      `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+       VALUES ('n-dangling', 'dangler', 'brief_comment', 'brief-1', 'no-such-row', 'owner', ?)`,
+    )
+    .run(Date.now());
+  const n = notif.listNotifications("dangler").find((x) => x.id === "n-dangling");
+  assert.ok(n);
+  assert.equal(n!.entry_deleted, true, "missing source treated as deleted");
+  assert.equal(n!.excerpt, null);
+});
+
+test("a notification outlives its mention: ?mentions=me omits the entry, the full feed restores it", async () => {
+  // The deep-link recovery scenario: mention -> notification -> the entry is
+  // edited to REMOVE the mention. The notification is durable, but the
+  // server-side "Mentions me" feed no longer contains the entry — clearing
+  // that filter (the state machine's clear-mentions step) must restore it.
+  const post = await postEntry(ownerSession, { body: "please check this @reader" });
+  const entryId = post.data.entries[0].id;
+  const n = notif
+    .listNotifications("reader")
+    .find((x) => x.source_entry_id === entryId);
+  assert.ok(n, "mention created a durable notification");
+
+  const edit = await entryRoute.PATCH(
+    makeReq({ sessionId: ownerSession, body: { body: "please check this (mention removed)" } }),
+    { params: { id: "brief-1", entryId } },
+  );
+  assert.equal(edit.status, 200);
+
+  // Filtered feed (what the client has loaded while "Mentions me" is on):
+  // the target entry is absent — client-side widening could never find it.
+  const filteredRes = await journalRoute.GET(
+    makeReq({ sessionId: readerSession, query: "mentions=me" }),
+    { params: { id: "brief-1" } },
+  );
+  const filtered = await filteredRes.json();
+  assert.ok(
+    !filtered.entries.some((e: any) => e.id === entryId),
+    "?mentions=me omits the entry once the mention is edited away",
+  );
+
+  // Full feed (after the clear-mentions refetch): the target is back, so the
+  // normal expand-root -> scroll sequence can land the deep link.
+  const fullRes = await journalRoute.GET(makeReq({ sessionId: readerSession }), {
+    params: { id: "brief-1" },
+  });
+  const full = await fullRes.json();
+  assert.ok(
+    full.entries.some((e: any) => e.id === entryId),
+    "the unfiltered feed still contains the entry",
+  );
+
+  // And the notification itself remains listed (with the edited excerpt).
+  const still = notif
+    .listNotifications("reader")
+    .find((x) => x.source_entry_id === entryId);
+  assert.ok(still, "notification survives the mention removal");
+  assert.match(still!.excerpt ?? "", /mention removed/);
+});
+
 test("notifications are scoped per-user (no cross-user leakage)", async () => {
   await postEntry(ownerSession, { body: "scoped ping @reader only" });
   const readerList = (await getNotifs(readerSession)).data;
-  assert.ok(readerList.notifications.every((n: any) => n.actor === null || true));
+  // Every row the API returns for reader must actually belong to reader in the DB.
+  for (const n of readerList.notifications) {
+    const row = db()
+      .prepare(`SELECT user_id FROM notifications WHERE id = ?`)
+      .get(n.id) as { user_id: string } | undefined;
+    assert.equal(row?.user_id, "reader");
+  }
   // owner should not see reader's notifications in their own feed
   const ownerList = (await getNotifs(ownerSession)).data;
   const readerEntryIds = new Set(readerList.notifications.map((n: any) => n.id));

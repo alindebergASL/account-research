@@ -27,6 +27,15 @@ import {
   resolveCitedJournalEntry,
 } from "@/lib/journalCitationResolution";
 import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
+import { DEEP_LINK_RING } from "@/components/deepLinkHighlight";
+import {
+  nextJournalDeepLinkStep,
+  resolveJournalDeepLinkRoot,
+} from "@/lib/journalDeepLink";
+import {
+  createJournalFeedSequencer,
+  journalFeedMatchesSelection,
+} from "@/lib/journalFeedSequence";
 import {
   buildReviewCandidateDraftFromAssistantEntry,
   buildReviewCandidateDraftsFromAssistantEntry,
@@ -197,6 +206,16 @@ export default function JournalSection({
   const [searchOpen, setSearchOpen] = useState(false);
   const [showAllEntries, setShowAllEntries] = useState(false);
   const [heroExpanded, setHeroExpanded] = useState(false);
+  // Last #journal-entry-<id> hash already scrolled to (or given up on), so the
+  // deep-link effect never re-fires against filters the user sets afterwards.
+  const deepLinkDoneRef = useRef<string | null>(null);
+  // Orders overlapping feed requests (rapid filter toggles, deep-link
+  // refetches): stale responses are discarded, and loadedMentionsFilter
+  // records which scope produced the entries currently in state.
+  const feedSequencerRef = useRef(createJournalFeedSequencer());
+  const [loadedMentionsFilter, setLoadedMentionsFilter] = useState<boolean | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+  const highlightedElRef = useRef<HTMLElement | null>(null);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   // @mention autocomplete in the composer. Members are loaded once; the
@@ -240,9 +259,13 @@ export default function JournalSection({
   }, []);
 
   const load = useCallback(async () => {
+    // Sequence every feed request (last-write-wins): overlapping loads happen
+    // on rapid filter toggles and deep-link refetches, and a stale response —
+    // success or failure — must never overwrite the state of a newer request.
+    const req = feedSequencerRef.current.begin(mentionsMeFilter);
     setLoading(true);
     try {
-      const qs = mentionsMeFilter ? "?mentions=me" : "";
+      const qs = req.mentionsOnly ? "?mentions=me" : "";
       const r = await fetch(`/api/briefs/${briefId}/journal${qs}`, {
         cache: "no-store",
       });
@@ -251,12 +274,21 @@ export default function JournalSection({
         throw new Error(data?.error || `HTTP ${r.status}`);
       }
       const data = await r.json();
+      if (!feedSequencerRef.current.isCurrent(req)) return;
       setEntries(data.entries ?? []);
+      // Record which scope produced these entries; deep-link processing only
+      // runs while this matches the selected filter (see applyHash).
+      setLoadedMentionsFilter(req.mentionsOnly);
       setError(null);
     } catch (e: any) {
+      if (!feedSequencerRef.current.isCurrent(req)) return;
+      // Leave loadedMentionsFilter as-is: a failed refetch keeps the scopes
+      // mismatched, which keeps deep-links unprocessed (never mis-marked
+      // handled) and retryable — the error banner and the next notification
+      // click both re-issue the load.
       setError(e?.message || "Failed to load journal");
     } finally {
-      setLoading(false);
+      if (feedSequencerRef.current.isCurrent(req)) setLoading(false);
     }
   }, [briefId, mentionsMeFilter]);
 
@@ -326,30 +358,150 @@ export default function JournalSection({
   }, [briefId]);
 
   // Deep-link support: when arriving at #journal-entry-<id> (e.g. from a
-  // notification), scroll the entry into view and briefly highlight it once the
-  // feed has loaded. If the target is past the compact cut-off, expand the
-  // timeline so it's in the DOM, then place it on the next render.
+  // notification), get the target entry into the DOM, then scroll to it and
+  // briefly highlight it. Anchors only render inside an EXPANDED thread row,
+  // so each pass widens exactly one constraint and lets the re-render retry:
+  // leave any full view / non-timeline tab -> expand the target's thread root
+  // -> show all entries -> clear tag filter -> clear kind filter -> clear
+  // search. A hash is handled at most once (deepLinkDoneRef) so a stale hash
+  // can't clear filters or collapse state the user changes later; a real or
+  // synthetic hashchange (repeated click on the same notification) re-arms.
   useEffect(() => {
-    if (!entries) return;
     const applyHash = () => {
+      // No feed yet (initial load pending or failed): nothing to judge the
+      // hash against. The guard lives HERE, not around the effect, so the
+      // hashchange listener below is always registered — otherwise a failed
+      // FIRST load leaves entries null forever and notification clicks could
+      // never reach the retry path.
+      if (!entries) return;
       const hash = window.location.hash;
       if (!hash.startsWith("#journal-entry-")) return;
-      const el = document.getElementById(hash.slice(1));
-      if (!el) {
-        if (!showAllEntries) setShowAllEntries(true);
+      if (deepLinkDoneRef.current === hash) return;
+      // Only judge the hash against a feed that belongs to the CURRENTLY
+      // selected scope and isn't mid-replacement. Otherwise a click while a
+      // filtered request is in flight validates the target against entries
+      // about to disappear (scroll + mark-done, then the filtered response
+      // removes the target with no recovery), and a click mid-refetch after
+      // clear-mentions would widen or give up against known-stale data. A
+      // failed refetch keeps the scopes mismatched — the hash stays
+      // unhandled and retryable rather than mis-marked.
+      if (
+        !journalFeedMatchesSelection({
+          loading,
+          loadedMentionsOnly: loadedMentionsFilter,
+          selectedMentionsOnly: mentionsMeFilter,
+        })
+      ) {
         return;
       }
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
-      window.setTimeout(() => {
-        el.classList.remove("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      const entryId = hash.slice("#journal-entry-".length);
+      const rootId = resolveJournalDeepLinkRoot(entries, entryId);
+      const el = document.getElementById(hash.slice(1));
+      const step = nextJournalDeepLinkStep({
+        inFullView: activeFullView !== null,
+        onTimelineTab: centerTab === "timeline",
+        targetFound: rootId !== null,
+        rootExpanded: rootId !== null && expandedEntries.includes(rootId),
+        anchorMounted: el !== null,
+        showAllEntries,
+        hasMentionsFilter: mentionsMeFilter,
+        hasTagFilter: tagFilter !== null,
+        hasKindFilter: timelineFilter !== "all",
+        hasSearch: journalSearchQuery !== "",
+      });
+      switch (step) {
+        case "leave-full-view":
+          setActiveFullView(null);
+          return;
+        case "show-timeline-tab":
+          setCenterTab("timeline");
+          return;
+        case "clear-mentions":
+          // Flipping the filter re-runs load(); the scope-match guard above
+          // holds further processing until the unfiltered feed actually lands.
+          setMentionsMeFilter(false);
+          return;
+        case "expand-root":
+          setExpandedEntries((cur) => (cur.includes(rootId!) ? cur : [...cur, rootId!]));
+          return;
+        case "show-all":
+          setShowAllEntries(true);
+          return;
+        case "clear-tag":
+          setTagFilter(null);
+          return;
+        case "clear-kind":
+          setTimelineFilter("all");
+          return;
+        case "clear-search":
+          setJournalSearchQuery("");
+          return;
+        case "give-up":
+          // Nothing left to widen and still missing (e.g. deleted entry).
+          deepLinkDoneRef.current = hash;
+          return;
+        case "scroll":
+          break;
+      }
+      deepLinkDoneRef.current = hash;
+      // Cancel any in-flight highlight before starting the next one.
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = null;
+      }
+      highlightedElRef.current?.classList.remove(...DEEP_LINK_RING);
+      el!.scrollIntoView({ behavior: "smooth", block: "center" });
+      el!.classList.add(...DEEP_LINK_RING);
+      highlightedElRef.current = el;
+      highlightTimerRef.current = window.setTimeout(() => {
+        el!.classList.remove(...DEEP_LINK_RING);
+        highlightTimerRef.current = null;
+        highlightedElRef.current = null;
       }, 2200);
     };
     applyHash();
-    // Same-page notification clicks change only the hash (no remount).
-    window.addEventListener("hashchange", applyHash);
-    return () => window.removeEventListener("hashchange", applyHash);
-  }, [entries, showAllEntries]);
+    // Same-page notification clicks change only the hash (no remount); the
+    // bell also dispatches a synthetic hashchange for same-hash repeat clicks.
+    const onHashChange = () => {
+      deepLinkDoneRef.current = null;
+      // Scopes mismatched with nothing in flight means the awaited refetch
+      // failed earlier: a fresh notification click starts a new request
+      // instead of waiting forever on a load that will never come.
+      if (
+        !loading &&
+        loadedMentionsFilter !== mentionsMeFilter &&
+        window.location.hash.startsWith("#journal-entry-")
+      ) {
+        void load();
+        return;
+      }
+      applyHash();
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [
+    entries,
+    loading,
+    loadedMentionsFilter,
+    load,
+    showAllEntries,
+    mentionsMeFilter,
+    tagFilter,
+    timelineFilter,
+    journalSearchQuery,
+    expandedEntries,
+    activeFullView,
+    centerTab,
+  ]);
+
+  // Clear a live highlight timer on unmount so it can't fire on a dead node.
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   // Members matching the in-progress @handle query (case-insensitive, by handle
   // or display name), capped for a compact dropdown.
@@ -2088,8 +2240,16 @@ export default function JournalSection({
       </div>
 
       {error && (
-        <div className="mb-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
-          {error}
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
+          <span className="min-w-0">{error}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="shrink-0 rounded border border-[var(--risk-text)]/40 px-2 py-0.5 text-xs font-medium hover:bg-white/40 disabled:opacity-50"
+          >
+            Retry
+          </button>
         </div>
       )}
 
