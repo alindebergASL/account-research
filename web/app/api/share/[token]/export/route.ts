@@ -18,14 +18,12 @@ const PY = process.env.PYTHON_BIN || "python3";
 type ExportFormat = "pdf" | "docx";
 
 function slugify(name: string): string {
-  return (
-    name
-      .normalize("NFKD")
-      .replace(/[^\w\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .toLowerCase() || "account-brief"
-  );
+  return (name
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase() || "account-brief");
 }
 
 function runRenderer(briefPath: string, outDir: string, format: ExportFormat) {
@@ -60,10 +58,8 @@ function runRenderer(briefPath: string, outDir: string, format: ExportFormat) {
 
 // Public, no auth. Same token validation as the JSON endpoint;
 // renders a sanitized brief through the existing python pipeline.
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { token: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const url = new URL(req.url);
   const format =
     url.searchParams.get("format") === "docx"

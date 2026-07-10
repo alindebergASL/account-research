@@ -12,10 +12,8 @@ function authError(e: unknown) {
 // GET → the brief's members (owner + shares) for the journal @mention
 // autocomplete. Read access only; mirrors the rest of the journal surface in
 // hiding existence behind 404 for non-readers. `handle` is the token to insert.
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

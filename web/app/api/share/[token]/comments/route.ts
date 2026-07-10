@@ -16,10 +16,8 @@ export const runtime = "nodejs";
 // sibling brief endpoint. No POST/PATCH/DELETE handlers are exported
 // from this module, by design: the public share surface is strictly
 // read-only and cannot create, edit, or delete comments.
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { token: string } },
-) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const link = db()
     .prepare(`SELECT * FROM brief_share_links WHERE token = ?`)
     .get(params.token) as ShareLinkRow | undefined;

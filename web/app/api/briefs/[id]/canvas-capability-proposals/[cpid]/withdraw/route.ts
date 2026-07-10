@@ -4,7 +4,8 @@ import { withdrawCapabilityProposal } from "@/lib/hermes/canvasGenerativeGateway
 
 export const runtime = "nodejs";
 
-export async function POST(req: NextRequest, { params }: { params: { id: string; cpid: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string; cpid: string }> }) {
+  const params = await props.params;
   const user = requireGenerativeCanvasWrite(req, params.id);
   if (user instanceof NextResponse) return user;
   const body = await req.json().catch(() => ({}));

@@ -25,8 +25,9 @@ function requireReader(req: NextRequest, briefId: string) {
 // return the entry's current tag list. Gated on canReadBrief (collaborative).
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string; entryId: string } },
+  props: { params: Promise<{ id: string; entryId: string }> }
 ) {
+  const params = await props.params;
   let gate;
   try {
     gate = requireReader(req, params.id);
@@ -60,8 +61,9 @@ export async function POST(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; entryId: string } },
+  props: { params: Promise<{ id: string; entryId: string }> }
 ) {
+  const params = await props.params;
   let gate;
   try {
     gate = requireReader(req, params.id);

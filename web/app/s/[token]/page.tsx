@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
 import PublicCommentsSection from "./PublicCommentsSection";
@@ -10,11 +10,12 @@ type State =
   | { kind: "ok"; brief: Brief; expires_at: number | null }
   | { kind: "missing" };
 
-export default function PublicShareView({
-  params,
-}: {
-  params: { token: string };
-}) {
+export default function PublicShareView(
+  props: {
+    params: Promise<{ token: string }>;
+  }
+) {
+  const params = use(props.params);
   const [state, setState] = useState<State>({ kind: "loading" });
 
   useEffect(() => {

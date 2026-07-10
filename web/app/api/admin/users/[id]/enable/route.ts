@@ -4,10 +4,8 @@ import { HttpError, requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     requireAdmin(req);
   } catch (e) {

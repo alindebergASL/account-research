@@ -13,8 +13,9 @@ function authError(e: unknown) {
 // the document viewer. The list/preview endpoints only carry a 500-char excerpt.
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string; documentId: string } },
+  props: { params: Promise<{ id: string; documentId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

@@ -11,10 +11,8 @@ function authError(e: unknown) {
   return null;
 }
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let admin;
   try {
     admin = requireAdmin(req);

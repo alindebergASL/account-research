@@ -16,8 +16,9 @@ function authError(e: unknown) {
 //   - edit:         body carries `body` and/or `done`
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string; taskId: string } },
+  props: { params: Promise<{ id: string; taskId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -67,8 +68,9 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; taskId: string } },
+  props: { params: Promise<{ id: string; taskId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

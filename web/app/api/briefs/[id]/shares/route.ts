@@ -29,10 +29,8 @@ function normalizeRole(input: unknown): "reader" | "editor" {
   return input === "editor" ? "editor" : "reader";
 }
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -58,10 +56,8 @@ export async function GET(
   return NextResponse.json({ shares: rows });
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

@@ -32,8 +32,9 @@ function safeAsciiFilename(name: string): string {
 // brief-access boundary as the full-text route.
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string; documentId: string } },
+  props: { params: Promise<{ id: string; documentId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

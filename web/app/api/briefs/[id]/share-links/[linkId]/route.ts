@@ -6,8 +6,9 @@ export const runtime = "nodejs";
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; linkId: string } },
+  props: { params: Promise<{ id: string; linkId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

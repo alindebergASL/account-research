@@ -42,14 +42,16 @@ async function setPin(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string; entryId: string } },
+  props: { params: Promise<{ id: string; entryId: string }> }
 ) {
+  const params = await props.params;
   return setPin(req, params, true);
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; entryId: string } },
+  props: { params: Promise<{ id: string; entryId: string }> }
 ) {
+  const params = await props.params;
   return setPin(req, params, false);
 }

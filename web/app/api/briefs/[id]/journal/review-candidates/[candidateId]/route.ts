@@ -16,8 +16,9 @@ function authError(e: unknown) {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string; candidateId: string } },
+  props: { params: Promise<{ id: string; candidateId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
