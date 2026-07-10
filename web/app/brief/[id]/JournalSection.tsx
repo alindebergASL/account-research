@@ -33,6 +33,10 @@ import {
   resolveJournalDeepLinkRoot,
 } from "@/lib/journalDeepLink";
 import {
+  createJournalFeedSequencer,
+  journalFeedMatchesSelection,
+} from "@/lib/journalFeedSequence";
+import {
   buildReviewCandidateDraftFromAssistantEntry,
   buildReviewCandidateDraftsFromAssistantEntry,
   type ReviewCandidateDraft,
@@ -205,10 +209,11 @@ export default function JournalSection({
   // Last #journal-entry-<id> hash already scrolled to (or given up on), so the
   // deep-link effect never re-fires against filters the user sets afterwards.
   const deepLinkDoneRef = useRef<string | null>(null);
-  // Set while a deep-link-triggered "Mentions me" clear is refetching the full
-  // feed: the state machine must not keep widening (or give up) against the
-  // stale filtered entries in the meantime. Released when `entries` changes.
-  const deepLinkAwaitingRefetchRef = useRef(false);
+  // Orders overlapping feed requests (rapid filter toggles, deep-link
+  // refetches): stale responses are discarded, and loadedMentionsFilter
+  // records which scope produced the entries currently in state.
+  const feedSequencerRef = useRef(createJournalFeedSequencer());
+  const [loadedMentionsFilter, setLoadedMentionsFilter] = useState<boolean | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const highlightedElRef = useRef<HTMLElement | null>(null);
   const composeRef = useRef<HTMLTextAreaElement>(null);
@@ -254,9 +259,13 @@ export default function JournalSection({
   }, []);
 
   const load = useCallback(async () => {
+    // Sequence every feed request (last-write-wins): overlapping loads happen
+    // on rapid filter toggles and deep-link refetches, and a stale response —
+    // success or failure — must never overwrite the state of a newer request.
+    const req = feedSequencerRef.current.begin(mentionsMeFilter);
     setLoading(true);
     try {
-      const qs = mentionsMeFilter ? "?mentions=me" : "";
+      const qs = req.mentionsOnly ? "?mentions=me" : "";
       const r = await fetch(`/api/briefs/${briefId}/journal${qs}`, {
         cache: "no-store",
       });
@@ -265,12 +274,21 @@ export default function JournalSection({
         throw new Error(data?.error || `HTTP ${r.status}`);
       }
       const data = await r.json();
+      if (!feedSequencerRef.current.isCurrent(req)) return;
       setEntries(data.entries ?? []);
+      // Record which scope produced these entries; deep-link processing only
+      // runs while this matches the selected filter (see applyHash).
+      setLoadedMentionsFilter(req.mentionsOnly);
       setError(null);
     } catch (e: any) {
+      if (!feedSequencerRef.current.isCurrent(req)) return;
+      // Leave loadedMentionsFilter as-is: a failed refetch keeps the scopes
+      // mismatched, which keeps deep-links unprocessed (never mis-marked
+      // handled) and retryable — the error banner and the next notification
+      // click both re-issue the load.
       setError(e?.message || "Failed to load journal");
     } finally {
-      setLoading(false);
+      if (feedSequencerRef.current.isCurrent(req)) setLoading(false);
     }
   }, [briefId, mentionsMeFilter]);
 
@@ -348,23 +366,29 @@ export default function JournalSection({
   // search. A hash is handled at most once (deepLinkDoneRef) so a stale hash
   // can't clear filters or collapse state the user changes later; a real or
   // synthetic hashchange (repeated click on the same notification) re-arms.
-  // Release the refetch gate the moment a new feed lands (setEntries always
-  // produces a fresh array identity). Declared BEFORE the deep-link effect so
-  // it runs first in the same commit and the retry sees the gate open.
-  useEffect(() => {
-    deepLinkAwaitingRefetchRef.current = false;
-  }, [entries]);
-
   useEffect(() => {
     if (!entries) return;
     const applyHash = () => {
       const hash = window.location.hash;
       if (!hash.startsWith("#journal-entry-")) return;
       if (deepLinkDoneRef.current === hash) return;
-      // A deep-link-triggered "Mentions me" clear is mid-refetch: entries is
-      // still the stale filtered feed, so any step (including give-up) would
-      // be judged against data we already know is incomplete. Wait it out.
-      if (deepLinkAwaitingRefetchRef.current) return;
+      // Only judge the hash against a feed that belongs to the CURRENTLY
+      // selected scope and isn't mid-replacement. Otherwise a click while a
+      // filtered request is in flight validates the target against entries
+      // about to disappear (scroll + mark-done, then the filtered response
+      // removes the target with no recovery), and a click mid-refetch after
+      // clear-mentions would widen or give up against known-stale data. A
+      // failed refetch keeps the scopes mismatched — the hash stays
+      // unhandled and retryable rather than mis-marked.
+      if (
+        !journalFeedMatchesSelection({
+          loading,
+          loadedMentionsOnly: loadedMentionsFilter,
+          selectedMentionsOnly: mentionsMeFilter,
+        })
+      ) {
+        return;
+      }
       const entryId = hash.slice("#journal-entry-".length);
       const rootId = resolveJournalDeepLinkRoot(entries, entryId);
       const el = document.getElementById(hash.slice(1));
@@ -388,7 +412,8 @@ export default function JournalSection({
           setCenterTab("timeline");
           return;
         case "clear-mentions":
-          deepLinkAwaitingRefetchRef.current = true;
+          // Flipping the filter re-runs load(); the scope-match guard above
+          // holds further processing until the unfiltered feed actually lands.
           setMentionsMeFilter(false);
           return;
         case "expand-root":
@@ -434,12 +459,26 @@ export default function JournalSection({
     // bell also dispatches a synthetic hashchange for same-hash repeat clicks.
     const onHashChange = () => {
       deepLinkDoneRef.current = null;
+      // Scopes mismatched with nothing in flight means the awaited refetch
+      // failed earlier: a fresh notification click starts a new request
+      // instead of waiting forever on a load that will never come.
+      if (
+        !loading &&
+        loadedMentionsFilter !== mentionsMeFilter &&
+        window.location.hash.startsWith("#journal-entry-")
+      ) {
+        void load();
+        return;
+      }
       applyHash();
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [
     entries,
+    loading,
+    loadedMentionsFilter,
+    load,
     showAllEntries,
     mentionsMeFilter,
     tagFilter,
