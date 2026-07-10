@@ -120,6 +120,33 @@ test("a failed unfiltered refetch stays retryable and never lets the hash be mis
   assert.deepEqual(feed.state.entries, ["target", "other"]);
 });
 
+test("initial load failure: entries stays null but a notification event can retry", () => {
+  const feed = makeFeed();
+  // The very FIRST journal request fails: no feed has ever loaded.
+  const first = feed.issue(false);
+  first.fail("HTTP 500");
+  assert.equal(feed.state.entries, null, "no entries after the initial failure");
+  assert.equal(feed.state.error, "HTTP 500", "error surfaced");
+  assert.equal(feed.state.loading, false, "not wedged in loading");
+
+  // The onHashChange retry condition — idle + loaded scope differs from the
+  // selected scope — must hold in this state (loaded scope is still null),
+  // so a repeated same-hash notification event issues a fresh request. This
+  // is why the listener must register even while entries is null.
+  const retryCondition =
+    !feed.state.loading && feed.state.loadedMentionsOnly !== false;
+  assert.equal(retryCondition, true, "notification click reaches the retry path");
+  assert.equal(feed.hashProcessable(false), false, "hash not processed against a null feed");
+
+  // The retried unfiltered request succeeds: scope recorded, error cleared,
+  // and normal hash processing is enabled.
+  const retry = feed.issue(false);
+  retry.succeed(["target", "other"]);
+  assert.equal(feed.state.error, null);
+  assert.equal(feed.state.loadedMentionsOnly, false, "unfiltered scope recorded");
+  assert.equal(feed.hashProcessable(false), true, "hash processing enabled after recovery");
+});
+
 test("journalFeedMatchesSelection requires both idle and scope match", () => {
   assert.equal(
     journalFeedMatchesSelection({ loading: false, loadedMentionsOnly: false, selectedMentionsOnly: false }),

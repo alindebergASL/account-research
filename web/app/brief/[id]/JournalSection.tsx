@@ -367,8 +367,13 @@ export default function JournalSection({
   // can't clear filters or collapse state the user changes later; a real or
   // synthetic hashchange (repeated click on the same notification) re-arms.
   useEffect(() => {
-    if (!entries) return;
     const applyHash = () => {
+      // No feed yet (initial load pending or failed): nothing to judge the
+      // hash against. The guard lives HERE, not around the effect, so the
+      // hashchange listener below is always registered — otherwise a failed
+      // FIRST load leaves entries null forever and notification clicks could
+      // never reach the retry path.
+      if (!entries) return;
       const hash = window.location.hash;
       if (!hash.startsWith("#journal-entry-")) return;
       if (deepLinkDoneRef.current === hash) return;
@@ -2235,8 +2240,16 @@ export default function JournalSection({
       </div>
 
       {error && (
-        <div className="mb-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
-          {error}
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
+          <span className="min-w-0">{error}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="shrink-0 rounded border border-[var(--risk-text)]/40 px-2 py-0.5 text-xs font-medium hover:bg-white/40 disabled:opacity-50"
+          >
+            Retry
+          </button>
         </div>
       )}
 
