@@ -430,10 +430,147 @@ test("research-job detail withholds brief events from a demoted ex-admin job own
   assert.equal(demotedData.recent_events.length, 0, "brief events withheld without current brief access");
 });
 
+test("disabled recipients are suppressed for mentions and comments", async () => {
+  seedUser("sleeper", "sleeper@example.com");
+  seedShare("brief-1", "sleeper", "owner");
+  db().prepare(`UPDATE users SET disabled_at = ? WHERE id = 'sleeper'`).run(Date.now());
+
+  await postEntry(ownerSession, { body: "hey @sleeper are you there" });
+  assert.equal(notif.countUnreadNotifications("sleeper"), 0, "no mention notification for a disabled user");
+
+  // Disable the brief owner and comment on their brief: no comment notification.
+  db().prepare(`UPDATE users SET disabled_at = ? WHERE id = 'owner'`).run(Date.now());
+  const ownerBefore = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'owner'`)
+    .get() as { c: number };
+  await postComment(readerSession, "brief-1", { body: "comment while owner disabled" });
+  const ownerAfter = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'owner'`)
+    .get() as { c: number };
+  assert.equal(ownerAfter.c, ownerBefore.c, "no comment notification for a disabled owner");
+  db().prepare(`UPDATE users SET disabled_at = NULL WHERE id = 'owner'`).run();
+});
+
+test("createCommentNotification is idempotent per comment", async () => {
+  const post = await postComment(readerSession, "brief-1", { body: "idempotent comment" });
+  const commentId = post.data.comment.id;
+  // The route already created the notification once; calling the helper again
+  // with the same args must be a no-op.
+  const again = notif.createCommentNotification({
+    briefId: "brief-1",
+    commentId,
+    parentCommentId: null,
+    actorId: "reader",
+  });
+  assert.equal(again, 0);
+  const rows = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE source_entry_id = ?`)
+    .get(commentId) as { c: number };
+  assert.equal(rows.c, 1);
+});
+
+test("comment insert and notification are atomic: a notification failure rolls back the comment", async () => {
+  db().exec(
+    `CREATE TRIGGER test_fail_notif BEFORE INSERT ON notifications
+     BEGIN SELECT RAISE(ABORT, 'injected notification failure'); END`,
+  );
+  try {
+    await assert.rejects(
+      commentsRoute.POST(
+        makeReq({ sessionId: readerSession, body: { body: "must roll back" } }),
+        { params: { id: "brief-1" } },
+      ),
+      /injected notification failure/,
+    );
+    const orphan = db()
+      .prepare(`SELECT COUNT(*) AS c FROM brief_comments WHERE body = 'must roll back'`)
+      .get() as { c: number };
+    assert.equal(orphan.c, 0, "comment insert rolled back with the failed notification");
+  } finally {
+    db().exec(`DROP TRIGGER test_fail_notif`);
+  }
+});
+
+test("the per-user cap prunes past 500 notifications on create", async () => {
+  seedUser("hoarder", "hoarder@example.com");
+  seedShare("brief-1", "hoarder", "owner");
+  const insert = db().prepare(
+    `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+     VALUES (?, 'hoarder', 'journal_mention', 'brief-1', ?, 'owner', ?)`,
+  );
+  const base = Date.now() - 1_000_000;
+  for (let i = 0; i < 520; i++) insert.run(`bulk-${i}`, `bulk-src-${i}`, base + i);
+  // Any create for this user triggers the prune.
+  await postEntry(ownerSession, { body: "cap trigger @hoarder" });
+  const count = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'hoarder'`)
+    .get() as { c: number };
+  assert.equal(count.c, 500, "inbox capped at 500");
+  const oldest = db()
+    .prepare(`SELECT id FROM notifications WHERE id = 'bulk-0'`)
+    .get();
+  assert.equal(oldest, undefined, "oldest rows were the ones dropped");
+  const newest = db()
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = 'hoarder' AND source_entry_id LIKE 'bulk-src-51%'`)
+    .get() as { c: number };
+  assert.ok(newest.c > 0, "newest bulk rows survive");
+});
+
+test("type-aware joins resolve the right source when a journal entry and comment share an id", async () => {
+  seedUser("collide", "collide@example.com");
+  seedShare("brief-1", "collide", "owner");
+  const sharedId = "same-id-both-tables";
+  db()
+    .prepare(
+      `INSERT INTO journal_entries (id, brief_id, user_id, body, created_at)
+       VALUES (?, 'brief-1', 'owner', 'JOURNAL BODY', ?)`,
+    )
+    .run(sharedId, Date.now());
+  db()
+    .prepare(
+      `INSERT INTO brief_comments (id, brief_id, user_id, body, ai_assisted, created_at)
+       VALUES (?, 'brief-1', 'owner', 'COMMENT BODY', 0, ?)`,
+    )
+    .run(sharedId, Date.now());
+  db()
+    .prepare(
+      `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+       VALUES ('n-mention', 'collide', 'journal_mention', 'brief-1', ?, 'owner', ?),
+              ('n-comment', 'collide', 'brief_comment', 'brief-1', ?, 'owner', ?)`,
+    )
+    .run(sharedId, Date.now(), sharedId, Date.now() + 1);
+  const list = notif.listNotifications("collide");
+  const mention = list.find((n) => n.id === "n-mention");
+  const comment = list.find((n) => n.id === "n-comment");
+  assert.equal(mention?.excerpt, "JOURNAL BODY");
+  assert.equal(comment?.excerpt, "COMMENT BODY");
+});
+
+test("a notification whose source row no longer exists reads as deleted", async () => {
+  seedUser("dangler", "dangler@example.com");
+  seedShare("brief-1", "dangler", "owner");
+  db()
+    .prepare(
+      `INSERT INTO notifications (id, user_id, type, brief_id, source_entry_id, actor_id, created_at)
+       VALUES ('n-dangling', 'dangler', 'brief_comment', 'brief-1', 'no-such-row', 'owner', ?)`,
+    )
+    .run(Date.now());
+  const n = notif.listNotifications("dangler").find((x) => x.id === "n-dangling");
+  assert.ok(n);
+  assert.equal(n!.entry_deleted, true, "missing source treated as deleted");
+  assert.equal(n!.excerpt, null);
+});
+
 test("notifications are scoped per-user (no cross-user leakage)", async () => {
   await postEntry(ownerSession, { body: "scoped ping @reader only" });
   const readerList = (await getNotifs(readerSession)).data;
-  assert.ok(readerList.notifications.every((n: any) => n.actor === null || true));
+  // Every row the API returns for reader must actually belong to reader in the DB.
+  for (const n of readerList.notifications) {
+    const row = db()
+      .prepare(`SELECT user_id FROM notifications WHERE id = ?`)
+      .get(n.id) as { user_id: string } | undefined;
+    assert.equal(row?.user_id, "reader");
+  }
   // owner should not see reader's notifications in their own feed
   const ownerList = (await getNotifs(ownerSession)).data;
   const readerEntryIds = new Set(readerList.notifications.map((n: any) => n.id));

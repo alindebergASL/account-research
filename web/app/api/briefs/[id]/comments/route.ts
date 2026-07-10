@@ -109,13 +109,25 @@ export async function POST(
   const id = newId();
   const now = Date.now();
   const aiAssisted = body.ai_assisted === true ? 1 : 0;
-  db()
-    .prepare(
-      `INSERT INTO brief_comments
-         (id, brief_id, user_id, parent_id, body, ai_assisted, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, params.id, user.id, parentId, text, aiAssisted, now);
+  // One transaction for the comment and its in-app notification (reply ->
+  // parent author, top-level -> brief owner; never the author): either both
+  // land or neither does, so a failure can't leave a comment nobody was told
+  // about — or a notification pointing at a comment that was never created.
+  db().transaction(() => {
+    db()
+      .prepare(
+        `INSERT INTO brief_comments
+           (id, brief_id, user_id, parent_id, body, ai_assisted, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, params.id, user.id, parentId, text, aiAssisted, now);
+    createCommentNotification({
+      briefId: params.id,
+      commentId: id,
+      parentCommentId: parentId,
+      actorId: user.id,
+    });
+  })();
 
   const row = db()
     .prepare(
@@ -125,15 +137,6 @@ export async function POST(
         WHERE c.id = ?`,
     )
     .get(id) as CommentListRow;
-
-  // In-app inbox (synchronous, reliable): reply -> parent author, top-level ->
-  // brief owner; never the author. Mirrors the email recipient rule below.
-  createCommentNotification({
-    briefId: params.id,
-    commentId: id,
-    parentCommentId: parentId,
-    actorId: user.id,
-  });
 
   // Fire-and-forget: notification path must never block or fail the POST.
   // Any error inside notifyCommentCreated is already swallowed there; the

@@ -9,6 +9,7 @@ import {
   Trash2,
   Pencil,
 } from "lucide-react";
+import { DEEP_LINK_RING } from "@/components/deepLinkHighlight";
 
 type Author = {
   id: string;
@@ -65,6 +66,11 @@ export default function CommentsSection({
   collapseLongBodies?: boolean;
 }) {
   const [comments, setComments] = useState<Comment[] | null>(null);
+  // Deep-link bookkeeping: last #comment-<id> hash already scrolled to, plus
+  // the live highlight timer/element so re-triggers and unmount can cancel.
+  const deepLinkDoneRef = useRef<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+  const highlightedElRef = useRef<HTMLElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [composeText, setComposeText] = useState("");
@@ -103,24 +109,51 @@ export default function CommentsSection({
 
   // Deep-link support: land on #comment-<id> (notification bell + email links
   // both use this anchor) once comments have loaded, and re-run on same-page
-  // hash changes. Scroll + brief highlight, mirroring the journal behavior.
+  // hash changes. One-shot per hash (deepLinkDoneRef) so posting/editing a
+  // comment — which refreshes `comments` and re-runs this effect — never
+  // re-scrolls to a stale hash; a real or synthetic hashchange (repeated click
+  // on the same notification) re-arms. Highlight timers are cancelled before
+  // re-highlighting and on unmount.
   useEffect(() => {
     if (!comments) return;
     const applyHash = () => {
       const hash = window.location.hash;
       if (!hash.startsWith("#comment-")) return;
+      if (deepLinkDoneRef.current === hash) return;
       const el = document.getElementById(hash.slice(1));
       if (!el) return;
+      deepLinkDoneRef.current = hash;
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = null;
+      }
+      highlightedElRef.current?.classList.remove(...DEEP_LINK_RING);
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
-      window.setTimeout(() => {
-        el.classList.remove("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      el.classList.add(...DEEP_LINK_RING);
+      highlightedElRef.current = el;
+      highlightTimerRef.current = window.setTimeout(() => {
+        el.classList.remove(...DEEP_LINK_RING);
+        highlightTimerRef.current = null;
+        highlightedElRef.current = null;
       }, 2200);
     };
     applyHash();
-    window.addEventListener("hashchange", applyHash);
-    return () => window.removeEventListener("hashchange", applyHash);
+    const onHashChange = () => {
+      deepLinkDoneRef.current = null;
+      applyHash();
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, [comments]);
+
+  // Clear a live highlight timer on unmount so it can't fire on a dead node.
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   const { roots, childrenByParent } = useMemo(() => {
     const map = new Map<string, Comment[]>();

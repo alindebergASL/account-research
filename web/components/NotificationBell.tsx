@@ -157,6 +157,10 @@ export default function NotificationBell() {
     setOpen(false);
     if (n.brief_id && n.source_entry_id && !n.entry_deleted) {
       router.push(`/brief/${n.brief_id}${targetHash(n)}`);
+      // Clicking the same notification twice yields an identical URL, so the
+      // browser fires no hashchange; nudge the deep-link handlers so the
+      // scroll/highlight re-runs. Harmless when the push actually navigates.
+      window.setTimeout(() => window.dispatchEvent(new Event("hashchange")), 0);
     } else if (n.brief_id) {
       router.push(`/brief/${n.brief_id}`);
     }

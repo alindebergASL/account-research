@@ -38,6 +38,26 @@ export default function BriefPage({ params }: { params: { id: string } }) {
   const [canvasPreview, setCanvasPreview] = useState<boolean>(false);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
 
+  // Deep-link hash routing: the two anchor families live in different top-level
+  // views — #journal-entry-<id> needs the journal view mounted, #comment-<id>
+  // needs the brief/canvas view (comments render under both). Without this, a
+  // notification deep-link to the non-default view scrolls nowhere because the
+  // target section isn't in the DOM at all. Runs on load and on same-page
+  // hash changes; the sections' own handlers take over from there.
+  useEffect(() => {
+    const routeForHash = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith("#journal-entry-")) {
+        setViewMode("journal");
+      } else if (hash.startsWith("#comment-")) {
+        setViewMode((cur) => (cur === "journal" ? "brief" : cur));
+      }
+    };
+    routeForHash();
+    window.addEventListener("hashchange", routeForHash);
+    return () => window.removeEventListener("hashchange", routeForHash);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/auth/me", { cache: "no-store" })

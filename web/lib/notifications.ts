@@ -34,12 +34,21 @@ function truncate(s: string, n: number): string {
   return clean.length <= n ? clean : clean.slice(0, n).trimEnd() + "…";
 }
 
+// A disabled account gets no new notifications — same rule as both email
+// paths (commentNotifications.ts / journalMentionNotifications.ts).
+function isDisabled(userId: string): boolean {
+  const row = db()
+    .prepare(`SELECT disabled_at FROM users WHERE id = ?`)
+    .get(userId) as { disabled_at: number | null } | undefined;
+  return !row || row.disabled_at !== null;
+}
+
 // Create one in-app notification per recipient for a journal mention. Idempotent
 // via UNIQUE (user_id, type, source_entry_id): re-resolving or editing an entry
 // never duplicates a recipient's row. The actor is never notified about their
-// own mention. Recipients are expected to already be brief members (the journal
-// route resolves mentions against membership), so no access check is repeated
-// here — callers pass a trusted list.
+// own mention, and disabled accounts are skipped. Recipients are expected to
+// already be brief members (the journal route resolves mentions against
+// membership), so no access check is repeated here — callers pass a trusted list.
 export function createMentionNotifications(args: {
   briefId: string;
   entryId: string;
@@ -58,6 +67,7 @@ export function createMentionNotifications(args: {
   for (const userId of args.recipientUserIds) {
     if (userId === args.actorId || seen.has(userId)) continue;
     seen.add(userId);
+    if (isDisabled(userId)) continue;
     const res = insert.run(newId(), userId, args.briefId, args.entryId, args.actorId, now);
     created += res.changes;
     if (res.changes) pruneNotifications(userId);
@@ -95,6 +105,7 @@ export function createCommentNotification(args: {
   }
   if (!recipientId || recipientId === args.actorId) return 0;
   if (!canUserAccessBrief(recipientId, args.briefId)) return 0;
+  if (isDisabled(recipientId)) return 0;
   const res = db()
     .prepare(
       `INSERT OR IGNORE INTO notifications
@@ -133,6 +144,7 @@ type NotificationRow = {
   brief_account_name: string | null;
   source_entry_id: string | null;
   entry_body: string | null;
+  source_row_id: string | null;
   entry_deleted_at: number | null;
   actor_id: string | null;
   actor_display_name: string | null;
@@ -167,6 +179,7 @@ export function listNotifications(
     .prepare(
       `SELECT n.id, n.type, n.brief_id, n.source_entry_id, n.created_at, n.read_at,
               b.account_name AS brief_account_name,
+              COALESCE(j.id, c.id)                 AS source_row_id,
               COALESCE(j.body, c.body)             AS entry_body,
               COALESCE(j.deleted_at, c.deleted_at) AS entry_deleted_at,
               a.id           AS actor_id,
@@ -187,7 +200,12 @@ export function listNotifications(
     )
     .all({ userId, limit }) as NotificationRow[];
   return rows.map((r) => {
-    const deleted = r.entry_deleted_at !== null;
+    // "Deleted" covers both a soft-deleted source and a source row that no
+    // longer exists at all (hard-deleted or never valid): either way there is
+    // nothing to link to or excerpt from.
+    const deleted =
+      r.entry_deleted_at !== null ||
+      (r.source_entry_id !== null && r.source_row_id === null);
     return {
       id: r.id,
       type: r.type,

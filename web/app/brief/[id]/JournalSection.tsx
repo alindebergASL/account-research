@@ -27,6 +27,11 @@ import {
   resolveCitedJournalEntry,
 } from "@/lib/journalCitationResolution";
 import { citationEvidenceSnippet } from "@/lib/journalCitationEvidence";
+import { DEEP_LINK_RING } from "@/components/deepLinkHighlight";
+import {
+  nextJournalDeepLinkStep,
+  resolveJournalDeepLinkRoot,
+} from "@/lib/journalDeepLink";
 import {
   buildReviewCandidateDraftFromAssistantEntry,
   buildReviewCandidateDraftsFromAssistantEntry,
@@ -200,6 +205,8 @@ export default function JournalSection({
   // Last #journal-entry-<id> hash already scrolled to (or given up on), so the
   // deep-link effect never re-fires against filters the user sets afterwards.
   const deepLinkDoneRef = useRef<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+  const highlightedElRef = useRef<HTMLElement | null>(null);
   const composeRef = useRef<HTMLTextAreaElement>(null);
   const sourcePreviewRef = useRef<HTMLDivElement>(null);
   // @mention autocomplete in the composer. Members are loaded once; the
@@ -329,41 +336,107 @@ export default function JournalSection({
   }, [briefId]);
 
   // Deep-link support: when arriving at #journal-entry-<id> (e.g. from a
-  // notification), scroll the entry into view and briefly highlight it once the
-  // feed has loaded. If the target is past the compact cut-off, expand the
-  // timeline; if a restrictive filter (tag / kind / search) still hides it,
-  // progressively clear those so the link always lands. Each miss widens one
-  // constraint, then the effect re-runs on the next render. A hash is handled
-  // at most once (deepLinkDoneRef) so a stale hash can't clear filters the
-  // user applies later; a fresh notification click re-arms via hashchange.
+  // notification), get the target entry into the DOM, then scroll to it and
+  // briefly highlight it. Anchors only render inside an EXPANDED thread row,
+  // so each pass widens exactly one constraint and lets the re-render retry:
+  // leave any full view / non-timeline tab -> expand the target's thread root
+  // -> show all entries -> clear tag filter -> clear kind filter -> clear
+  // search. A hash is handled at most once (deepLinkDoneRef) so a stale hash
+  // can't clear filters or collapse state the user changes later; a real or
+  // synthetic hashchange (repeated click on the same notification) re-arms.
   useEffect(() => {
     if (!entries) return;
     const applyHash = () => {
       const hash = window.location.hash;
       if (!hash.startsWith("#journal-entry-")) return;
       if (deepLinkDoneRef.current === hash) return;
+      const entryId = hash.slice("#journal-entry-".length);
+      const rootId = resolveJournalDeepLinkRoot(entries, entryId);
       const el = document.getElementById(hash.slice(1));
-      if (!el) {
-        if (!showAllEntries) setShowAllEntries(true);
-        else if (tagFilter !== null) setTagFilter(null);
-        else if (timelineFilter !== "all") setTimelineFilter("all");
-        else if (journalSearchQuery) setJournalSearchQuery("");
-        // Nothing left to widen and still missing (e.g. deleted entry): give up.
-        else deepLinkDoneRef.current = hash;
-        return;
+      const step = nextJournalDeepLinkStep({
+        inFullView: activeFullView !== null,
+        onTimelineTab: centerTab === "timeline",
+        targetFound: rootId !== null,
+        rootExpanded: rootId !== null && expandedEntries.includes(rootId),
+        anchorMounted: el !== null,
+        showAllEntries,
+        hasTagFilter: tagFilter !== null,
+        hasKindFilter: timelineFilter !== "all",
+        hasSearch: journalSearchQuery !== "",
+      });
+      switch (step) {
+        case "leave-full-view":
+          setActiveFullView(null);
+          return;
+        case "show-timeline-tab":
+          setCenterTab("timeline");
+          return;
+        case "expand-root":
+          setExpandedEntries((cur) => (cur.includes(rootId!) ? cur : [...cur, rootId!]));
+          return;
+        case "show-all":
+          setShowAllEntries(true);
+          return;
+        case "clear-tag":
+          setTagFilter(null);
+          return;
+        case "clear-kind":
+          setTimelineFilter("all");
+          return;
+        case "clear-search":
+          setJournalSearchQuery("");
+          return;
+        case "give-up":
+          // Nothing left to widen and still missing (e.g. deleted entry).
+          deepLinkDoneRef.current = hash;
+          return;
+        case "scroll":
+          break;
       }
       deepLinkDoneRef.current = hash;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
-      window.setTimeout(() => {
-        el.classList.remove("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      // Cancel any in-flight highlight before starting the next one.
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = null;
+      }
+      highlightedElRef.current?.classList.remove(...DEEP_LINK_RING);
+      el!.scrollIntoView({ behavior: "smooth", block: "center" });
+      el!.classList.add(...DEEP_LINK_RING);
+      highlightedElRef.current = el;
+      highlightTimerRef.current = window.setTimeout(() => {
+        el!.classList.remove(...DEEP_LINK_RING);
+        highlightTimerRef.current = null;
+        highlightedElRef.current = null;
       }, 2200);
     };
     applyHash();
-    // Same-page notification clicks change only the hash (no remount).
-    window.addEventListener("hashchange", applyHash);
-    return () => window.removeEventListener("hashchange", applyHash);
-  }, [entries, showAllEntries, tagFilter, timelineFilter, journalSearchQuery]);
+    // Same-page notification clicks change only the hash (no remount); the
+    // bell also dispatches a synthetic hashchange for same-hash repeat clicks.
+    const onHashChange = () => {
+      deepLinkDoneRef.current = null;
+      applyHash();
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [
+    entries,
+    showAllEntries,
+    tagFilter,
+    timelineFilter,
+    journalSearchQuery,
+    expandedEntries,
+    activeFullView,
+    centerTab,
+  ]);
+
+  // Clear a live highlight timer on unmount so it can't fire on a dead node.
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   // Members matching the in-progress @handle query (case-insensitive, by handle
   // or display name), capped for a compact dropdown.
