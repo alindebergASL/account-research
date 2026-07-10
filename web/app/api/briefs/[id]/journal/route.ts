@@ -32,6 +32,7 @@ import {
   syncEntryMentionsFromBody,
 } from "@/lib/journalMentions";
 import { notifyJournalMentions } from "@/lib/journalMentionNotifications";
+import { createMentionNotifications } from "@/lib/notifications";
 import {
   isJournalCatchUpWindow,
   journalCatchUpExcludedDocumentKey,
@@ -257,7 +258,9 @@ export async function POST(
       replyTo: replyRoot,
     });
     const mentionedUserIds = syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
-    // Fire-and-forget: email everyone newly mentioned (never the author).
+    // In-app inbox (synchronous, reliable) + email (fire-and-forget). Both skip
+    // the author and target everyone newly mentioned.
+    createMentionNotifications({ briefId: params.id, entryId: userEntryId, actorId: user.id, recipientUserIds: mentionedUserIds });
     void notifyJournalMentions({
       briefId: params.id,
       entryId: userEntryId,
@@ -300,6 +303,7 @@ export async function POST(
     replyTo: replyRoot,
   });
   const mentionedUserIds = syncEntryMentionsFromBody({ briefId: params.id, entryId: userEntryId, body: text });
+  createMentionNotifications({ briefId: params.id, entryId: userEntryId, actorId: user.id, recipientUserIds: mentionedUserIds });
   void notifyJournalMentions({
     briefId: params.id,
     entryId: userEntryId,

@@ -325,6 +325,32 @@ export default function JournalSection({
     };
   }, [briefId]);
 
+  // Deep-link support: when arriving at #journal-entry-<id> (e.g. from a
+  // notification), scroll the entry into view and briefly highlight it once the
+  // feed has loaded. If the target is past the compact cut-off, expand the
+  // timeline so it's in the DOM, then place it on the next render.
+  useEffect(() => {
+    if (!entries) return;
+    const applyHash = () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#journal-entry-")) return;
+      const el = document.getElementById(hash.slice(1));
+      if (!el) {
+        if (!showAllEntries) setShowAllEntries(true);
+        return;
+      }
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      window.setTimeout(() => {
+        el.classList.remove("ring-2", "ring-[var(--accent,#e11d48)]", "ring-offset-2");
+      }, 2200);
+    };
+    applyHash();
+    // Same-page notification clicks change only the hash (no remount).
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [entries, showAllEntries]);
+
   // Members matching the in-progress @handle query (case-insensitive, by handle
   // or display name), capped for a compact dropdown.
   const mentionMatches = useMemo(() => {

@@ -803,6 +803,38 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "029_notifications",
+    // PR8: in-app notifications inbox. One row per (recipient, event). First
+    // type is 'journal_mention' (source_entry_id = the journal entry). Generic
+    // columns so future types (comments, review cards) reuse the table.
+    // UNIQUE (user_id, type, source_entry_id) makes creation idempotent so a
+    // re-resolved/edited mention never duplicates a row. Cascade-deleted with
+    // the recipient / brief / actor; source_entry_id is a soft pointer (no FK)
+    // so a deleted entry leaves the notification intact (it still happened).
+    up: (c) => {
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id              TEXT PRIMARY KEY,
+          user_id         TEXT NOT NULL,
+          type            TEXT NOT NULL,
+          brief_id        TEXT,
+          source_entry_id TEXT,
+          actor_id        TEXT,
+          created_at      INTEGER NOT NULL,
+          read_at         INTEGER,
+          UNIQUE (user_id, type, source_entry_id),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+          ON notifications(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
+          ON notifications(user_id, read_at);
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
