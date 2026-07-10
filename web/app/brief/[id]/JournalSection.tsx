@@ -205,6 +205,10 @@ export default function JournalSection({
   // Last #journal-entry-<id> hash already scrolled to (or given up on), so the
   // deep-link effect never re-fires against filters the user sets afterwards.
   const deepLinkDoneRef = useRef<string | null>(null);
+  // Set while a deep-link-triggered "Mentions me" clear is refetching the full
+  // feed: the state machine must not keep widening (or give up) against the
+  // stale filtered entries in the meantime. Released when `entries` changes.
+  const deepLinkAwaitingRefetchRef = useRef(false);
   const highlightTimerRef = useRef<number | null>(null);
   const highlightedElRef = useRef<HTMLElement | null>(null);
   const composeRef = useRef<HTMLTextAreaElement>(null);
@@ -344,12 +348,23 @@ export default function JournalSection({
   // search. A hash is handled at most once (deepLinkDoneRef) so a stale hash
   // can't clear filters or collapse state the user changes later; a real or
   // synthetic hashchange (repeated click on the same notification) re-arms.
+  // Release the refetch gate the moment a new feed lands (setEntries always
+  // produces a fresh array identity). Declared BEFORE the deep-link effect so
+  // it runs first in the same commit and the retry sees the gate open.
+  useEffect(() => {
+    deepLinkAwaitingRefetchRef.current = false;
+  }, [entries]);
+
   useEffect(() => {
     if (!entries) return;
     const applyHash = () => {
       const hash = window.location.hash;
       if (!hash.startsWith("#journal-entry-")) return;
       if (deepLinkDoneRef.current === hash) return;
+      // A deep-link-triggered "Mentions me" clear is mid-refetch: entries is
+      // still the stale filtered feed, so any step (including give-up) would
+      // be judged against data we already know is incomplete. Wait it out.
+      if (deepLinkAwaitingRefetchRef.current) return;
       const entryId = hash.slice("#journal-entry-".length);
       const rootId = resolveJournalDeepLinkRoot(entries, entryId);
       const el = document.getElementById(hash.slice(1));
@@ -360,6 +375,7 @@ export default function JournalSection({
         rootExpanded: rootId !== null && expandedEntries.includes(rootId),
         anchorMounted: el !== null,
         showAllEntries,
+        hasMentionsFilter: mentionsMeFilter,
         hasTagFilter: tagFilter !== null,
         hasKindFilter: timelineFilter !== "all",
         hasSearch: journalSearchQuery !== "",
@@ -370,6 +386,10 @@ export default function JournalSection({
           return;
         case "show-timeline-tab":
           setCenterTab("timeline");
+          return;
+        case "clear-mentions":
+          deepLinkAwaitingRefetchRef.current = true;
+          setMentionsMeFilter(false);
           return;
         case "expand-root":
           setExpandedEntries((cur) => (cur.includes(rootId!) ? cur : [...cur, rootId!]));
@@ -421,6 +441,7 @@ export default function JournalSection({
   }, [
     entries,
     showAllEntries,
+    mentionsMeFilter,
     tagFilter,
     timelineFilter,
     journalSearchQuery,

@@ -561,6 +561,55 @@ test("a notification whose source row no longer exists reads as deleted", async 
   assert.equal(n!.excerpt, null);
 });
 
+test("a notification outlives its mention: ?mentions=me omits the entry, the full feed restores it", async () => {
+  // The deep-link recovery scenario: mention -> notification -> the entry is
+  // edited to REMOVE the mention. The notification is durable, but the
+  // server-side "Mentions me" feed no longer contains the entry — clearing
+  // that filter (the state machine's clear-mentions step) must restore it.
+  const post = await postEntry(ownerSession, { body: "please check this @reader" });
+  const entryId = post.data.entries[0].id;
+  const n = notif
+    .listNotifications("reader")
+    .find((x) => x.source_entry_id === entryId);
+  assert.ok(n, "mention created a durable notification");
+
+  const edit = await entryRoute.PATCH(
+    makeReq({ sessionId: ownerSession, body: { body: "please check this (mention removed)" } }),
+    { params: { id: "brief-1", entryId } },
+  );
+  assert.equal(edit.status, 200);
+
+  // Filtered feed (what the client has loaded while "Mentions me" is on):
+  // the target entry is absent — client-side widening could never find it.
+  const filteredRes = await journalRoute.GET(
+    makeReq({ sessionId: readerSession, query: "mentions=me" }),
+    { params: { id: "brief-1" } },
+  );
+  const filtered = await filteredRes.json();
+  assert.ok(
+    !filtered.entries.some((e: any) => e.id === entryId),
+    "?mentions=me omits the entry once the mention is edited away",
+  );
+
+  // Full feed (after the clear-mentions refetch): the target is back, so the
+  // normal expand-root -> scroll sequence can land the deep link.
+  const fullRes = await journalRoute.GET(makeReq({ sessionId: readerSession }), {
+    params: { id: "brief-1" },
+  });
+  const full = await fullRes.json();
+  assert.ok(
+    full.entries.some((e: any) => e.id === entryId),
+    "the unfiltered feed still contains the entry",
+  );
+
+  // And the notification itself remains listed (with the edited excerpt).
+  const still = notif
+    .listNotifications("reader")
+    .find((x) => x.source_entry_id === entryId);
+  assert.ok(still, "notification survives the mention removal");
+  assert.match(still!.excerpt ?? "", /mention removed/);
+});
+
 test("notifications are scoped per-user (no cross-user leakage)", async () => {
   await postEntry(ownerSession, { body: "scoped ping @reader only" });
   const readerList = (await getNotifs(readerSession)).data;

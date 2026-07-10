@@ -9,6 +9,7 @@
 export type JournalDeepLinkStep =
   | "leave-full-view" // a full view (sources/tasks/…) hides the timeline
   | "show-timeline-tab" // the team tab hides the timeline
+  | "clear-mentions" // server-side ?mentions=me omitted the target entirely
   | "expand-root" // target's thread row is collapsed; anchor not mounted
   | "scroll" // anchor is in the DOM — scroll + highlight it
   | "show-all" // target is past the compact recent-view cut-off
@@ -27,12 +28,20 @@ export function nextJournalDeepLinkStep(s: {
   /** document.getElementById found the anchor. */
   anchorMounted: boolean;
   showAllEntries: boolean;
+  /** Server-side "Mentions me" filter (?mentions=me) is active. */
+  hasMentionsFilter: boolean;
   hasTagFilter: boolean;
   hasKindFilter: boolean;
   hasSearch: boolean;
 }): JournalDeepLinkStep {
   if (s.inFullView) return "leave-full-view";
   if (!s.onTimelineTab) return "show-timeline-tab";
+  // "Mentions me" filters SERVER-side: a durable notification can outlive its
+  // mention (entry edited afterwards), so the target may be absent from the
+  // loaded feed itself — no amount of client-side widening can surface it.
+  // Clear this first and let the full-feed refetch restore the target before
+  // touching client state or concluding the entry no longer exists.
+  if (!s.targetFound && s.hasMentionsFilter) return "clear-mentions";
   if (s.targetFound && !s.rootExpanded) return "expand-root";
   if (s.anchorMounted) return "scroll";
   if (!s.showAllEntries) return "show-all";

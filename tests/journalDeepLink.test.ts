@@ -16,6 +16,7 @@ const landed = {
   rootExpanded: true,
   anchorMounted: true,
   showAllEntries: false,
+  hasMentionsFilter: false,
   hasTagFilter: false,
   hasKindFilter: false,
   hasSearch: false,
@@ -75,6 +76,69 @@ test("expanded root with the anchor still missing widens one constraint at a tim
       hasKindFilter: false,
     }),
     "clear-search",
+  );
+});
+
+test("a target absent from the feed clears the server-side mentions filter first", () => {
+  // The regression: ?mentions=me filters SERVER-side, so an entry whose
+  // mention was edited away is missing from `entries` entirely. Client-side
+  // widening can never surface it; the mentions filter must be cleared (and
+  // the refetch awaited) before any other widening or give-up.
+  const absent = {
+    ...landed,
+    targetFound: false,
+    rootExpanded: false,
+    anchorMounted: false,
+    hasMentionsFilter: true,
+  };
+  assert.equal(nextJournalDeepLinkStep(absent), "clear-mentions");
+  assert.equal(
+    nextJournalDeepLinkStep({ ...absent, hasTagFilter: true, hasSearch: true }),
+    "clear-mentions",
+    "clear-mentions outranks client-side filter widening",
+  );
+  assert.equal(
+    nextJournalDeepLinkStep({ ...absent, showAllEntries: true }),
+    "clear-mentions",
+    "clear-mentions outranks give-up",
+  );
+  // Subview normalization still wins — the timeline must be mounted first.
+  assert.equal(nextJournalDeepLinkStep({ ...absent, inFullView: true }), "leave-full-view");
+});
+
+test("a target PRESENT under the mentions filter proceeds normally without clearing it", () => {
+  assert.equal(
+    nextJournalDeepLinkStep({ ...landed, hasMentionsFilter: true }),
+    "scroll",
+  );
+  assert.equal(
+    nextJournalDeepLinkStep({
+      ...landed,
+      hasMentionsFilter: true,
+      rootExpanded: false,
+      anchorMounted: false,
+    }),
+    "expand-root",
+  );
+});
+
+test("after the full-feed refetch restores the target, the normal sequence continues", () => {
+  // Step 1: filtered feed omits the target -> clear the mentions filter.
+  const before = {
+    ...landed,
+    targetFound: false,
+    rootExpanded: false,
+    anchorMounted: false,
+    hasMentionsFilter: true,
+  };
+  assert.equal(nextJournalDeepLinkStep(before), "clear-mentions");
+  // Step 2: refetch landed, target is back -> expand its collapsed root.
+  const after = { ...before, hasMentionsFilter: false, targetFound: true };
+  assert.equal(nextJournalDeepLinkStep(after), "expand-root");
+  // Step 3: root expanded, anchor mounted -> scroll.
+  assert.equal(
+    nextJournalDeepLinkStep({ ...after, rootExpanded: true, anchorMounted: true }),
+    "scroll",
   );
 });
 

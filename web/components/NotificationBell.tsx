@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Bell, Check } from "lucide-react";
 import { useDismissable } from "./useDismissable";
@@ -62,6 +62,7 @@ function targetHash(n: Notification): string {
 
 export default function NotificationBell() {
   const router = useRouter();
+  const pathname = usePathname();
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<Notification[]>([]);
   const { open, setOpen, ref: wrapRef } = useDismissable<HTMLDivElement>();
@@ -155,14 +156,25 @@ export default function NotificationBell() {
   function openNotification(n: Notification) {
     if (n.read_at === null) void markRead([n.id]);
     setOpen(false);
-    if (n.brief_id && n.source_entry_id && !n.entry_deleted) {
-      router.push(`/brief/${n.brief_id}${targetHash(n)}`);
-      // Clicking the same notification twice yields an identical URL, so the
-      // browser fires no hashchange; nudge the deep-link handlers so the
-      // scroll/highlight re-runs. Harmless when the push actually navigates.
-      window.setTimeout(() => window.dispatchEvent(new Event("hashchange")), 0);
-    } else if (n.brief_id) {
-      router.push(`/brief/${n.brief_id}`);
+    if (!n.brief_id) return;
+    const path = `/brief/${n.brief_id}`;
+    const hash = n.source_entry_id && !n.entry_deleted ? targetHash(n) : "";
+    if (pathname !== path) {
+      // Different page: a fresh mount reads the committed hash itself.
+      router.push(`${path}${hash}`);
+      return;
+    }
+    if (!hash) return;
+    if (window.location.hash === hash) {
+      // Identical URL: the browser fires no hashchange, so nudge the deep-link
+      // handlers directly (they re-arm and re-run on this event).
+      window.dispatchEvent(new Event("hashchange"));
+    } else {
+      // Same page, different hash: assign the hash directly so the native
+      // hashchange fires AFTER the URL is committed. router.push here would
+      // update the hash asynchronously, and a synthetic event racing it makes
+      // handlers (including the page-level view router) read the OLD hash.
+      window.location.hash = hash;
     }
   }
 
