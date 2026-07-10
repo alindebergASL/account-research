@@ -2857,6 +2857,30 @@ export default function JournalSection({
         </div>
       )}
 
+      {/* Compact recent view: surface the "Mentions me" filter on its own so it
+          stays reachable when the full filter bar (below) is collapsed. Without
+          this, enabling the filter and then leaving the expanded view left no
+          way to turn it back off. Hidden when the full bar is shown to avoid a
+          duplicate control. */}
+      {!activeFullView && centerTab === "timeline" && !showAllEntries &&
+        (mentionsMeFilter || (entries?.length ?? 0) > 0) && (
+        <div className="mb-3 flex items-center justify-end">
+          <button
+            type="button"
+            aria-pressed={mentionsMeFilter}
+            onClick={() => setMentionsMeFilter((value) => !value)}
+            title="Show only threads that mention you"
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              mentionsMeFilter
+                ? "bg-[var(--active-dark)] text-white"
+                : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+            }`}
+          >
+            Mentions me
+          </button>
+        </div>
+      )}
+
       {!activeFullView && centerTab === "timeline" && entries && showAllEntries && (
         <div className="mb-3 flex flex-col gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface)] p-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-1.5">
@@ -2908,7 +2932,22 @@ export default function JournalSection({
       {!activeFullView && centerTab === "timeline" &&
         filteredEntries &&
         filteredEntries.length === 0 &&
-        (entries?.length === 0 ? (
+        (mentionsMeFilter ? (
+          <EmptyState
+            icon={<Search className="size-5" />}
+            title="No entries mention you"
+            description="No journal thread mentions you yet. Turn off “Mentions me” to see the full timeline."
+            action={
+              <button
+                type="button"
+                onClick={() => setMentionsMeFilter(false)}
+                className="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800"
+              >
+                Show all entries
+              </button>
+            }
+          />
+        ) : entries?.length === 0 ? (
           <EmptyState
             icon={<BookOpen className="size-5" />}
             title="No journal entries yet"
