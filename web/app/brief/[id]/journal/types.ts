@@ -72,6 +72,7 @@ export const JOURNAL_TAG_LABELS: Record<string, string> = {
 export type JournalWorkspace =
   | "timeline"
   | "sources"
+  | "tasks"
   | "intelligence"
   | "review"
   | "team";

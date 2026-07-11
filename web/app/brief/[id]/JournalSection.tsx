@@ -6,7 +6,6 @@ import {
   ArrowUpRight,
   CheckCircle2,
   ChevronDown,
-  ClipboardList,
   FileText,
   Loader2,
   MessageSquare,
@@ -53,6 +52,20 @@ import {
   searchJournalWorkspace,
 } from "@/lib/journalSearch";
 import { findSourceLegendBlockStart } from "@/lib/journalSourceLegend";
+import {
+  countReviewInbox,
+  filterReviewInboxCandidates,
+  reviewInboxTabForStatus,
+  selectReviewInboxTabForMatches,
+  type ReviewInboxTab,
+  type ReviewInboxTypeFilter,
+} from "@/lib/journalReviewInbox";
+import {
+  buildJournalWorkspaceSearch,
+  hashForExplicitNavigation,
+  parseJournalWorkspaceLocation,
+  type JournalWorkspace as AddressableJournalWorkspace,
+} from "@/lib/journalWorkspaceLocation";
 import { SourceLink } from "@/components/SourceLink";
 import CommentsSection from "./CommentsSection";
 import type {
@@ -87,14 +100,12 @@ import {
   briefUpdatePrompt,
   cockpitDisplayFromModel,
   collectJournalSources,
-  countPendingReviewCandidates,
   compareWithBriefPrompt,
   displayEntryBody,
   documentIdSnapshotKey,
   emptyCockpitCards,
   extractCitationLabels,
   formatFileSize,
-  groupReviewCandidatesByType,
   relativeTime,
   sourceFingerprint,
   sourceHealthBadges,
@@ -136,6 +147,8 @@ export default function JournalSection({
   canManage,
   briefContext,
   onViewBriefBaseline,
+  journalSearchQuery: controlledJournalSearchQuery,
+  onJournalSearchQueryChange,
 }: {
   briefId: string;
   currentUserId: string;
@@ -143,6 +156,8 @@ export default function JournalSection({
   canManage: boolean;
   briefContext: JournalBriefContext;
   onViewBriefBaseline?: () => void;
+  journalSearchQuery?: string;
+  onJournalSearchQueryChange?: (query: string) => void;
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
@@ -192,7 +207,12 @@ export default function JournalSection({
   const [scopedDocumentIds, setScopedDocumentIds] = useState<string[]>([]);
   const [requireSourceDocumentScope, setRequireSourceDocumentScope] = useState(false);
   const [excludedDocumentIds, setExcludedDocumentIds] = useState<string[]>([]);
-  const [journalSearchQuery, setJournalSearchQuery] = useState("");
+  const [internalJournalSearchQuery, setInternalJournalSearchQuery] = useState("");
+  const journalSearchQuery = controlledJournalSearchQuery ?? internalJournalSearchQuery;
+  const setJournalSearchQuery = useCallback((query: string) => {
+    setInternalJournalSearchQuery(query);
+    onJournalSearchQueryChange?.(query);
+  }, [onJournalSearchQueryChange]);
   const [catchUpWindow, setCatchUpWindow] = useState<JournalCatchUpWindow>("24h");
   const [pendingJournalContextSince, setPendingJournalContextSince] = useState<number | null>(null);
   const [pendingCatchUpWindow, setPendingCatchUpWindow] = useState<JournalCatchUpWindow | null>(null);
@@ -228,12 +248,71 @@ export default function JournalSection({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [suggestWithAiOpen, setSuggestWithAiOpen] = useState(false);
+  const [reviewInboxTab, setReviewInboxTab] = useState<ReviewInboxTab>("pending");
+  const [reviewTypeFilter, setReviewTypeFilter] = useState<ReviewInboxTypeFilter>("all");
+  const [reviewMovedNotice, setReviewMovedNotice] = useState<string | null>(null);
   const [activeFullView, setActiveFullView] = useState<
     "sources" | "intelligence" | "review" | "tasks" | null
   >(null);
+  const applyJournalWorkspaceState = useCallback((
+    workspace: AddressableJournalWorkspace,
+    tab: ReviewInboxTab,
+  ) => {
+    setCenterTab(workspace === "team" ? "team" : "timeline");
+    setActiveFullView(
+      workspace === "sources" || workspace === "tasks" || workspace === "review"
+        ? workspace
+        : null,
+    );
+    setReviewInboxTab(tab);
+  }, []);
+
+  const navigateJournalWorkspace = useCallback((
+    workspace: AddressableJournalWorkspace,
+    options: { reviewTab?: ReviewInboxTab; replace?: boolean; explicit?: boolean } = {},
+  ) => {
+    const reviewTab = workspace === "review" ? (options.reviewTab ?? reviewInboxTab) : "pending";
+    const state = { view: "journal" as const, workspace, reviewInboxTab: reviewTab };
+    const search = buildJournalWorkspaceSearch(window.location.search, state);
+    const hash = options.explicit === false
+      ? window.location.hash
+      : hashForExplicitNavigation(window.location.hash, state);
+    applyJournalWorkspaceState(workspace, reviewTab);
+    window.history[options.replace ? "replaceState" : "pushState"](
+      window.history.state,
+      "",
+      `${window.location.pathname}${search}${hash}`,
+    );
+  }, [applyJournalWorkspaceState, reviewInboxTab]);
+
+  useEffect(() => {
+    const syncJournalLocation = () => {
+      const parsed = parseJournalWorkspaceLocation({
+        search: window.location.search,
+        hash: window.location.hash,
+      });
+      if (parsed.view !== "journal") return;
+      applyJournalWorkspaceState(parsed.workspace, parsed.reviewInboxTab);
+      if (parsed.needsNormalization) {
+        window.history.replaceState(
+          window.history.state,
+          "",
+          `${window.location.pathname}${parsed.canonicalSearch}${window.location.hash}`,
+        );
+      }
+    };
+    syncJournalLocation();
+    window.addEventListener("popstate", syncJournalLocation);
+    window.addEventListener("hashchange", syncJournalLocation);
+    return () => {
+      window.removeEventListener("popstate", syncJournalLocation);
+      window.removeEventListener("hashchange", syncJournalLocation);
+    };
+  }, [applyJournalWorkspaceState]);
+
   function goToComposer() {
-    setActiveFullView(null);
-    setCenterTab("timeline");
+    navigateJournalWorkspace("timeline");
     window.setTimeout(() => composeRef.current?.focus(), 0);
   }
   // Side-peek: source preview and citation context open in a right-side panel
@@ -252,12 +331,16 @@ export default function JournalSection({
         setPaletteOpen(false);
         setSelectedSource(null);
         setSelectedCitationContext(null);
-        setActiveFullView(null);
+        if (activeFullView && activeFullView !== "intelligence") {
+          navigateJournalWorkspace("timeline");
+        } else {
+          setActiveFullView(null);
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [activeFullView, navigateJournalWorkspace]);
 
   const load = useCallback(async () => {
     // Sequence every feed request (last-write-wins): overlapping loads happen
@@ -412,10 +495,10 @@ export default function JournalSection({
       });
       switch (step) {
         case "leave-full-view":
-          setActiveFullView(null);
+          navigateJournalWorkspace("timeline", { replace: true, explicit: false });
           return;
         case "show-timeline-tab":
-          setCenterTab("timeline");
+          navigateJournalWorkspace("timeline", { replace: true, explicit: false });
           return;
         case "clear-mentions":
           // Flipping the filter re-runs load(); the scope-match guard above
@@ -490,9 +573,11 @@ export default function JournalSection({
     tagFilter,
     timelineFilter,
     journalSearchQuery,
+    setJournalSearchQuery,
     expandedEntries,
     activeFullView,
     centerTab,
+    navigateJournalWorkspace,
   ]);
 
   // Clear a live highlight timer on unmount so it can't fire on a dead node.
@@ -735,6 +820,7 @@ export default function JournalSection({
       setReviewError(null);
       await loadReviewCandidates();
       await loadCockpitModel();
+      navigateJournalWorkspace("review", { reviewTab: "pending" });
     } catch (e: any) {
       setReviewError(e?.message || "Failed to create review candidate");
     } finally {
@@ -768,10 +854,10 @@ export default function JournalSection({
       setUploadNotice("Added suggested review card to the Review Queue. Review status before sending anything to the brief.");
       await loadReviewCandidates();
       await loadCockpitModel();
-      setActiveFullView("review");
+      navigateJournalWorkspace("review", { reviewTab: "pending" });
     } catch (e: any) {
       setReviewError(e?.message || "Failed to save suggested review card");
-      setActiveFullView("review");
+      navigateJournalWorkspace("review", { reviewTab: "pending" });
     } finally {
       setReviewLoading(false);
     }
@@ -788,20 +874,24 @@ export default function JournalSection({
     setNewCandidateSourceEntryId(draft.source_entry_id);
     setReviewError(null);
     setCreateFormOpen(true);
-    setActiveFullView("review");
+    navigateJournalWorkspace("review", { reviewTab: "pending" });
   }
 
   function draftReviewCandidateFromAssistant(entry: Entry) {
     const draft = buildReviewCandidateDraftFromAssistantEntry(entry);
     if (!draft) {
       setReviewError("Only saved assistant replies can be converted into review candidates.");
-      setActiveFullView("review");
+      navigateJournalWorkspace("review", { reviewTab: "pending" });
       return;
     }
     editReviewCandidateDraft(draft);
   }
 
-  async function updateCandidateStatus(candidateId: string, status: ReviewCandidateStatus) {
+  async function updateCandidateStatus(
+    candidateId: string,
+    status: ReviewCandidateStatus,
+  ): Promise<boolean> {
+    const previous = reviewCandidates.find((candidate) => candidate.id === candidateId);
     setReviewLoading(true);
     try {
       const r = await fetch(`/api/briefs/${briefId}/journal/review-candidates/${candidateId}`, {
@@ -813,10 +903,23 @@ export default function JournalSection({
         const data = await r.json().catch(() => ({}));
         throw new Error(data?.error || `HTTP ${r.status}`);
       }
-      await loadReviewCandidates();
+      const data = await r.json();
+      const updated = data.candidate as ReviewCandidate;
+      setReviewCandidates((current) =>
+        current.map((candidate) => candidate.id === candidateId ? updated : candidate),
+      );
+      setReviewError(null);
+      if (previous && reviewInboxTabForStatus(previous.status) !== reviewInboxTabForStatus(status)) {
+        const destination = reviewInboxTabForStatus(status);
+        setReviewMovedNotice(`Moved to ${destination === "pending" ? "Pending" : "History"}.`);
+      } else {
+        setReviewMovedNotice(null);
+      }
       await loadCockpitModel();
+      return true;
     } catch (e: any) {
       setReviewError(e?.message || "Failed to update review candidate");
+      return false;
     } finally {
       setReviewLoading(false);
     }
@@ -843,8 +946,8 @@ export default function JournalSection({
     }
   }
 
-  function openBriefToApply(candidate?: ReviewCandidate) {
-    if (candidate) void updateCandidateStatus(candidate.id, "sent_to_brief_chat");
+  async function openBriefToApply(candidate?: ReviewCandidate) {
+    if (candidate && !(await updateCandidateStatus(candidate.id, "sent_to_brief_chat"))) return;
     onViewBriefBaseline?.();
   }
 
@@ -1446,7 +1549,8 @@ export default function JournalSection({
           {onViewBriefBaseline && (
             <button
               type="button"
-              onClick={() => openBriefToApply(candidate)}
+              onClick={() => void openBriefToApply(candidate)}
+              disabled={reviewLoading}
               className="rounded-md border border-[var(--border-subtle)] bg-[var(--success-bg)] px-2 py-1 text-xs font-medium text-[var(--success-text)] hover:opacity-90"
             >
               Open brief to apply
@@ -1832,13 +1936,21 @@ export default function JournalSection({
   const displayedSources = journalSearchResult.isActive
     ? sources.filter((source) => searchSourceIds.has(source.id))
     : sources;
-  const displayedReviewCandidates = journalSearchResult.isActive
-    ? reviewCandidates.filter((candidate) => searchReviewCandidateIds.has(candidate.id))
-    : reviewCandidates;
   const selectedPreviewMatchesSearch =
     !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
-  const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
-  const pendingReviewCount = countPendingReviewCandidates(reviewCandidates);
+  const reviewInboxCounts = countReviewInbox(reviewCandidates, reviewInboxTab);
+  const displayedReviewCandidates = filterReviewInboxCandidates(reviewCandidates, {
+    tab: reviewInboxTab,
+    type: reviewTypeFilter,
+    searchMatchIds: journalSearchResult.isActive ? searchReviewCandidateIds : undefined,
+  });
+  const otherReviewInboxTab: ReviewInboxTab = reviewInboxTab === "pending" ? "history" : "pending";
+  const matchingCandidatesInOtherReviewTab = filterReviewInboxCandidates(reviewCandidates, {
+    tab: otherReviewInboxTab,
+    type: reviewTypeFilter,
+    searchMatchIds: journalSearchResult.isActive ? searchReviewCandidateIds : undefined,
+  }).length;
+  const pendingReviewCount = reviewInboxCounts.pending;
   const cockpitDisplay = cockpitDisplayFromModel(cockpitModel);
   // Command-palette model: every AI action funnels through one on-demand list
   // (⌘K) instead of always-visible button grids — each item dispatches an
@@ -1914,7 +2026,7 @@ export default function JournalSection({
     const selectedIds = filteredSourceDocumentIds(scopedDocumentIds);
     if (selectedIds.length === 0) {
       setUploadNotice("Select at least one included uploaded source before running a source-scoped prompt.");
-      setActiveFullView("sources");
+      navigateJournalWorkspace("sources");
       return;
     }
     prepareAssistantPrompt(prompt, selectedIds);
@@ -2164,8 +2276,7 @@ export default function JournalSection({
             type="button"
             onClick={() => {
               if (centerTab !== "timeline" || activeFullView !== null) {
-                setActiveFullView(null);
-                setCenterTab("timeline");
+                navigateJournalWorkspace("timeline");
                 setSearchOpen(true);
                 return;
               }
@@ -2187,8 +2298,7 @@ export default function JournalSection({
           <button
             type="button"
             onClick={() => {
-              setActiveFullView(null);
-              setCenterTab("timeline");
+              navigateJournalWorkspace("timeline");
               setAskAi(false);
               window.setTimeout(() => composeRef.current?.focus(), 0);
             }}
@@ -2215,10 +2325,7 @@ export default function JournalSection({
                 type="button"
                 role="tab"
                 aria-selected={active}
-                onClick={() => {
-                  setActiveFullView(null);
-                  setCenterTab(id);
-                }}
+                onClick={() => navigateJournalWorkspace(id)}
                 className={`rounded-[10px] px-3 py-1.5 font-medium transition-colors ${
                   active
                     ? "bg-[var(--active-dark)] text-white"
@@ -2243,7 +2350,7 @@ export default function JournalSection({
               key={id}
               type="button"
               aria-pressed={activeFullView === id}
-              onClick={() => setActiveFullView(id)}
+              onClick={() => navigateJournalWorkspace(id, id === "review" ? { reviewTab: "pending" } : {})}
               className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 font-medium transition-colors ${
                 activeFullView === id
                   ? "bg-[var(--active-dark)] text-white"
@@ -2323,8 +2430,7 @@ export default function JournalSection({
               <button
                 type="button"
                 onClick={() => {
-                  setActiveFullView(null);
-                  setCenterTab("timeline");
+                  navigateJournalWorkspace("timeline");
                 }}
                 className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 hover:text-ink"
               >
@@ -2332,14 +2438,19 @@ export default function JournalSection({
               </button>
               <button
                 type="button"
-                onClick={() => setActiveFullView("sources")}
+                onClick={() => navigateJournalWorkspace("sources")}
                 className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 hover:text-ink"
               >
                 {journalSearchResult.sourceIds.length} Sources
               </button>
               <button
                 type="button"
-                onClick={() => setActiveFullView("review")}
+                onClick={() => {
+                  setReviewTypeFilter("all");
+                  navigateJournalWorkspace("review", {
+                    reviewTab: selectReviewInboxTabForMatches(reviewCandidates, searchReviewCandidateIds),
+                  });
+                }}
                 className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 hover:text-ink"
               >
                 {journalSearchResult.reviewCandidateIds.length} Review Queue
@@ -2397,7 +2508,7 @@ export default function JournalSection({
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setActiveFullView("sources")}
+                    onClick={() => navigateJournalWorkspace("sources")}
                     className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
                   >
                     <FileText className="size-3.5" /> View evidence
@@ -2461,7 +2572,9 @@ export default function JournalSection({
         <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
           <div
             className="absolute inset-0 bg-slate-900/20"
-            onClick={() => setActiveFullView(null)}
+            onClick={() => activeFullView === "intelligence"
+              ? setActiveFullView(null)
+              : navigateJournalWorkspace("timeline")}
             aria-hidden="true"
           />
           <div className="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-[var(--line)] bg-[var(--surface)] shadow-2xl">
@@ -2477,7 +2590,9 @@ export default function JournalSection({
               </h2>
               <button
                 type="button"
-                onClick={() => setActiveFullView(null)}
+                onClick={() => activeFullView === "intelligence"
+                  ? setActiveFullView(null)
+                  : navigateJournalWorkspace("timeline")}
                 aria-label="Close"
                 className="rounded-md border border-[var(--line)] bg-white p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)]"
               >
@@ -2670,7 +2785,7 @@ export default function JournalSection({
                   </p>
                   <button
                     type="button"
-                    onClick={() => setActiveFullView("review")}
+                    onClick={() => navigateJournalWorkspace("review", { reviewTab: "pending" })}
                     className="mt-3 rounded-md border border-[var(--border-subtle)] bg-white px-3 py-1.5 text-xs font-medium text-ink hover:bg-[var(--surface-muted)]"
                   >
                     Review suggested candidates
@@ -2701,104 +2816,116 @@ export default function JournalSection({
             </div>
           )}
           <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--warning-text)]">
-                  <CheckCircle2 className="size-3.5" /> Review Queue
+                <div className="inline-flex items-center gap-2 text-sm font-semibold text-ink">
+                  <CheckCircle2 className="size-4 text-[var(--warning-text)]" /> Review Queue
                 </div>
-                <h3 className="mt-3 text-base font-semibold text-ink">
-                  Turn messy evidence into human-review candidates
-                </h3>
-                <p className="mt-1 max-w-2xl text-sm text-muted">
-                  Brief-grounded review starts with the current brief baseline, then
-                  queues journal evidence as brief updates, action items, decisions,
-                  and open questions. The assistant can suggest candidates with
-                  evidence and confidence, but it does not edit the brief, assign
-                  tasks, or mark decisions official.
-                </p>
+                <p className="mt-1 text-sm text-muted">Human review before anything reaches the brief.</p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setSuggestWithAiOpen((open) => !open)}
+                aria-expanded={suggestWithAiOpen}
+                className="rounded-md border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-3 py-1.5 text-xs font-medium text-[var(--ai-text)]"
+              >
+                Suggest with AI
+              </button>
+            </div>
+            {suggestWithAiOpen && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {REVIEW_QUEUE_ACTIONS.map((action) => (
                   <button
                     key={action.label}
                     type="button"
                     onClick={() => runIntelligenceAction(action.prompt)}
                     disabled={posting || loading || !entries}
-                    className={`rounded-xl border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      action.primary
-                        ? "border-[var(--border-subtle)] bg-[var(--primary)] text-white shadow-sm hover:bg-[var(--primary-hover)]"
-                        : "border-[var(--line)] bg-white text-ink hover:border-[var(--border-subtle)] hover:bg-[var(--surface-muted)]"
-                    }`}
+                    className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-left text-sm transition hover:bg-[var(--surface-muted)] disabled:opacity-50"
                   >
-                    <span className="block font-medium">{action.label}</span>
-                    <span
-                      className={`mt-0.5 block text-xs ${
-                        action.primary ? "text-white/80" : "text-muted"
-                      }`}
-                    >
-                      {action.description}
-                    </span>
+                    <span className="block font-medium text-ink">{action.label}</span>
+                    <span className="mt-0.5 block text-xs text-muted">{action.description}</span>
                   </button>
                 ))}
               </div>
+            )}
+            <div className="mt-4 flex gap-2" role="tablist" aria-label="Review inbox">
+              {(["pending", "history"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={reviewInboxTab === tab}
+                  onClick={() => navigateJournalWorkspace("review", { reviewTab: tab })}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                    reviewInboxTab === tab ? "bg-[var(--active-dark)] text-white" : "bg-white text-[var(--text-secondary)]"
+                  }`}
+                >
+                  {tab === "pending" ? "Pending" : "History"} ({reviewInboxCounts[tab]})
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Review candidate type filters">
+              {(["all", "brief_update", "action_item", "decision", "open_question"] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  aria-pressed={reviewTypeFilter === type}
+                  onClick={() => setReviewTypeFilter(type)}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    reviewTypeFilter === type
+                      ? "border-[var(--active-dark)] bg-[var(--active-dark)] text-white"
+                      : "border-[var(--line)] bg-white text-[var(--text-secondary)]"
+                  }`}
+                >
+                  {type === "all" ? "All" : candidateTypeLabels[type]} ({reviewInboxCounts.types[type]})
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[var(--line)] bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                  Human-reviewed lanes
+          {reviewMovedNotice && (
+            <div className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--success-bg)] px-3 py-2 text-sm text-[var(--success-text)]">
+              <span>{reviewMovedNotice}</span>
+              <button type="button" onClick={() => setReviewMovedNotice(null)} aria-label="Dismiss moved notice"><X className="size-4" /></button>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {displayedReviewCandidates.length > 0 ? (
+              displayedReviewCandidates.map((candidate) => renderReviewCandidate(candidate))
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-5 text-sm text-muted">
+                <div className="font-medium text-ink">
+                  {journalSearchResult.isActive
+                    ? `No matching ${reviewInboxTab.toLowerCase()} cards`
+                    : reviewTypeFilter !== "all"
+                      ? `No ${candidateTypeLabels[reviewTypeFilter].toLowerCase()} in ${reviewInboxTab}`
+                      : reviewInboxTab === "pending"
+                        ? "No candidates awaiting review"
+                        : "No review history yet"}
                 </div>
-                <h3 className="mt-1 text-sm font-semibold text-ink">Structured review boards</h3>
-                <p className="mt-1 text-xs text-muted">
-                  Review candidates stay in the same human-approved workflow, but are grouped into boards so actions, decisions, open questions, and brief updates are easier to scan.
+                <p className="mt-1">
+                  {journalSearchResult.isActive
+                    ? "Adjust or clear search to see other review cards."
+                    : reviewTypeFilter !== "all"
+                      ? "Choose another type or All."
+                      : reviewInboxTab === "pending"
+                        ? "New and reviewing candidates will appear here."
+                        : "Accepted, handed-off, applied, and dismissed candidates will appear here."}
                 </p>
+                {matchingCandidatesInOtherReviewTab > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => navigateJournalWorkspace("review", {
+                      reviewTab: otherReviewInboxTab,
+                    })}
+                    className="mt-3 text-xs font-medium text-[var(--ai-text)] underline"
+                  >
+                    View {reviewInboxTab === "pending" ? "History" : "Pending"}
+                  </button>
+                )}
               </div>
-              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-muted">
-                {displayedReviewCandidates.length} card{displayedReviewCandidates.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <div className="mt-4 grid gap-3 xl:grid-cols-4 md:grid-cols-2">
-              {STRUCTURED_REVIEW_BOARDS.map((board) => {
-                const boardCandidates = reviewCandidatesByType[board.type];
-                return (
-                  <div key={board.type} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-semibold text-ink">{board.title}</h4>
-                        <p className="mt-1 text-xs text-muted">{board.description}</p>
-                      </div>
-                      <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
-                        {boardCandidates.length}
-                      </span>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {boardCandidates.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-[var(--line)] bg-white p-3 text-xs text-muted">
-                          {board.empty}
-                        </div>
-                      ) : (
-                        boardCandidates.slice(0, 3).map((candidate) => (
-                          <div key={candidate.id} className="rounded-lg border border-[var(--line)] bg-white p-3 text-xs">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium text-ink">{candidate.title}</span>
-                              <span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] text-muted">
-                                {candidateStatusLabels[candidate.status]}
-                              </span>
-                            </div>
-                            <p className="mt-1 line-clamp-2 text-muted">{candidate.proposed_text}</p>
-                          </div>
-                        ))
-                      )}
-                      {boardCandidates.length > 3 && (
-                        <div className="text-xs text-muted">+ {boardCandidates.length - 3} more in the full Review Queue below</div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-[var(--border-subtle)] bg-white p-4 shadow-sm">
@@ -2898,27 +3025,6 @@ export default function JournalSection({
             )}
           </div>
 
-          <div className="space-y-3">
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-              <h3 className="whitespace-nowrap text-sm font-semibold text-ink">Full Review Queue</h3>
-              <span className="text-xs text-muted">
-                Same human-review cards, shown ungrouped for status changes and brief-chat handoff.
-              </span>
-            </div>
-            {displayedReviewCandidates.length === 0 ? (
-              <EmptyState
-                icon={<ClipboardList className="size-5" />}
-                title={journalSearchResult.isActive ? "No matching review cards" : "Review Queue is empty"}
-                description={
-                  journalSearchResult.isActive
-                    ? "Clear the search to see the full Review Queue."
-                    : "Promote assistant suggestions here with \u201CAdd to Review Queue\u201D, or edit them first before saving for team follow-up."
-                }
-              />
-            ) : (
-              displayedReviewCandidates.map((candidate) => renderReviewCandidate(candidate))
-            )}
-          </div>
         </div>
       )}
 

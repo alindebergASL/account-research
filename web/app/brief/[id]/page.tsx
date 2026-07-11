@@ -10,6 +10,12 @@ import { buildReadOnlyCanvasFromBrief } from "@/lib/canvas/fromBrief";
 import type { Canvas } from "@/lib/canvas/schema";
 import CommentsSection from "./CommentsSection";
 import JournalSection from "./JournalSection";
+import {
+  buildJournalWorkspaceSearch,
+  hashForExplicitNavigation,
+  parseJournalWorkspaceLocation,
+  type BriefView,
+} from "@/lib/journalWorkspaceLocation";
 
 type Access = {
   is_owner: boolean;
@@ -27,9 +33,8 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
   const [versionsCount, setVersionsCount] = useState<number>(0);
   const [monitorEnabled, setMonitorEnabled] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"brief" | "canvas" | "journal">(
-    "brief",
-  );
+  const [viewMode, setViewMode] = useState<BriefView>("brief");
+  const [journalSearchQuery, setJournalSearchQuery] = useState("");
   const [persistedCanvas, setPersistedCanvas] = useState<Canvas | null>(null);
   const [canvasStateVersion, setCanvasStateVersion] = useState<number>(0);
   // Server-derived capability: true only when CANVAS_PREVIEW_ENABLED=1
@@ -37,26 +42,48 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
   // opaque — it cannot read the env var directly and shouldn't infer
   // anything from it beyond "render the toggle or not".
   const [canvasPreview, setCanvasPreview] = useState<boolean>(false);
+  const [canvasCapabilityKnown, setCanvasCapabilityKnown] = useState(false);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
 
-  // Deep-link hash routing: the two anchor families live in different top-level
-  // views — #journal-entry-<id> needs the journal view mounted, #comment-<id>
-  // needs the brief/canvas view (comments render under both). Without this, a
-  // notification deep-link to the non-default view scrolls nowhere because the
-  // target section isn't in the DOM at all. Runs on load and on same-page
-  // hash changes; the sections' own handlers take over from there.
+  const syncLocation = useCallback(() => {
+    const parsed = parseJournalWorkspaceLocation({
+      search: window.location.search,
+      hash: window.location.hash,
+      canvasAllowed: canvasCapabilityKnown ? canvasPreview : undefined,
+    });
+    setViewMode(parsed.view);
+    if (parsed.needsNormalization) {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${parsed.canonicalSearch}${window.location.hash}`,
+      );
+    }
+  }, [canvasCapabilityKnown, canvasPreview]);
+
+  // Restore location after mount and on browser/notification navigation. Hash
+  // ownership is resolved by the pure parser before the mounted section takes
+  // over its existing widening and scroll behavior.
   useEffect(() => {
-    const routeForHash = () => {
-      const hash = window.location.hash;
-      if (hash.startsWith("#journal-entry-")) {
-        setViewMode("journal");
-      } else if (hash.startsWith("#comment-")) {
-        setViewMode((cur) => (cur === "journal" ? "brief" : cur));
-      }
+    syncLocation();
+    window.addEventListener("popstate", syncLocation);
+    window.addEventListener("hashchange", syncLocation);
+    return () => {
+      window.removeEventListener("popstate", syncLocation);
+      window.removeEventListener("hashchange", syncLocation);
     };
-    routeForHash();
-    window.addEventListener("hashchange", routeForHash);
-    return () => window.removeEventListener("hashchange", routeForHash);
+  }, [syncLocation]);
+
+  const navigateView = useCallback((view: BriefView) => {
+    const state = { view, workspace: "timeline" as const, reviewInboxTab: "pending" as const };
+    const search = buildJournalWorkspaceSearch(window.location.search, state);
+    const hash = hashForExplicitNavigation(window.location.hash, state);
+    setViewMode(view);
+    window.history.pushState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${search}${hash}`,
+    );
   }, []);
 
   useEffect(() => {
@@ -89,6 +116,7 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
     setAccess(null);
     setPersistedCanvas(null);
     setCanvasStateVersion(0);
+    setCanvasCapabilityKnown(false);
     setError(null);
     fetch(`/api/briefs/${params.id}`, { cache: "no-store" })
       .then(async (r) => {
@@ -119,6 +147,7 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
         );
         setMonitorEnabled(data.monitor_enabled === true);
         setCanvasPreview(data.canvas_preview === true);
+        setCanvasCapabilityKnown(true);
       })
       .catch((e: any) => {
         if (cancelled) return;
@@ -207,7 +236,7 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
             type="button"
             role="tab"
             aria-selected={viewMode === "brief"}
-            onClick={() => setViewMode("brief")}
+            onClick={() => navigateView("brief")}
             className={`px-3 py-1.5 rounded-md transition-colors ${
               viewMode === "brief"
                 ? "bg-ink text-white"
@@ -221,7 +250,7 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
               type="button"
               role="tab"
               aria-selected={viewMode === "canvas"}
-              onClick={() => setViewMode("canvas")}
+              onClick={() => navigateView("canvas")}
               className={`px-3 py-1.5 rounded-md transition-colors ${
                 viewMode === "canvas"
                   ? "bg-ink text-white"
@@ -235,7 +264,7 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
             type="button"
             role="tab"
             aria-selected={viewMode === "journal"}
-            onClick={() => setViewMode("journal")}
+            onClick={() => navigateView("journal")}
             className={`px-3 py-1.5 rounded-md transition-colors ${
               viewMode === "journal"
                 ? "bg-ink text-white"
@@ -260,7 +289,9 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
               sources_count: brief.sources.length,
               sources: brief.sources,
             }}
-            onViewBriefBaseline={() => setViewMode("brief")}
+            journalSearchQuery={journalSearchQuery}
+            onJournalSearchQueryChange={setJournalSearchQuery}
+            onViewBriefBaseline={() => navigateView("brief")}
           />
         ) : (
           <div className="max-w-7xl mx-auto px-6 mt-8 text-sm text-muted">

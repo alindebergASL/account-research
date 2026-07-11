@@ -22,11 +22,11 @@ The current organizing principle is **baseline → evidence → review → actio
 3. **Review:** route proposed changes through one human review inbox with truthful pending counts.
 4. **Action:** turn reviewed evidence into brief changes, decisions, and tasks without silent mutation.
 
-Follow-up work should proceed in this order:
+The current sequence is:
 
-1. Land the trust-and-clarity foundation in the existing Journal surface.
-2. Make workspaces URL-addressable and consolidate review into one inbox.
-3. Add evidence-backed decisions and tasks, then a change radar built on durable review state.
+1. Trust-and-clarity foundation in the existing Journal surface — implemented.
+2. URL-addressable Brief/Journal workspaces and one Pending/History review inbox — implemented on the current feature branch, pending release.
+3. Next: add evidence-backed decisions and tasks, then a change radar built on durable review state.
 
 ## Current implementation status
 
@@ -41,15 +41,21 @@ Current production baseline on `main`:
 | Journal document uploads | Shipped | #78, #79 | Uploads extract text and can be used by Journal AI; workflow polish followed the first upload PR. |
 | Intelligence panel / advisory prompts | **Stale UI status:** Production pass shipped; cached catch-up and guided cockpit loop now deployed | #80, #91, #96, #98, #100, #104, #108 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, reviewed cockpit summaries, and dedicated catch-up windows. Repeated catch-up summaries can now reuse durable advisory cache entries keyed by window, source scope, exclusions, and cockpit/source fingerprint, and the Intelligence workspace explains the catch-up → review → promote loop with source-scope/freshness provenance. |
 | Product direction note | Shipped | #81, #90; updated by #95, #99, #101 and post-#108 alignment | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
-| Workspaces + source library | **Stale five-workspace IA:** First production pass shipped; density polish shipped | #82, #84, #86, #87, #93, #107 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, show first-pass health labels, separate included/excluded source counts, and keep secondary source actions behind progressive disclosure. |
-| Brief-grounded review queue | First production pass shipped; reviewable assistant cards shipped | #83, #84, #85, #91, #94, #106 | Review candidate cards exist for brief updates, actions, decisions, and open questions; assistant replies can now split multi-candidate suggestions into reviewable cards with Add to Review Queue / edit-before-adding affordances; structured board lanes group candidate types. No automatic brief mutation. |
+| Workspaces + source library | URL-addressable workspace slice implemented on current feature branch, pending release | #82, #84, #86, #87, #93, #107 plus current feature branch | Brief, Canvas (when allowed), Journal Timeline, Team Room, Sources, To-dos, and Review destinations have canonical URLs with browser back/forward restoration. Notification entry/comment hashes retain precedence, incompatible hashes clear on explicit navigation, and unrelated query parameters are preserved. Sources retain their existing include/exclude, automated-check, and progressive-disclosure behavior. |
+| Brief-grounded review inbox | One-inbox slice implemented on current feature branch, pending release | #83, #84, #85, #91, #94, #106 plus current feature branch | Review candidates are presented once in disjoint Pending (New/Reviewing) and History (Accepted/Sent to brief chat/Applied/Dismissed) tabs with active-tab type counts and search-aware arrival. Existing explicit status, evidence, prompt-copy, open-Brief, and create-card controls remain; no automatic brief mutation. |
 | Team Room separation | Shipped; historical default later superseded | #86 | General teammate discussion is separated from source-grounded Timeline evidence. PR #86 made Team Room the default at that time; the current Journal opens on the Timeline. |
 | Citation/source trust layer | First production pass shipped | #78-#89, #92 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, source link rendering is hardened, spoofed legend blocks are ignored, citation chips open source context, and trusted legend entries can produce evidence snippets. True passage-level highlighting and exact-quote extraction are still future polish. |
 | Account Intelligence Cockpit | **Stale UI status:** Durable projection foundation shipped; guided Intelligence polish shipped | #80, #85, #94, #98, #102, #103, #104, #108 | The UI has an Intelligence surface, review workflow, structured review boards, reviewed-only cockpit cards, a durable cockpit read model/API, UI consumption of that projection, catch-up caching keyed to cockpit/source invalidation, and a clearer catch-up → review → promote cockpit workflow with source-scope/freshness provenance. Source-change rollups and richer lifecycle metadata remain future work. |
 
+### Implemented on the current feature branch (pending release)
+
+- Brief, Canvas (when capability allows), Journal Timeline, Team Room, Sources, To-dos, and Review have canonical restorable URLs; browser back/forward restores them without a reload.
+- Journal entry and comment notification hashes keep route precedence and recovery behavior; explicit navigation clears only incompatible route-owning hashes.
+- Review uses one disjoint Pending/History inbox with explicit counts, in-memory type filters, search-aware arrival, and one candidate list, without silently editing the Brief.
+- Brief update, Action, Decision, and Open question type filters are scoped to the active review tab; reviewed cockpit grouping remains separate from the inbox.
+
 ### Shipped foundation
 
-- **Stale five-workspace IA:** Journal Workspaces: Team Room, Timeline, Sources, Intelligence, and Review Queue.
 - Team Room is a separate collaboration space; the current Journal opens on the Timeline. (Team Room was the default in the historical #86 design.)
 - Source Library shows uploaded Journal documents plus Brief baseline sources, separates included/excluded counts, and keeps secondary per-source actions behind progressive disclosure.
 - Source previews exist for uploaded documents.
@@ -58,7 +64,6 @@ Current production baseline on `main`:
 - Review Queue stores human-review candidates without silently editing the Brief.
 - Assistant replies can split multi-candidate output into reviewable cards while preserving trusted evidence labels.
 - Candidate status supports New, Reviewing, Accepted, Sent to brief chat, Applied, and Dismissed.
-- Structured Actions, Decisions, Open Questions, and Brief Updates boards group review candidates into human-reviewed lanes.
 - Safe source-link rendering is shared and rejects deceptive URLs containing username/password userinfo.
 - Server-formatted source legends are parsed defensively; spoofed user-authored marker blocks are ignored.
 - Citation chips on assistant answers open source context for resolvable `[J]` and `[D]` labels without relying on the current global source list order.
@@ -81,7 +86,7 @@ Current production baseline on `main`:
 
 ### Recommended next implementation slice
 
-> **Superseded sequencing:** This June recommendation is retained for decision history. The current follow-up sequence is the trust/clarity foundation, URL-addressable workspaces plus one review inbox, then evidence-backed decisions/tasks and change radar, as recorded in the 2026-07-11 update above.
+> **Superseded sequencing:** This June recommendation is retained for decision history. The trust/clarity and URL-addressable one-inbox slices are now implemented; the next sequence is evidence-backed decisions and tasks, then change radar, as recorded in the 2026-07-11 update above.
 
 Two tracks are now in flight.
 

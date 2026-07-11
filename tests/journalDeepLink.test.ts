@@ -7,6 +7,7 @@ const {
   nextJournalDeepLinkStep,
   resolveJournalDeepLinkRoot,
 } = require("../web/lib/journalDeepLink") as typeof import("../web/lib/journalDeepLink");
+const location = require("../web/lib/journalWorkspaceLocation") as typeof import("../web/lib/journalWorkspaceLocation");
 
 // Everything open and mounted — the baseline the variations below perturb.
 const landed = {
@@ -164,4 +165,28 @@ test("a reply resolves to its thread root for expansion", () => {
   assert.equal(resolveJournalDeepLinkRoot(entries, "reply-1"), "root-1");
   assert.equal(resolveJournalDeepLinkRoot(entries, "root-2"), "root-2");
   assert.equal(resolveJournalDeepLinkRoot(entries, "missing"), null);
+});
+
+test("an entry notification hash replaces a conflicting Review URL with Timeline state", () => {
+  const parsed = location.parseJournalWorkspaceLocation({
+    search: "?view=journal&workspace=review&review=history&search=kept",
+    hash: "#journal-entry-entry-1",
+  });
+  assert.equal(parsed.view, "journal");
+  assert.equal(parsed.workspace, "timeline");
+  assert.equal(parsed.canonicalSearch, "?search=kept&view=journal");
+  assert.equal(parsed.needsNormalization, true);
+});
+
+test("explicit navigation clears incompatible notification hashes in both directions", () => {
+  assert.equal(
+    location.hashForExplicitNavigation("#comment-1", { view: "journal", workspace: "timeline" }),
+    "",
+  );
+  for (const workspace of ["team", "sources", "tasks", "review"] as const) {
+    assert.equal(
+      location.hashForExplicitNavigation("#journal-entry-1", { view: "journal", workspace }),
+      "",
+    );
+  }
 });

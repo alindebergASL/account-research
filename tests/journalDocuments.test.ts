@@ -2084,7 +2084,7 @@ test("JournalSection renders assistant review suggestions as cards with explicit
   assert.match(journalSource, /Edit before adding/);
   assert.match(journalSource, /saveReviewCandidateDraft/);
   assert.match(journalSource, /buildReviewCandidateDraftsFromAssistantEntry/);
-  assert.match(journalSource, /Promote assistant suggestions here/);
+  assert.match(journalSource, /navigateJournalWorkspace\("review", \{ reviewTab: "pending" \}\)/);
 });
 
 test("candidate draft extraction ignores spoofed user-authored legend labels", () => {
@@ -2250,7 +2250,8 @@ test("JournalSection exposes intelligence panel actions and citation chips", () 
   assert.match(source, /human-review queue only/);
   assert.match(source, /Do not assign anyone or create durable tasks/);
   assert.match(source, /Do not mark anything official/);
-  assert.match(source, /it does not\s+edit the brief, assign\s+tasks, or mark decisions official/);
+  assert.match(source, /Human review before anything reaches the brief\./);
+  assert.match(source, /Suggest with AI/);
   assert.match(source, /renderCitationChips/);
   assert.match(source, /Sources cited/);
   assert.match(source, /findSourceLegendBlockStart/);
@@ -2324,7 +2325,7 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(journalSource, /Brief next action/);
   assert.match(journalSource, /briefContext\.next_action/);
   assert.match(journalSource, /Compare evidence against the current brief baseline/);
-  assert.match(journalSource, /Brief-grounded review/);
+  assert.match(journalSource, /Human review before anything reaches the brief/);
   assert.match(journalSource, /which current brief claim it supports, contradicts, or updates/);
   assert.match(journalSource, /Update brief/);
   assert.match(pageSource, /briefContext=\{\{/);
@@ -2481,7 +2482,7 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
   assert.match(journalSource, /Preview source/);
   assert.match(journalSource, /openCitationContext/);
   assert.match(journalSource, /Open cited source context/);
-  assert.match(journalSource, /setActiveFullView\("sources"\)/);
+  assert.match(journalSource, /navigateJournalWorkspace\("sources"\)/);
   assert.match(journalSource, /Catch me up/);
   assert.match(journalSource, /What changed since the last brief version/);
   assert.match(journalSource, /What needs attention/);
@@ -2490,22 +2491,25 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
   assert.match(journalSource, /general team discussion/);
 });
 
-test("JournalSection exposes structured action decision and question boards over review candidates", () => {
+test("JournalSection exposes one filtered pending/history review inbox while retaining cockpit boards", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const journalSource = readJournalSectionSource();
 
   assert.match(journalSource, /STRUCTURED_REVIEW_BOARDS/);
-  assert.match(journalSource, /groupReviewCandidatesByType/);
-  assert.match(journalSource, /Structured review boards/);
   assert.match(journalSource, /Actions board/);
   assert.match(journalSource, /Decisions log/);
   assert.match(journalSource, /Open questions/);
   assert.match(journalSource, /Brief updates/);
-  assert.match(journalSource, /candidateStatusLabels\[candidate.status\]/);
-  assert.match(journalSource, /reviewCandidatesByType\[board.type\]/);
-  assert.match(journalSource, /Human-reviewed lanes/);
-  assert.match(journalSource, /Full Review Queue/);
+  assert.match(journalSource, /countReviewInbox\(reviewCandidates, reviewInboxTab\)/);
+  assert.match(journalSource, /filterReviewInboxCandidates\(reviewCandidates/);
+  assert.match(journalSource, /Pending[\s\S]*History/);
+  assert.match(journalSource, /Review candidate type filters/);
+  assert.match(journalSource, /Create review candidate card/);
+  assert.match(journalSource, /Suggest with AI/);
+  assert.doesNotMatch(journalSource, /Structured review boards/);
+  assert.doesNotMatch(journalSource, /Full Review Queue/);
+  assert.equal((journalSource.match(/displayedReviewCandidates\.map/g) ?? []).length, 1);
 });
 
 test("journal search matches notes sources and review candidates while preserving source recall scope", () => {
