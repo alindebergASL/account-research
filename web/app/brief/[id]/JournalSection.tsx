@@ -87,6 +87,7 @@ import {
   briefUpdatePrompt,
   cockpitDisplayFromModel,
   collectJournalSources,
+  countPendingReviewCandidates,
   compareWithBriefPrompt,
   displayEntryBody,
   documentIdSnapshotKey,
@@ -602,7 +603,7 @@ export default function JournalSection({
     setPendingCatchUpWindow(journalCatchUpWindow);
     setPendingCatchUpExcludedDocumentKey(catchUpExcludedDocumentKey);
     setComposeText(text);
-    // The composer only renders in Timeline/Team Room, so staging a prompt
+    // The composer only renders in Timeline, so staging a prompt
     // anywhere else must bring the user to it — otherwise the action looks
     // like it silently did nothing.
     goToComposer();
@@ -1016,7 +1017,7 @@ export default function JournalSection({
             </p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Source health</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Automated checks</span>
             {healthBadges.map((badge) => (
               <span
                 key={badge.status}
@@ -1837,6 +1838,7 @@ export default function JournalSection({
   const selectedPreviewMatchesSearch =
     !selectedSource || !journalSearchResult.isActive || searchSourceIds.has(selectedSource.id);
   const reviewCandidatesByType = groupReviewCandidatesByType(displayedReviewCandidates);
+  const pendingReviewCount = countPendingReviewCandidates(reviewCandidates);
   const cockpitDisplay = cockpitDisplayFromModel(cockpitModel);
   // Command-palette model: every AI action funnels through one on-demand list
   // (⌘K) instead of always-visible button grids — each item dispatches an
@@ -2148,19 +2150,27 @@ export default function JournalSection({
             </span>
             <span
               className={`rounded-full border px-2.5 py-1 font-medium ${
-                reviewCandidates.length > 0
+                pendingReviewCount > 0
                   ? "border-[var(--border-subtle)] bg-[var(--warning-bg)] text-[var(--warning-text)]"
                   : "border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text-secondary)]"
               }`}
             >
-              {reviewCandidates.length} items need review
+              {pendingReviewCount} items need review
             </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setSearchOpen((v) => !v)}
+            onClick={() => {
+              if (centerTab !== "timeline" || activeFullView !== null) {
+                setActiveFullView(null);
+                setCenterTab("timeline");
+                setSearchOpen(true);
+                return;
+              }
+              setSearchOpen((v) => !v);
+            }}
             aria-pressed={searchOpen}
             aria-label="Search"
             className="inline-flex items-center justify-center rounded-[10px] border border-[var(--line)] bg-white p-2 text-ink transition-colors hover:bg-[var(--surface-muted)]"
@@ -2186,57 +2196,69 @@ export default function JournalSection({
           >
             <Pencil className="size-3.5" /> Add note
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveFullView("review")}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-[var(--surface-muted)]"
-          >
-            Review queue
-            {reviewCandidates.length > 0 && (
-              <span className="rounded-full bg-[var(--warning-bg)] px-1.5 text-xs font-semibold text-[var(--warning-text)]">
-                {reviewCandidates.length}
-              </span>
-            )}
-          </button>
         </div>
       </div>
 
-      {/* Quiet mode tabs */}
-      <div className="mb-5 flex flex-wrap items-center gap-1 text-sm" role="tablist" aria-label="Journal mode">
-        {(
-          [
-            ["journal", "Journal", !activeFullView && centerTab === "timeline"],
-            ["team", "Team Room", !activeFullView && centerTab === "team"],
-            ["tasks", "To-dos", activeFullView === "tasks"],
-            ["sources", "Sources", activeFullView === "sources"],
-            ["review", "Review Queue", activeFullView === "review"],
-          ] as const
-        ).map(([id, label, active]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => {
-              if (id === "journal") {
-                setActiveFullView(null);
-                setCenterTab("timeline");
-              } else if (id === "team") {
-                setActiveFullView(null);
-                setCenterTab("team");
-              } else {
-                setActiveFullView(id);
-              }
-            }}
-            className={`rounded-[10px] px-3 py-1.5 font-medium transition-colors ${
-              active
-                ? "bg-[var(--active-dark)] text-white"
-                : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* Persistent views and workspace tools */}
+      <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
+        <div className="flex items-center gap-1" role="tablist" aria-label="Journal mode">
+          {(
+            [
+              ["timeline", "Journal"],
+              ["team", "Team Room"],
+            ] as const
+          ).map(([id, label]) => {
+            const active = centerTab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  setActiveFullView(null);
+                  setCenterTab(id);
+                }}
+                className={`rounded-[10px] px-3 py-1.5 font-medium transition-colors ${
+                  active
+                    ? "bg-[var(--active-dark)] text-white"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="h-5 w-px bg-[var(--line)]" aria-hidden="true" />
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Journal tools">
+          {(
+            [
+              ["tasks", "To-dos"],
+              ["sources", "Sources"],
+              ["review", "Review Queue"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={activeFullView === id}
+              onClick={() => setActiveFullView(id)}
+              className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 font-medium transition-colors ${
+                activeFullView === id
+                  ? "bg-[var(--active-dark)] text-white"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+              }`}
+            >
+              {label}
+              {id === "review" && pendingReviewCount > 0 && (
+                <span className="rounded-full bg-[var(--warning-bg)] px-1.5 text-xs font-semibold text-[var(--warning-text)]">
+                  {pendingReviewCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (
@@ -2260,7 +2282,8 @@ export default function JournalSection({
       <div className="mx-auto max-w-[1100px]">
         <div className="min-w-0">
 
-      {(searchOpen || journalSearchResult.isActive) && (
+      {(searchOpen || journalSearchResult.isActive) &&
+        (activeFullView !== null || centerTab === "timeline") && (
         <div className="mb-4 rounded-[14px] border border-[var(--line)] bg-[var(--surface)] p-3">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-[var(--line)] bg-white px-3 py-2">
@@ -2292,17 +2315,35 @@ export default function JournalSection({
               Ask about results
             </button>
           </div>
+          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+            Search spans Journal, Sources, and Review Queue.
+          </p>
           {journalSearchResult.isActive && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5">
-                {journalSearchResult.entryIds.length} timeline
-              </span>
-              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5">
-                {journalSearchResult.sourceIds.length} sources
-              </span>
-              <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5">
-                {journalSearchResult.reviewCandidateIds.length} review cards
-              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveFullView(null);
+                  setCenterTab("timeline");
+                }}
+                className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 hover:text-ink"
+              >
+                {journalSearchResult.entryIds.length} Timeline
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFullView("sources")}
+                className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 hover:text-ink"
+              >
+                {journalSearchResult.sourceIds.length} Sources
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFullView("review")}
+                className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 hover:text-ink"
+              >
+                {journalSearchResult.reviewCandidateIds.length} Review Queue
+              </button>
             </div>
           )}
         </div>
@@ -2310,14 +2351,14 @@ export default function JournalSection({
 
       {!activeFullView && centerTab === "timeline" && (
         <div className="mb-6 space-y-4">
-          {/* Current understanding — the main object on the page */}
+          {/* Current brief baseline — the main object on the page */}
           <div className="rounded-[20px] border border-[var(--line)] bg-[var(--surface)] p-6">
             <div className="flex items-start gap-4">
               <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--surface-muted)] text-[var(--ai-text)]">
                 <Sparkles className="size-4" />
               </div>
               <div className="min-w-0">
-                <h3 className="font-editorial text-xl font-semibold text-ink">Current understanding</h3>
+                <h3 className="font-editorial text-xl font-semibold text-ink">Current brief baseline</h3>
                 <p
                   className={`mt-2 text-sm leading-relaxed text-[var(--text-secondary)] ${
                     !heroExpanded && (briefContext.priority_summary?.length ?? 0) > 360
@@ -2347,8 +2388,8 @@ export default function JournalSection({
                   <li className="flex gap-2">
                     <span className="text-[var(--text-muted)]">•</span>
                     <span>
-                      {reviewCandidates.length > 0
-                        ? `${reviewCandidates.length} review candidate${reviewCandidates.length === 1 ? "" : "s"} awaiting a decision.`
+                      {pendingReviewCount > 0
+                        ? `${pendingReviewCount} review candidate${pendingReviewCount === 1 ? "" : "s"} awaiting a decision.`
                         : "No open review candidates."}
                     </span>
                   </li>
@@ -2386,7 +2427,7 @@ export default function JournalSection({
             </div>
           </div>
 
-          {/* Recommended next move — one specific action */}
+          {/* Brief next action — one specific action */}
           {briefContext.next_action && (
             <div className="flex items-start justify-between gap-4 rounded-[20px] border border-[var(--line)] bg-[var(--surface)] p-5">
               <div className="flex min-w-0 items-start gap-4">
@@ -2394,7 +2435,7 @@ export default function JournalSection({
                   <CheckCircle2 className="size-4" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-sm font-semibold text-ink">Recommended next move</h3>
+                  <h3 className="text-sm font-semibold text-ink">Brief next action</h3>
                   <p className="mt-1 text-sm text-[var(--text-secondary)]">{briefContext.next_action}</p>
                 </div>
               </div>
@@ -2430,7 +2471,9 @@ export default function JournalSection({
                   ? "Sources"
                   : activeFullView === "review"
                     ? "Review queue"
-                    : "Intelligence"}
+                    : activeFullView === "tasks"
+                      ? "To-dos"
+                      : "Intelligence"}
               </h2>
               <button
                 type="button"
@@ -2974,11 +3017,11 @@ export default function JournalSection({
                     type="button"
                     disabled={activeScopedDocumentIds.length === 0}
                     onClick={() => runSelectedSourcePrompt(
-                      "Review selected source health. Identify stale, duplicate, superseded, and conflicting evidence signals; explain which sources should be included, excluded, or reconciled before brief updates. Do not edit the brief.",
+                      "Review the automated checks for the selected sources. Identify stale, duplicate, superseded, and conflicting evidence signals; explain which sources should be included, excluded, or reconciled before brief updates. These checks do not establish source authority. Do not edit the brief.",
                     )}
                     className="rounded-md border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-2 py-1 text-xs font-medium text-[var(--warning-text)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Review selected source health
+                    Review automated checks
                   </button>
                 </div>
               )}
@@ -3258,7 +3301,7 @@ export default function JournalSection({
         </div>
       )}
 
-      {!activeFullView ? (
+      {!activeFullView && centerTab === "timeline" ? (
       <div className="sticky bottom-4 z-10 mt-6 rounded-[18px] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-sm">
         {replyingTo && (
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--text-secondary)]">

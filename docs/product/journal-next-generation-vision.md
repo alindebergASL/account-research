@@ -1,7 +1,7 @@
 # Next-Generation Journal Vision
 
 Status: product direction / living implementation guide
-Last updated: 2026-06-09
+Last updated: 2026-07-11
 
 This note captures the product research and brainstorming for evolving the account-research Journal from notes plus AI replies into a production-ready, next-generation team account-intelligence workspace.
 
@@ -11,7 +11,26 @@ The agreed starting path is:
 2. Brief Update Queue + Action/Decision extraction
 3. Account Intelligence Cockpit built on structured source/action/decision/question data
 
+## Product direction update — 2026-07-11
+
+Recent UI review found that the Journal's information architecture blurred persistent views with drawer tools, exposed composition outside its owning channel, duplicated review entry points, used counts and source-health language that could overstate certainty, and made cross-surface search results difficult to act on.
+
+The current organizing principle is **baseline → evidence → review → action**:
+
+1. **Baseline:** show the current brief state without presenting it as settled truth.
+2. **Evidence:** collect Journal entries and sources with clear provenance and honest automated-check language.
+3. **Review:** route proposed changes through one human review inbox with truthful pending counts.
+4. **Action:** turn reviewed evidence into brief changes, decisions, and tasks without silent mutation.
+
+Follow-up work should proceed in this order:
+
+1. Land the trust-and-clarity foundation in the existing Journal surface.
+2. Make workspaces URL-addressable and consolidate review into one inbox.
+3. Add evidence-backed decisions and tasks, then a change radar built on durable review state.
+
 ## Current implementation status
+
+> **Historical status note:** The implementation inventory below records the June 2026 shipped sequence and is retained as project history. References to five peer workspaces or a dedicated Intelligence workspace are stale where they no longer match the current UI; use the dated direction above for current IA and sequencing.
 
 This document started as a product reference note in PR #81. Since then, PRs #82-#108 have shipped the first production slices of the path above. The Journal is no longer only a brainstorm; it now has a workspace shell, source library, review workflow, advisory intelligence surface, click-to-source citation context, source health controls, assistant-to-review-card drafting, evidence snippets, structured review boards, Journal search/source-scoped recall, reviewed durable cockpit cards, cached dedicated catch-up windows for recent account changes, clearer source-action hierarchy, and a guided Intelligence cockpit loop.
 
@@ -20,22 +39,22 @@ Current production baseline on `main`:
 | Area | Status | Shipped in | Notes |
 | --- | --- | --- | --- |
 | Journal document uploads | Shipped | #78, #79 | Uploads extract text and can be used by Journal AI; workflow polish followed the first upload PR. |
-| Intelligence panel / advisory prompts | Production pass shipped; cached catch-up and guided cockpit loop now deployed | #80, #91, #96, #98, #100, #104, #108 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, reviewed cockpit summaries, and dedicated catch-up windows. Repeated catch-up summaries can now reuse durable advisory cache entries keyed by window, source scope, exclusions, and cockpit/source fingerprint, and the Intelligence workspace explains the catch-up → review → promote loop with source-scope/freshness provenance. |
+| Intelligence panel / advisory prompts | **Stale UI status:** Production pass shipped; cached catch-up and guided cockpit loop now deployed | #80, #91, #96, #98, #100, #104, #108 | Users can ask for digests, brief-update candidates, follow-ups, open questions, search-scoped recall, reviewed cockpit summaries, and dedicated catch-up windows. Repeated catch-up summaries can now reuse durable advisory cache entries keyed by window, source scope, exclusions, and cockpit/source fingerprint, and the Intelligence workspace explains the catch-up → review → promote loop with source-scope/freshness provenance. |
 | Product direction note | Shipped | #81, #90; updated by #95, #99, #101 and post-#108 alignment | This file became the guiding reference for subsequent Journal PRs and is kept current after shipped batches. |
-| Workspaces + source library | First production pass shipped; density polish shipped | #82, #84, #86, #87, #93, #107 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, show first-pass health labels, separate included/excluded source counts, and keep secondary source actions behind progressive disclosure. |
+| Workspaces + source library | **Stale five-workspace IA:** First production pass shipped; density polish shipped | #82, #84, #86, #87, #93, #107 | Tabs exist for Team Room, Timeline, Sources, Intelligence, and Review Queue. Sources combine uploaded Journal documents with Brief baseline sources, expose include/exclude controls, show first-pass health labels, separate included/excluded source counts, and keep secondary source actions behind progressive disclosure. |
 | Brief-grounded review queue | First production pass shipped; reviewable assistant cards shipped | #83, #84, #85, #91, #94, #106 | Review candidate cards exist for brief updates, actions, decisions, and open questions; assistant replies can now split multi-candidate suggestions into reviewable cards with Add to Review Queue / edit-before-adding affordances; structured board lanes group candidate types. No automatic brief mutation. |
-| Team Room separation | Shipped | #86 | General teammate discussion is separated from source-grounded Timeline evidence and made the default workspace. |
+| Team Room separation | Shipped; historical default later superseded | #86 | General teammate discussion is separated from source-grounded Timeline evidence. PR #86 made Team Room the default at that time; the current Journal opens on the Timeline. |
 | Citation/source trust layer | First production pass shipped | #78-#89, #92 | Journal assistant answers can include server-formatted source legends and `[J]`/`[D]` labels, source link rendering is hardened, spoofed legend blocks are ignored, citation chips open source context, and trusted legend entries can produce evidence snippets. True passage-level highlighting and exact-quote extraction are still future polish. |
-| Account Intelligence Cockpit | Durable projection foundation shipped; guided Intelligence polish shipped | #80, #85, #94, #98, #102, #103, #104, #108 | The UI has an Intelligence surface, review workflow, structured review boards, reviewed-only cockpit cards, a durable cockpit read model/API, UI consumption of that projection, catch-up caching keyed to cockpit/source invalidation, and a clearer catch-up → review → promote cockpit workflow with source-scope/freshness provenance. Source-change rollups and richer lifecycle metadata remain future work. |
+| Account Intelligence Cockpit | **Stale UI status:** Durable projection foundation shipped; guided Intelligence polish shipped | #80, #85, #94, #98, #102, #103, #104, #108 | The UI has an Intelligence surface, review workflow, structured review boards, reviewed-only cockpit cards, a durable cockpit read model/API, UI consumption of that projection, catch-up caching keyed to cockpit/source invalidation, and a clearer catch-up → review → promote cockpit workflow with source-scope/freshness provenance. Source-change rollups and richer lifecycle metadata remain future work. |
 
 ### Shipped foundation
 
-- Journal Workspaces: Team Room, Timeline, Sources, Intelligence, and Review Queue.
-- Team Room is the default collaboration space and is separate from evidence/timeline entries.
+- **Stale five-workspace IA:** Journal Workspaces: Team Room, Timeline, Sources, Intelligence, and Review Queue.
+- Team Room is a separate collaboration space; the current Journal opens on the Timeline. (Team Room was the default in the historical #86 design.)
 - Source Library shows uploaded Journal documents plus Brief baseline sources, separates included/excluded counts, and keeps secondary per-source actions behind progressive disclosure.
 - Source previews exist for uploaded documents.
 - Uploaded sources can scope assistant questions and can be excluded from assistant context.
-- Source Library shows first-pass source health labels for current, stale, duplicate, superseded, and conflicting uploads.
+- Source Library shows automated checks for stale, duplicate, superseded, and conflicting uploads; a clean check says only that no automated issue was detected, not that the source is authoritative.
 - Review Queue stores human-review candidates without silently editing the Brief.
 - Assistant replies can split multi-candidate output into reviewable cards while preserving trusted evidence labels.
 - Candidate status supports New, Reviewing, Accepted, Sent to brief chat, Applied, and Dismissed.
@@ -50,7 +69,7 @@ Current production baseline on `main`:
 - The cockpit UI/API now consumes that durable projection instead of deriving all cockpit cards from transient local candidate state.
 - Dedicated Journal catch-up prompts cover 24-hour, 7-day, and all-history windows, pass `journal_context_since` and `journal_catch_up_window` into the assistant route, and preserve the advisory/no-brief-mutation boundary.
 - Repeated catch-up summaries can be cached and reused when the window, context timestamp, scoped sources, excluded sources, and cockpit/source fingerprint match.
-- The Intelligence workspace now presents a guided catch-up → review suggestions → promote cockpit signals loop, with visible source-scope and catch-up freshness provenance.
+- **Stale UI status:** The Intelligence workspace now presents a guided catch-up → review suggestions → promote cockpit signals loop, with visible source-scope and catch-up freshness provenance.
 
 ### Still partial / future
 
@@ -62,9 +81,11 @@ Current production baseline on `main`:
 
 ### Recommended next implementation slice
 
+> **Superseded sequencing:** This June recommendation is retained for decision history. The current follow-up sequence is the trust/clarity foundation, URL-addressable workspaces plus one review inbox, then evidence-backed decisions/tasks and change radar, as recorded in the 2026-07-11 update above.
+
 Two tracks are now in flight.
 
-**Track A — Journal UX decomposition + redesign (in progress).** `JournalSection.tsx` had grown to ~2,750 lines. PR-A (#110) extracts the stable substrate (domain types, prompt catalogs, pure helpers) into `app/brief/[id]/journal/` with no behavior change. PR-B follows with a bolder Intelligence-cockpit redesign that re-componentizes the five workspaces and their cards as they are restyled. Treat this as a prerequisite for sustainable feature work: new lifecycle / rollup UI should land in the redesigned, decomposed surface rather than deeper into the monolith.
+**Track A — Journal UX decomposition + redesign (historical; five-workspace/Intelligence target is stale).** `JournalSection.tsx` had grown to ~2,750 lines. PR-A (#110) extracts the stable substrate (domain types, prompt catalogs, pure helpers) into `app/brief/[id]/journal/` with no behavior change. PR-B follows with a bolder Intelligence-cockpit redesign that re-componentizes the five workspaces and their cards as they are restyled. Treat this as a prerequisite for sustainable feature work: new lifecycle / rollup UI should land in the redesigned, decomposed surface rather than deeper into the monolith.
 
 **Track B — Durable source-resolution lifecycle, then source-change rollups.** The reviewable assistant-card flow (#106), source hierarchy/density pass (#107), and guided Intelligence cockpit polish (#108) are shipped on top of the durable cockpit read-model (#102/#103) and catch-up cache (#104). The next durable-systems bottleneck is moving source health beyond heuristics and giving accepted facts richer metadata without weakening the human-review boundary.
 

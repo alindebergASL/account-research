@@ -63,15 +63,45 @@ test("JournalSection default render is Timeline-first with Team Room as a sub-ta
     }),
   );
 
-  // PR-D editorial IA: the default Journal view leads with the account header and
-  // the "Current understanding" hero; Journal is the active mode, Team Room a tab.
+  // The default Journal view leads with the account header and truthful baseline;
+  // Journal and Team Room are the only persistent view tabs.
   const journalIndex = html.indexOf("Journal");
   const teamIndex = html.indexOf("Team Room");
   assert.ok(journalIndex >= 0, "Journal mode tab should render");
   assert.ok(teamIndex >= 0, "Team Room tab should render");
   assert.match(html, /aria-selected="true"[^>]*>Journal/);
-  assert.match(html, /Current understanding/);
+  assert.match(html, /Current brief baseline/);
+  assert.doesNotMatch(html, /Current understanding/);
+  assert.match(html, /Brief next action/);
+  assert.doesNotMatch(html, /Recommended next move/);
+  assert.match(html, /role="group" aria-label="Journal tools"/);
+  assert.match(html, /aria-label="Journal tools"[\s\S]*>To-dos</);
+  assert.match(html, /aria-label="Journal tools"[\s\S]*>Sources</);
+  assert.match(html, /aria-label="Journal tools"[\s\S]*>Review Queue</);
+  assert.doesNotMatch(html, /role="tab"[^>]*>To-dos/);
+  assert.doesNotMatch(html, /role="tab"[^>]*>Sources/);
+  assert.doesNotMatch(html, /role="tab"[^>]*>Review Queue/);
   // Editorial header grounds in the account + brief baseline.
   assert.match(html, /California Community Colleges System/);
   assert.match(html, /Brief baseline summary/);
+});
+
+test("JournalSection source encodes timeline-only composition and navigable global search", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /Search spans Journal, Sources, and Review Queue\./);
+  assert.match(source, /const active = centerTab === id;/);
+  assert.doesNotMatch(source, /const active = !activeFullView && centerTab === id;/);
+  assert.match(
+    source,
+    /if \(centerTab !== "timeline" \|\| activeFullView !== null\) \{[\s\S]*setCenterTab\("timeline"\);[\s\S]*setSearchOpen\(true\);[\s\S]*return;/,
+  );
+  assert.match(source, /onClick=\{\(\) => setActiveFullView\("sources"\)\}/);
+  assert.match(source, /onClick=\{\(\) => setActiveFullView\("review"\)\}/);
+  assert.match(source, /!activeFullView && centerTab === "timeline" \? \(/);
+  assert.match(source, /activeFullView === "tasks"[\s\S]*\? "To-dos"/);
+  assert.match(source, />Automated checks</);
 });
