@@ -12,10 +12,8 @@ function trimError(err: string | null): string | null {
 }
 
 // GET /api/research-jobs/[id] — job detail for owner / admin / brief-manager.
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -94,10 +92,8 @@ export async function GET(
 //             If pipeline finishes after cancel, brief is discarded.
 //   already terminal → 409.
 //   non-owner / non-admin → 404 (avoid leaking existence).
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

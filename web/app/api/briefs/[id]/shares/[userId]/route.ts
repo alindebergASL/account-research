@@ -6,8 +6,9 @@ export const runtime = "nodejs";
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; userId: string } },
+  props: { params: Promise<{ id: string; userId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -30,8 +31,9 @@ export async function DELETE(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string; userId: string } },
+  props: { params: Promise<{ id: string; userId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

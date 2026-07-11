@@ -4,7 +4,10 @@ import { CapabilityProposalClient } from "./CapabilityProposalClient";
 
 export const dynamic = "force-dynamic";
 
-export default function CapabilityProposalPage({ searchParams }: { searchParams: { briefId?: string; capabilityProposalId?: string } }) {
+export default async function CapabilityProposalPage(
+  props: { searchParams: Promise<{ briefId?: string; capabilityProposalId?: string }> }
+) {
+  const searchParams = await props.searchParams;
   if (!hermesGenerativeCanvasEnabled()) notFound();
   const { briefId, capabilityProposalId } = searchParams;
   if (!briefId || !capabilityProposalId) {

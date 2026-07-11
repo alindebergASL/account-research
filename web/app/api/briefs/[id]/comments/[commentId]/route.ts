@@ -25,8 +25,9 @@ function loadComment(briefId: string, commentId: string): BriefCommentRow | null
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string; commentId: string } },
+  props: { params: Promise<{ id: string; commentId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -87,8 +88,9 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; commentId: string } },
+  props: { params: Promise<{ id: string; commentId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

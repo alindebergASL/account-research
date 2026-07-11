@@ -20,10 +20,8 @@ function authError(e: unknown) {
 
 // Read the per-brief monitoring status + recent run history for the Monitoring
 // panel. Available to any reader of the brief.
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -63,10 +61,8 @@ export async function GET(
 // Toggle the per-brief daily monitor. Available to admins + editors (owner /
 // admin / editor) via canWriteBrief. Enabling (false -> true) also enqueues an
 // immediate monitor check so the first run happens right away.
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

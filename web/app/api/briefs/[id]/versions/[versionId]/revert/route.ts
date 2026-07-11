@@ -14,8 +14,9 @@ function authError(e: unknown) {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string; versionId: string } },
+  props: { params: Promise<{ id: string; versionId: string }> }
 ) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

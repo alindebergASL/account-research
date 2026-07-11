@@ -6,10 +6,8 @@ export const runtime = "nodejs";
 
 // PATCH /api/admin/users/[id]/notifications — admin-only.
 // Body: { email_notifications_enabled: boolean }
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     requireAdmin(req);
   } catch (e) {

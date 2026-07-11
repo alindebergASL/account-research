@@ -3,7 +3,8 @@ module.exports = {
   reactStrictMode: true,
   experimental: {
     serverActions: { bodySizeLimit: "2mb" },
-    instrumentationHook: true,
+    // Next 15: instrumentationHook was removed — instrumentation.ts is stable
+    // and always enabled, so the flag is simply dropped.
   },
   async headers() {
     return [

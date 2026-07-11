@@ -4,7 +4,8 @@ import { CanvasRuntimeClient } from "./CanvasRuntimeClient";
 
 export const dynamic = "force-dynamic";
 
-export default function CanvasRuntimePage({ searchParams }: { searchParams: { briefId?: string } }) {
+export default async function CanvasRuntimePage(props: { searchParams: Promise<{ briefId?: string }> }) {
+  const searchParams = await props.searchParams;
   if (!hermesGenerativeCanvasEnabled()) notFound();
   const briefId = searchParams.briefId;
   if (!briefId) {

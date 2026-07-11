@@ -8,10 +8,8 @@ export const runtime = "nodejs";
 // Public, no auth. Returns the sanitized brief if the token is live.
 // Always 404s on invalid/expired/revoked — never differentiates the
 // reason (no leakage about whether a token ever existed).
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { token: string } },
-) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const link = db()
     .prepare(`SELECT * FROM brief_share_links WHERE token = ?`)
     .get(params.token) as ShareLinkRow | undefined;

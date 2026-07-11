@@ -34,10 +34,8 @@ function loadEntryDto(briefId: string, entryId: string) {
 
 // Import a web link as a journal source. Fetch + extraction happen in
 // importJournalLink with SSRF guards; this route handles auth + persistence.
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

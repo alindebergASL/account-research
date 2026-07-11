@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, use } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Brief } from "@/lib/schema";
@@ -19,7 +19,8 @@ type Access = {
   shared_by_email: string | null;
 };
 
-export default function BriefPage({ params }: { params: { id: string } }) {
+export default function BriefPage(props: { params: Promise<{ id: string }> }) {
+  const params = use(props.params);
   const [brief, setBrief] = useState<Brief | null>(null);
   const [access, setAccess] = useState<Access | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);

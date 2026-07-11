@@ -26,10 +26,8 @@ function authError(e: unknown) {
 // the public share-view list endpoint.
 const rowToDto = rowToAuthenticatedDto;
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
@@ -46,10 +44,8 @@ export async function GET(
   return NextResponse.json({ comments: rows.map(rowToDto) });
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

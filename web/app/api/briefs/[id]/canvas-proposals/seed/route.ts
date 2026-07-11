@@ -12,7 +12,8 @@ export const runtime = "nodejs";
  * - Auth via `requireGenerativeCanvasWrite` (flag + canWriteBrief).
  * - Idempotent per brief: re-clicking will not create duplicate proposals.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = requireGenerativeCanvasWrite(req, params.id);
   if (user instanceof NextResponse) return user;
   try {

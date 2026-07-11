@@ -10,10 +10,8 @@ export const runtime = "nodejs";
 // Same intake_json, fresh row, status='queued'. Sets retry_of_job_id so the
 // chain is auditable. Owner or admin only; viewers are blocked since they
 // can't start research at all.
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);

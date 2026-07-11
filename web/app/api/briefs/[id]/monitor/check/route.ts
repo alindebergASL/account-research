@@ -14,10 +14,8 @@ function authError(e: unknown) {
 
 // On-demand "Check now": enqueue a monitor job immediately (deduped against any
 // queued/running job). Only when monitoring is enabled. Editor-or-better.
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let user;
   try {
     user = requireUser(req);
