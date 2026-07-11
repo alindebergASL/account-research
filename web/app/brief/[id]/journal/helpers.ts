@@ -26,6 +26,18 @@ export function groupReviewCandidatesByType(
   };
 }
 
+export function isPendingReviewCandidate(
+  candidate: Pick<ReviewCandidate, "status">,
+): boolean {
+  return candidate.status === "new" || candidate.status === "reviewing";
+}
+
+export function countPendingReviewCandidates(
+  candidates: readonly Pick<ReviewCandidate, "status">[],
+): number {
+  return candidates.filter(isPendingReviewCandidate).length;
+}
+
 export function emptyCockpitCards(): Record<ReviewCandidateType, JournalCockpitReadModelItem[]> {
   return {
     brief_update: [],
@@ -260,7 +272,7 @@ export function sourceHealthBadges(
   if (badges.length === 0) {
     badges.push({
       status: "current",
-      label: "current",
+      label: "No automated issue detected",
       description: "No freshness, duplicate, superseded, or conflict signal detected.",
     });
   }

@@ -156,6 +156,59 @@ function readJournalSectionSource(): string {
     .join("\n\n");
 }
 
+test("pending review helpers treat only new and reviewing candidates as pending", () => {
+  const helpers = require("../web/app/brief/[id]/journal/helpers") as typeof import("../web/app/brief/[id]/journal/helpers");
+  const statuses = [
+    "new",
+    "reviewing",
+    "accepted",
+    "sent_to_brief_chat",
+    "applied",
+    "dismissed",
+  ] as const;
+
+  assert.deepEqual(
+    statuses.map((status) => [status, helpers.isPendingReviewCandidate({ status })]),
+    [
+      ["new", true],
+      ["reviewing", true],
+      ["accepted", false],
+      ["sent_to_brief_chat", false],
+      ["applied", false],
+      ["dismissed", false],
+    ],
+  );
+  assert.equal(
+    helpers.countPendingReviewCandidates(statuses.map((status) => ({ status }))),
+    2,
+  );
+});
+
+test("source automated checks use a neutral label when no issue is detected", () => {
+  const helpers = require("../web/app/brief/[id]/journal/helpers") as typeof import("../web/app/brief/[id]/journal/helpers");
+  const source = {
+    id: "source-clean",
+    filename: "account-notes.txt",
+    mime_type: "text/plain",
+    byte_size: 128,
+    created_at: Date.now(),
+    content_preview: "Routine account notes.",
+    source_url: null,
+    entryId: "entry-clean",
+    entryAuthor: "Account owner",
+    entryBody: "Routine account notes.",
+    entryCreatedAt: Date.now(),
+  };
+
+  assert.deepEqual(helpers.sourceHealthBadges(source, [source]), [
+    {
+      status: "current",
+      label: "No automated issue detected",
+      description: "No freshness, duplicate, superseded, or conflict signal detected.",
+    },
+  ]);
+});
+
 test("migration creates journal_documents table and indexes", () => {
   const names = (db()
     .prepare(
@@ -2267,8 +2320,8 @@ test("JournalSection grounds workspaces in the current brief baseline", () => {
   assert.match(journalSource, /type JournalBriefContext/);
   assert.match(journalSource, /briefContext/);
   assert.match(journalSource, /Brief baseline/);
-  assert.match(journalSource, /Current understanding/);
-  assert.match(journalSource, /Recommended next move/);
+  assert.match(journalSource, /Current brief baseline/);
+  assert.match(journalSource, /Brief next action/);
   assert.match(journalSource, /briefContext\.next_action/);
   assert.match(journalSource, /Compare evidence against the current brief baseline/);
   assert.match(journalSource, /Brief-grounded review/);
@@ -2375,14 +2428,15 @@ test("JournalSection keeps deleted timeline entries behind an audit toggle by de
   assert.match(journalSource, /Hide audit entries/);
 });
 
-test("JournalSection exposes source controls, source health, and source-scoped actions", () => {
+test("JournalSection exposes source controls, honest automated checks, and source-scoped actions", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const journalSource = readJournalSectionSource();
 
   assert.match(journalSource, /type SourceHealthStatus/);
   assert.match(journalSource, /function sourceHealthBadges/);
-  assert.match(journalSource, /Source health/);
+  assert.match(journalSource, /Automated checks/);
+  assert.doesNotMatch(journalSource, /Source health/);
   assert.match(journalSource, /stale/);
   assert.match(journalSource, /duplicate/);
   assert.match(journalSource, /superseded/);
@@ -2396,7 +2450,8 @@ test("JournalSection exposes source controls, source health, and source-scoped a
   assert.match(journalSource, /Excluded from AI context/);
   assert.match(journalSource, /setScopedDocumentIds\(\(ids\) => ids\.filter\(\(id\) => id !== source\.id\)\)/);
   assert.match(journalSource, /Ask about selected sources/);
-  assert.match(journalSource, /Review selected source health/);
+  assert.match(journalSource, /Review the automated checks for the selected sources/);
+  assert.match(journalSource, /These checks do not establish source authority/);
   assert.match(journalSource, /source-scoped prompts only include selected, non-excluded uploads/);
 });
 
