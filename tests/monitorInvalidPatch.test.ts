@@ -87,9 +87,10 @@ function insertRunningMonitorJob(briefId: string, userId: string, accountName: s
   return db().prepare(`SELECT * FROM research_jobs WHERE id = ?`).get(id);
 }
 
-test("monitor ignores malformed extension patches while applying valid updates", async () => {
+test("monitor ignores malformed extension patches while queueing valid updates for review", async () => {
   const ownerId = (db().prepare("SELECT id FROM users LIMIT 1").get() as { id: string }).id;
   const briefId = insertBrief(ownerId, makeBrief("Los Angeles Superior Court"));
+  const beforeJson = (db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json;
 
   __setTestMonitorClient({
     messages: {
@@ -143,6 +144,16 @@ test("monitor ignores malformed extension patches while applying valid updates",
   const row = db().prepare("SELECT brief_json, last_monitored_at FROM briefs WHERE id = ?").get(briefId) as any;
   const after = JSON.parse(row.brief_json);
   assert.equal(typeof row.last_monitored_at, "number");
+  assert.equal(row.brief_json, beforeJson);
   assert.equal(after.extensions.length, 0);
-  assert.equal(after.recent_signals.some((s: any) => s.text === "New court update"), true);
+  assert.equal(after.recent_signals.some((s: any) => s.text === "New court update"), false);
+  const candidates = db().prepare(
+    "SELECT candidate_type, target, proposed_text, current_baseline, risk FROM journal_review_candidates WHERE brief_id = ?",
+  ).all(briefId) as any[];
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].candidate_type, "brief_update");
+  assert.equal(candidates[0].target, "recent_signals");
+  assert.match(candidates[0].current_baseline, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.parse(candidates[0].risk).origin, "monitor");
+  assert.equal((db().prepare("SELECT outcome FROM monitor_runs WHERE job_id = ?").get(job.id) as any).outcome, "candidate_queued");
 });

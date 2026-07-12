@@ -8,7 +8,7 @@ type Cadence = "daily" | "every_3_days" | "weekly";
 type MonitorRun = {
   id: string;
   ran_at: number;
-  outcome: "no_updates" | "updated" | "failed";
+  outcome: "no_updates" | "candidate_queued" | "updated" | "failed";
   tier: "triage_only" | "deep";
   summary: string | null;
   patches_applied: number;
@@ -150,6 +150,13 @@ export default function MonitoringPanel({
   if (!open) return null;
 
   const outcomeBadge = (run: MonitorRun) => {
+    if (run.outcome === "candidate_queued") {
+      return (
+        <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--warning-bg)] px-2 py-0.5 text-xs font-medium text-[var(--warning-text)]">
+          Review candidate queued
+        </span>
+      );
+    }
     if (run.outcome === "updated") {
       return (
         <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--success-bg)] px-2 py-0.5 text-xs font-medium text-[var(--success-text)]">
@@ -197,7 +204,7 @@ export default function MonitoringPanel({
 
         <div className="flex-1 p-5">
           <p className="text-sm text-[var(--text-secondary)]">
-            An automatic agent checks this account for genuinely new developments and keeps the brief current. Updates apply automatically and are posted to the Journal.
+            An automatic agent checks this account for genuinely new developments. Suggested field changes are queued in Radar for human review and manual incorporation.
           </p>
 
           {error && (

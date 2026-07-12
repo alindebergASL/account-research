@@ -500,6 +500,14 @@ export type ResearchPipelineContext = {
   brief_id?: string | null;
 };
 
+let testResearchRunner: ((intake: Intake, ctx?: ResearchPipelineContext) => Promise<PipelineResult>) | null = null;
+
+export function __setTestResearchPipelineRunner(
+  runner: ((intake: Intake, ctx?: ResearchPipelineContext) => Promise<PipelineResult>) | null,
+): void {
+  testResearchRunner = runner;
+}
+
 export async function runResearchPipeline(
   intake: Intake,
   ctx?: ResearchPipelineContext,
@@ -507,6 +515,7 @@ export async function runResearchPipeline(
   if (!intake.account || !intake.account.trim()) {
     throw new PipelineError("Missing 'account' name");
   }
+  if (testResearchRunner) return testResearchRunner(intake, ctx);
 
   // Dispatcher: route through Hermes runtime when the per-feature flag
   // is on. Fake-provider verification stays on the direct path so the

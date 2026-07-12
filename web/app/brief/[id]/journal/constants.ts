@@ -26,9 +26,9 @@ export const candidateTypeLabels: Record<ReviewCandidateType, string> = {
 export const candidateStatusLabels: Record<ReviewCandidateStatus, string> = {
   new: "New",
   reviewing: "Reviewing",
-  accepted: "Accepted",
-  sent_to_brief_chat: "Sent to brief chat",
-  applied: "Applied",
+  accepted: "Accepted for manual incorporation",
+  sent_to_brief_chat: "Marked for manual incorporation",
+  applied: "Manually incorporated",
   dismissed: "Dismissed",
 };
 
@@ -59,7 +59,7 @@ export const STRUCTURED_REVIEW_BOARDS: Array<{
   {
     type: "brief_update",
     title: "Brief updates",
-    description: "Field-level account brief changes to send through the normal versioned brief flow.",
+    description: "Field-level account brief changes for human review and manual incorporation.",
     empty: "No brief update candidates yet.",
   },
 ];
@@ -99,7 +99,7 @@ export const INTELLIGENCE_ACTIONS: IntelligenceAction[] = [
   },
   {
     label: "Find brief update candidates",
-    description: "Field-level suggestions to send to brief chat.",
+    description: "Field-level suggestions for human review and manual incorporation.",
     prompt:
       "Find brief update candidates supported by the recent journal notes and uploaded documents. For each candidate include the target brief section or field, which current brief claim it supports, contradicts, or updates, proposed change, confidence, and evidence source labels like [J1] or [D1]. Do not claim you edited the brief.",
   },
@@ -123,7 +123,7 @@ export const REVIEW_QUEUE_ACTIONS: IntelligenceAction[] = [
     description: "Proposed brief changes with target fields, confidence, and evidence.",
     primary: true,
     prompt:
-      "Create a review queue of brief update candidates from recent journal notes and uploaded documents. For each candidate include: target brief section or field, current brief baseline or claim, proposed text, evidence source labels like [J1] or [D1], confidence, risk of applying, and suggested reviewer action. Do not claim you edited the brief; this is a human-review queue only.",
+      "Create a review queue of brief update candidates from recent journal notes and uploaded documents. For each candidate include: target brief section or field, current brief baseline or claim, proposed text, evidence source labels like [J1] or [D1], confidence, incorporation risk, and suggested reviewer action. Do not claim you edited the brief; this is a human-review queue only.",
   },
   {
     label: "Review action items",

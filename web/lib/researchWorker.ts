@@ -22,22 +22,22 @@ import {
 } from "./email";
 import { Brief as BriefSchema, type Brief } from "./schema";
 import { mergeBriefs } from "./briefMerge";
-import { snapshotBriefVersion } from "./briefVersions";
 import {
+  createBriefEventStrict,
   logBriefCreated,
-  logBriefMonitored,
-  logBriefRefreshed,
-  logBriefVersionSnapshot,
   logJobCompleted,
 } from "./briefEvents";
 import { applyPatches, type BriefPatch } from "./briefPatches";
 import { runMonitorCheck, emptyMonitorUsage } from "./monitor";
-import { insertJournalEntry } from "./journal";
 import { recordMonitorRun, type MonitorRunTier } from "./monitorRuns";
-import { listBriefEmailRecipients } from "./briefRecipients";
-import { sendBriefMonitorUpdateEmail } from "./email";
 import { maybeRunDailySchedule } from "./monitorScheduler";
-import { neutralizeSourceLegendMarkers } from "./journalSourceLegend";
+import { canWriteBrief, findUserById, publicUser } from "./auth";
+import {
+  BriefUpdateProposalError,
+  insertPreparedBriefUpdateCandidates,
+  patchesFromWholeBrief,
+  prepareBriefUpdateCandidates,
+} from "./briefUpdateReviewBoundary";
 
 const POLL_INTERVAL_MS = 2000;
 const MONITOR_ALLOWED_PATCH_FIELDS = new Set([
@@ -150,9 +150,11 @@ function saveBriefAndMarkJobDone(
   return briefId;
 }
 
-function refreshBriefAndMarkJobDone(
+function queueRefreshCandidatesAndMarkJobDone(
   job: ResearchJobRow,
-  merged: Brief,
+  baselineJson: string,
+  baseline: Brief,
+  proposed: Brief,
   stages: StageUsage[],
   costUsdCents: number | null,
 ): string {
@@ -160,20 +162,53 @@ function refreshBriefAndMarkJobDone(
   const conn = db();
   const usageJson = JSON.stringify({ stages, total: aggregateUsage(stages) });
   const tx = conn.transaction(() => {
-    conn
-      .prepare(
-        `UPDATE briefs
-         SET account_name = ?, segment = ?, audience = ?, generated_at = ?, brief_json = ?
-         WHERE id = ?`,
-      )
-      .run(
-        merged.account_name,
-        merged.segment,
-        merged.audience,
-        merged.generated_at,
-        JSON.stringify(merged),
-        job.target_brief_id,
-      );
+    const state = conn.prepare(
+      `SELECT j.status AS job_status, b.brief_json AS brief_json
+         FROM research_jobs j JOIN briefs b ON b.id = j.target_brief_id
+        WHERE j.id = ? AND b.id = ?`,
+    ).get(job.id, job.target_brief_id) as
+      | { job_status: string; brief_json: string }
+      | undefined;
+    const active = findUserById(job.user_id);
+    if (!state || state.job_status !== "running" || state.brief_json !== baselineJson
+      || !active || !canWriteBrief(publicUser(active), job.target_brief_id!)) {
+      throw new BriefUpdateProposalError("refresh authorization or baseline changed");
+    }
+    const patches = patchesFromWholeBrief(baseline, proposed);
+    if (patches.length > 0) {
+      const candidates = prepareBriefUpdateCandidates({
+        baselineJson,
+        baseline,
+        patches,
+        context: {
+          origin: "refresh",
+          source: "research_pipeline",
+          jobId: job.id,
+          actorUserId: job.user_id,
+          evidence: "Existing-Brief refresh research proposal",
+        },
+      });
+      insertPreparedBriefUpdateCandidates({
+        briefId: job.target_brief_id!,
+        actorUserId: job.user_id,
+        candidates,
+      });
+      createBriefEventStrict({
+        brief_id: job.target_brief_id,
+        job_id: job.id,
+        actor_user_id: job.user_id,
+        actor_type: "worker",
+        event_type: "brief_update_candidates_queued",
+        title: "Field-level candidates queued for manual review",
+        summary: `${candidates.length} field-level candidate(s) queued for manual review`,
+        metadata: {
+          origin: "refresh",
+          job_id: job.id,
+          candidate_count: candidates.length,
+          touched_fields: Array.from(new Set(patches.map((patch) => patch.field))),
+        },
+      });
+    }
     conn
       .prepare(
         `UPDATE research_jobs
@@ -186,7 +221,11 @@ function refreshBriefAndMarkJobDone(
       )
       .run(job.target_brief_id, usageJson, costUsdCents, Date.now(), job.id);
   });
-  tx();
+  try {
+    tx.immediate();
+  } catch {
+    throw new BriefUpdateProposalError();
+  }
   return job.target_brief_id;
 }
 
@@ -222,21 +261,24 @@ export function recoverStuckJobs() {
 }
 
 // Mark a monitor no-op done atomically only if it is still enabled/running.
-function markMonitorNoopDone(job: ResearchJobRow, now: number): boolean {
+function markMonitorNoopDone(job: ResearchJobRow, now: number, baselineJson: string): boolean {
   if (!job.target_brief_id) return false;
   const conn = db();
   const tx = conn.transaction(() => {
     const state = conn
       .prepare(
-        `SELECT j.status AS job_status, b.monitor_enabled AS monitor_enabled
+        `SELECT j.status AS job_status, b.monitor_enabled AS monitor_enabled, b.brief_json AS brief_json
            FROM research_jobs j
            JOIN briefs b ON b.id = j.target_brief_id
           WHERE j.id = ? AND b.id = ?`,
       )
       .get(job.id, job.target_brief_id) as
-      | { job_status: string; monitor_enabled: number }
+      | { job_status: string; monitor_enabled: number; brief_json: string }
       | undefined;
-    if (!state || state.job_status !== "running" || state.monitor_enabled !== 1) {
+    const active = findUserById(job.user_id);
+    if (!state || state.job_status !== "running" || state.monitor_enabled !== 1
+      || state.brief_json !== baselineJson || !active
+      || !canWriteBrief(publicUser(active), job.target_brief_id!)) {
       return false;
     }
     conn
@@ -252,12 +294,16 @@ function markMonitorNoopDone(job: ResearchJobRow, now: number): boolean {
   return tx();
 }
 
-function commitMonitorUpdate(
+function commitMonitorCandidates(
   job: ResearchJobRow,
   now: number,
-  previousBriefJson: string,
-  updatedBriefJson: string,
-): { versionId: string; versionNo: number } | "stale" | null {
+  baselineJson: string,
+  baseline: Brief,
+  patches: BriefPatch[],
+  summary: string,
+  tier: MonitorRunTier,
+  usageJson: string | null,
+): "queued" | "stale" | null {
   if (!job.target_brief_id) return null;
   const conn = db();
   const tx = conn.transaction(() => {
@@ -274,41 +320,63 @@ function commitMonitorUpdate(
     if (!state || state.job_status !== "running" || state.monitor_enabled !== 1) {
       return null;
     }
-    if (state.brief_json !== previousBriefJson) {
+    const active = findUserById(job.user_id);
+    if (!active || !canWriteBrief(publicUser(active), job.target_brief_id!)) {
+      return null;
+    }
+    if (state.brief_json !== baselineJson) {
       return "stale";
     }
-    const versionId = newId();
-    const versionRow = conn
-      .prepare(`SELECT COALESCE(MAX(version_no), 0) + 1 AS n FROM brief_versions WHERE brief_id = ?`)
-      .get(job.target_brief_id) as { n: number } | undefined;
-    const versionNo = versionRow?.n ?? 1;
+    const candidates = prepareBriefUpdateCandidates({
+      baselineJson,
+      baseline,
+      patches,
+      context: {
+        origin: "monitor",
+        source: "monitor",
+        jobId: job.id,
+        actorUserId: job.user_id,
+        evidence: summary || "Automated monitor proposal",
+      },
+    });
+    insertPreparedBriefUpdateCandidates({
+      briefId: job.target_brief_id!,
+      actorUserId: job.user_id,
+      candidates,
+    });
+    const touchedFields = Array.from(new Set(patches.map((patch) => patch.field)));
     conn
-      .prepare(
-        `INSERT INTO brief_versions
-          (id, brief_id, version_no, brief_json, reason, triggered_by, refresh_job_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        versionId,
-        job.target_brief_id,
-        versionNo,
-        previousBriefJson,
-        "pre-monitor",
-        job.user_id,
-        job.id,
-        now,
-      );
-    conn
-      .prepare(`UPDATE briefs SET brief_json = ?, last_monitored_at = ? WHERE id = ?`)
-      .run(updatedBriefJson, now, job.target_brief_id);
+      .prepare(`UPDATE briefs SET last_monitored_at = ? WHERE id = ?`)
+      .run(now, job.target_brief_id);
     conn
       .prepare(
         `UPDATE research_jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running'`,
       )
       .run(now, job.id);
-    return { versionId, versionNo };
+    recordMonitorRun({
+      briefId: job.target_brief_id!, jobId: job.id, outcome: "candidate_queued",
+      tier, summary: summary || null, patchesApplied: 0,
+      touchedFields,
+      usageJson,
+    });
+    createBriefEventStrict({
+      brief_id: job.target_brief_id,
+      job_id: job.id,
+      actor_user_id: job.user_id,
+      actor_type: "worker",
+      event_type: "brief_update_candidates_queued",
+      title: "Field-level candidates queued for manual review",
+      summary: `${candidates.length} field-level candidate(s) queued for manual review`,
+      metadata: {
+        origin: "monitor",
+        job_id: job.id,
+        candidate_count: candidates.length,
+        touched_fields: touchedFields,
+      },
+    });
+    return "queued";
   });
-  return tx();
+  return tx.immediate();
 }
 
 function markMonitorSkipped(job: ResearchJobRow, now: number) {
@@ -323,30 +391,6 @@ function safePatchFieldForLog(field: unknown): string {
   return typeof field === "string" && MONITOR_ALLOWED_PATCH_FIELDS.has(field)
     ? field
     : "disallowed";
-}
-
-function monitorFieldLabel(field: string): string {
-  return field.replace(/_/g, " ");
-}
-
-function formatMonitorJournalBody(args: {
-  summary: string;
-  touchedFields: string[];
-  patchesApplied: number;
-  versionNo: number;
-}): string {
-  const changed = args.touchedFields.length > 0
-    ? args.touchedFields.map(monitorFieldLabel).join(", ")
-    : "brief";
-  return [
-    "Daily monitor update",
-    "",
-    neutralizeSourceLegendMarkers(args.summary),
-    "",
-    `Changed sections: ${changed}`,
-    `Applied changes: ${args.patchesApplied}`,
-    `Previous brief snapshot: v${args.versionNo}`,
-  ].join("\n");
 }
 
 const MONITOR_TRACKING_QUERY_PREFIXES = ["utm_"];
@@ -525,6 +569,11 @@ function monitorMayCommit(job: ResearchJobRow, briefId: string): boolean {
     console.log(`[worker] monitor skip commit disabled job=${job.id} brief=${briefId}`);
     return false;
   }
+  const active = findUserById(job.user_id);
+  if (!active || !canWriteBrief(publicUser(active), briefId)) {
+    markJobFailed(job.id, "Monitor job is no longer authorized");
+    return false;
+  }
   return true;
 }
 
@@ -653,6 +702,11 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       console.log(`[worker] monitor skipped disabled job=${job.id} brief=${briefId}`);
       return;
     }
+    const actor = findUserById(job.user_id);
+    if (!actor || !canWriteBrief(publicUser(actor), briefId)) {
+      markJobFailed(job.id, "Monitor job is no longer authorized");
+      return;
+    }
 
     let rawBrief: unknown;
     try {
@@ -684,7 +738,10 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     if (!findings.has_updates || findings.patches.length === 0) {
       // Nothing materially new — touch last_monitored_at only. Change nothing
       // else: no version, no event, no journal, no email.
-      if (!markMonitorNoopDone(job, now)) {
+      if (!markMonitorNoopDone(job, now, row.brief_json)) {
+        if (currentStatus(job.id) === "running") {
+          markJobFailed(job.id, "Monitor no-op could not be finalized");
+        }
         // eslint-disable-next-line no-console
         console.log(`[worker] monitor no-op skipped job=${job.id} brief=${briefId}`);
         return;
@@ -706,9 +763,11 @@ export async function executeMonitorJob(job: ResearchJobRow) {
     // Apply targeted patches that validate; a malformed optional patch from
     // the model should not fail the whole monitor run or block valid updates.
     const applied = applyValidMonitorPatches(parsed.data, findings.patches);
-    const updated = applied.brief;
     if (applied.patches.length === 0) {
-      if (!markMonitorNoopDone(job, now)) {
+      if (!markMonitorNoopDone(job, now, row.brief_json)) {
+        if (currentStatus(job.id) === "running") {
+          markJobFailed(job.id, "Monitor no-op could not be finalized");
+        }
         // eslint-disable-next-line no-console
         console.log(
           `[worker] monitor no-op skipped job=${job.id} brief=${briefId} malformed_patches=${applied.skipped}`,
@@ -730,13 +789,18 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       );
       return;
     }
-    const touchedFields = Array.from(
-      new Set(applied.patches.map((p) => p.field)),
-    );
-
-    // Snapshot the pre-update brief and persist the update in one conditional
-    // transaction so a late disable/cancel cannot be overwritten as done.
-    const commit = commitMonitorUpdate(job, now, row.brief_json, JSON.stringify(updated));
+    let commit: "queued" | "stale" | null;
+    try {
+      commit = commitMonitorCandidates(
+        job, now, row.brief_json, parsed.data, applied.patches,
+        findings.summary, checkTier, checkUsageJson,
+      );
+    } catch {
+      markJobFailed(job.id, "Monitor job could not queue review candidates");
+      // eslint-disable-next-line no-console
+      console.error(`[worker] monitor candidate transaction failed job=${job.id}`);
+      return;
+    }
     if (commit === "stale") {
       recordMonitorRun({
         briefId,
@@ -753,76 +817,18 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
     if (!commit) {
+      if (currentStatus(job.id) === "running") {
+        markJobFailed(job.id, "Monitor job could not queue review candidates");
+      }
       // eslint-disable-next-line no-console
       console.log(`[worker] monitor update skipped job=${job.id} brief=${briefId}`);
       return;
     }
-    const committed = commit as { versionId: string; versionNo: number };
-    logBriefVersionSnapshot({
-      briefId,
-      versionId: committed.versionId,
-      versionNo: committed.versionNo,
-      reason: "pre-monitor",
-      refreshJobId: job.id,
-      actorUserId: job.user_id,
-      actorType: "worker",
-    });
     // eslint-disable-next-line no-console
     console.log(
-      `[worker] monitor update job=${job.id} brief=${briefId} patches=${applied.patches.length} malformed_patches=${applied.skipped}`,
+      `[worker] monitor candidates queued job=${job.id} brief=${briefId} patches=${applied.patches.length} malformed_patches=${applied.skipped}`,
     );
-
-    logBriefMonitored({
-      briefId,
-      jobId: job.id,
-      actorUserId: job.user_id,
-      preMonitorVersionId: committed.versionId,
-      patchesApplied: applied.patches.length,
-      touchedFields,
-    });
-
-    recordMonitorRun({
-      briefId,
-      jobId: job.id,
-      outcome: "updated",
-      tier: checkTier,
-      summary: findings.summary || null,
-      patchesApplied: applied.patches.length,
-      touchedFields,
-      preVersionId: committed.versionId,
-      usageJson: checkUsageJson,
-    });
     recorded = true;
-
-    // Post the "what changed" note into the Journal as an assistant entry.
-    insertJournalEntry({
-      briefId,
-      userId: job.user_id,
-      authorType: "assistant",
-      body: formatMonitorJournalBody({
-        summary: findings.summary,
-        touchedFields,
-        patchesApplied: applied.patches.length,
-        versionNo: committed.versionNo,
-      }),
-    });
-
-    // Email owner + shared users (notification prefs respected in the query).
-    const emailRow = db()
-      .prepare(`SELECT monitor_enabled FROM briefs WHERE id = ?`)
-      .get(briefId) as { monitor_enabled: number } | undefined;
-    if (isEmailConfigured() && emailRow?.monitor_enabled === 1) {
-      const recipients = listBriefEmailRecipients(briefId);
-      for (const r of recipients) {
-        await sendBriefMonitorUpdateEmail({
-          to: r.email,
-          recipientName: r.display_name,
-          accountName: parsed.data.account_name,
-          briefId,
-          summary: findings.summary,
-        });
-      }
-    }
   } catch (err: any) {
     // Do not persist or print raw provider/model/request text for automated
     // monitor failures; those strings can include model-controlled content.
@@ -856,7 +862,7 @@ export async function executeMonitorJob(job: ResearchJobRow) {
   }
 }
 
-async function executeResearchJob(job: ResearchJobRow) {
+export async function executeResearchJob(job: ResearchJobRow) {
   if (job.intent === "monitor") {
     return executeMonitorJob(job);
   }
@@ -880,7 +886,7 @@ async function executeResearchJob(job: ResearchJobRow) {
     }
 
     let previousBrief: Brief | null = null;
-    let preRefreshVersionId: string | null = null;
+    let previousBriefJson: string | null = null;
     if (job.intent === "refresh") {
       if (!job.target_brief_id) {
         markJobFailed(job.id, "Refresh job missing target_brief_id");
@@ -899,13 +905,12 @@ async function executeResearchJob(job: ResearchJobRow) {
         return;
       }
       previousBrief = parsed.data;
-      preRefreshVersionId = snapshotBriefVersion({
-        briefId: job.target_brief_id,
-        briefJson: row.brief_json,
-        reason: "pre-refresh",
-        triggeredBy: job.user_id,
-        refreshJobId: job.id,
-      });
+      previousBriefJson = row.brief_json;
+      const actor = findUserById(job.user_id);
+      if (!actor || !canWriteBrief(publicUser(actor), job.target_brief_id)) {
+        markJobFailed(job.id, "Refresh job is no longer authorized");
+        return;
+      }
     }
 
     const { brief, stages } = await runResearchPipeline(intake, {
@@ -924,7 +929,14 @@ async function executeResearchJob(job: ResearchJobRow) {
     const finalBrief = isRefresh && previousBrief ? mergeBriefs(previousBrief, brief) : brief;
     const validated = BriefSchema.parse(finalBrief);
     const briefId = isRefresh
-      ? refreshBriefAndMarkJobDone(job, validated, stages, cost)
+      ? queueRefreshCandidatesAndMarkJobDone(
+          job,
+          previousBriefJson!,
+          previousBrief!,
+          validated,
+          stages,
+          cost,
+        )
       : saveBriefAndMarkJobDone(job, validated, stages, cost);
     // eslint-disable-next-line no-console
     console.log(
@@ -932,16 +944,7 @@ async function executeResearchJob(job: ResearchJobRow) {
     );
 
     // Audit-trail events (after the primary transaction commits).
-    if (isRefresh) {
-      logBriefRefreshed({
-        briefId,
-        jobId: job.id,
-        actorUserId: job.user_id,
-        mode: job.mode,
-        costCents: cost,
-        preRefreshVersionId,
-      });
-    } else {
+    if (!isRefresh) {
       logBriefCreated({
         briefId,
         jobId: job.id,
@@ -951,26 +954,27 @@ async function executeResearchJob(job: ResearchJobRow) {
         costCents: cost,
         sourceCount: validated.sources?.length ?? 0,
       });
+      logJobCompleted({
+        briefId,
+        jobId: job.id,
+        actorUserId: job.user_id,
+        accountName: job.account_name,
+        mode: job.mode,
+        intent: "create",
+        costCents: cost,
+      });
     }
-    logJobCompleted({
-      briefId,
-      jobId: job.id,
-      actorUserId: job.user_id,
-      accountName: job.account_name,
-      mode: job.mode,
-      intent: isRefresh ? "refresh" : "create",
-      costCents: cost,
-    });
 
-    if (isEmailConfigured()) {
+    if (!isRefresh && isEmailConfigured()) {
       const user = findUserForJob(job.user_id);
       if (user && user.email_notifications_enabled) {
-        await sendJobCompleteEmail(user, job, briefId, isRefresh ? "refresh" : "create");
+        await sendJobCompleteEmail(user, job, briefId, "create");
       }
     }
   } catch (err: any) {
-    const msg =
-      err instanceof PipelineError
+    const msg = err instanceof BriefUpdateProposalError
+      ? "Refresh proposal could not be queued for review"
+      : err instanceof PipelineError
         ? err.friendly
         : String(err?.message ?? err ?? "unknown error");
     // eslint-disable-next-line no-console

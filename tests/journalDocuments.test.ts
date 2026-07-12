@@ -2196,15 +2196,15 @@ test("citation resolver resolves journal and brief-source legend entries without
   );
 });
 
-test("monitor journal entries neutralize source legend marker-shaped summaries", () => {
+test("monitor candidate outcomes do not create applied-update journal entries", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const source = fs.readFileSync(
     path.join(__dirname, "../web/lib/researchWorker.ts"),
     "utf8",
   );
-  assert.match(source, /neutralizeSourceLegendMarkers/);
-  assert.match(source, /neutralizeSourceLegendMarkers\(args\.summary\)/);
+  assert.doesNotMatch(source, /insertJournalEntry/);
+  assert.doesNotMatch(source, /Daily monitor update/);
 });
 
 test("journal source legend can be restricted to labels cited in the assistant answer", () => {
@@ -2467,11 +2467,11 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
   assert.match(journalSource, /New/);
   assert.match(journalSource, /Reviewing/);
   assert.match(journalSource, /Accepted/);
-  assert.match(journalSource, /Sent to brief chat/);
-  assert.match(journalSource, /Applied/);
+  assert.match(journalSource, /Marked for manual incorporation/);
+  assert.match(journalSource, /Manually incorporated/);
   assert.match(journalSource, /Dismissed/);
   assert.match(journalSource, /Copy brief-chat prompt/);
-  assert.match(journalSource, /Open brief to apply/);
+  assert.match(journalSource, /View brief for manual incorporation/);
   assert.match(journalSource, /TimelineFilter/);
   assert.match(journalSource, /All entries/);
   assert.match(journalSource, /Notes/);
@@ -2962,7 +2962,7 @@ test("journal catch-up windows omit old entries excluded sources and unreviewed-
   assert.match(prompt, /What changed in the last 24 hours/);
   assert.match(prompt, /Procurement committee asked/);
   assert.match(prompt, /security-pilot\.pdf/);
-  assert.match(prompt, /Accepted\/applied review candidates/);
+  assert.match(prompt, /Manually reviewed incorporation candidates/);
   assert.match(prompt, /Pending review candidates/);
   assert.doesNotMatch(prompt, /Old renewal note/);
   assert.doesNotMatch(prompt, /excluded-rumor\.pdf/);
@@ -3062,7 +3062,7 @@ test("JournalSection exposes search UI, source-scoped recall, catch-up windows, 
   assert.match(journalSource, /cockpitDisplay\.reviewedCount/);
   assert.match(journalSource, /cockpitDisplay\.pendingCount/);
   assert.match(journalSource, /cockpitDisplay\.dismissedCount/);
-  assert.match(journalSource, /accepted, sent to brief chat, or applied/);
+  assert.match(journalSource, /accepted for manual incorporation, marked for incorporation, or manually incorporated/);
   assert.match(journalSource, /cockpitDisplay\.priorityCards/);
   assert.doesNotMatch(journalSource, /cockpit.*PATCH/i);
 });

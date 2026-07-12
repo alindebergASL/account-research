@@ -8,11 +8,13 @@ import {
   canCollaborateBrief,
   canReadBrief,
   canWriteBrief,
+  findUserById,
+  publicUser,
   requireUser,
 } from "@/lib/auth";
 import { Brief, type Brief as BriefT } from "@/lib/schema";
 import { applyPatches, type BriefPatch } from "@/lib/briefPatches";
-import { logChatPatchedBrief } from "@/lib/briefEvents";
+import { createBriefEventStrict } from "@/lib/briefEvents";
 import { runChatViaHermes, selectChatPath } from "@/lib/hermes/chatAdapter";
 import { friendlyAnthropicError } from "@/lib/anthropicError";
 import {
@@ -20,16 +22,44 @@ import {
   buildBriefChatSystemPrompt,
 } from "@/lib/briefChatContext";
 import { listRecentDocumentsForBrief } from "@/lib/journalDocuments";
+import {
+  BriefUpdateProposalError,
+  insertPreparedBriefUpdateCandidates,
+  patchesFromWholeBrief,
+  prepareBriefUpdateCandidates,
+} from "@/lib/briefUpdateReviewBoundary";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 type Patch = BriefPatch;
 
+type BriefChatClient = Pick<Anthropic, "messages">;
+let testChatClient: BriefChatClient | null = null;
+
+export function __setTestBriefChatClient(client: BriefChatClient | null) {
+  testChatClient = client;
+}
+
+function chatClient(): BriefChatClient {
+  return testChatClient ?? new Anthropic();
+}
+
+const MAX_CHAT_TEXT_BYTES = 12 * 1024;
+
+function boundedChatText(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} is invalid`);
+  const trimmed = value.trim();
+  if (!trimmed || Buffer.byteLength(trimmed, "utf8") > MAX_CHAT_TEXT_BYTES) {
+    throw new Error(`${label} is invalid or too large`);
+  }
+  return trimmed;
+}
+
 const updateBriefTool = {
   name: "update_brief",
   description:
-    "Update the account brief in place. Use 'append' to add an item to an array field (e.g. personas, recent_signals, sources, extensions). Use 'set' to replace a string or object field. Multiple patches per call are allowed. Always also append a citation source when you add new factual content.",
+    "Propose account brief changes for human review; this never edits the brief. Use 'append' to propose an item for an array field and 'set' to propose replacing a field. Multiple patches per call are allowed. Always also propose a citation source when adding factual content.",
   input_schema: {
     type: "object",
     additionalProperties: false,
@@ -54,13 +84,13 @@ const updateBriefTool = {
   },
 } as const;
 
-function loadBrief(briefId: string): BriefT | null {
+function loadBrief(briefId: string): { brief: BriefT; briefJson: string } | null {
   const row = db()
     .prepare(`SELECT * FROM briefs WHERE id = ?`)
     .get(briefId) as BriefRow | undefined;
   if (!row) return null;
   const parsed = Brief.safeParse(JSON.parse(row.brief_json));
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? { brief: parsed.data, briefJson: row.brief_json } : null;
 }
 
 function loadHistory(briefId: string): BriefChatRow[] {
@@ -94,15 +124,6 @@ function appendChat(
     );
 }
 
-function saveBrief(briefId: string, brief: BriefT) {
-  db()
-    .prepare(
-      `UPDATE briefs SET brief_json = ?, segment = ?, audience = ?
-       WHERE id = ?`,
-    )
-    .run(JSON.stringify(brief), brief.segment, brief.audience, briefId);
-}
-
 function buildMessages(
   history: BriefChatRow[],
   userMessage: string,
@@ -122,6 +143,88 @@ function authError(e: unknown) {
   return null;
 }
 
+function currentChatUser(userId: string, briefId: string, write: boolean) {
+  const row = findUserById(userId);
+  if (!row) return null;
+  const user = publicUser(row);
+  const allowed = write
+    ? canWriteBrief(user, briefId)
+    : canCollaborateBrief(user, briefId);
+  return allowed ? user : null;
+}
+
+function commitChatOutcome(args: {
+  briefId: string;
+  userId: string;
+  baselineJson: string;
+  baseline: BriefT;
+  userMessage: string;
+  assistantReply: string;
+  write: boolean;
+  origin: "direct_chat" | "hermes_chat";
+  source: "anthropic" | "hermes";
+  patches?: Patch[];
+  patchErrors?: string[];
+}): { candidateIds: string[] } {
+  const conn = db();
+  const tx = conn.transaction(() => {
+    if (!currentChatUser(args.userId, args.briefId, args.write)) {
+      throw new HttpError(403, { error: "Not authorized" });
+    }
+    const current = conn
+      .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
+      .get(args.briefId) as { brief_json: string } | undefined;
+    if (!current || current.brief_json !== args.baselineJson) {
+      throw new HttpError(409, { error: "Brief changed while chat was running" });
+    }
+
+    let candidateIds: string[] = [];
+    if (args.write && args.patches && args.patches.length > 0) {
+      const prepared = prepareBriefUpdateCandidates({
+        baselineJson: args.baselineJson,
+        baseline: args.baseline,
+        patches: args.patches,
+        context: {
+          origin: args.origin,
+          source: args.source,
+          actorUserId: args.userId,
+          evidence: `AI chat proposal from ${args.source}`,
+        },
+      });
+      candidateIds = insertPreparedBriefUpdateCandidates({
+        briefId: args.briefId,
+        actorUserId: args.userId,
+        candidates: prepared,
+      });
+    }
+
+    appendChat(args.briefId, args.userId, "user", boundedChatText(args.userMessage, "message"));
+    appendChat(args.briefId, args.userId, "assistant", boundedChatText(args.assistantReply, "reply"));
+    if (args.write && candidateIds.length > 0) {
+      createBriefEventStrict({
+        brief_id: args.briefId,
+        actor_user_id: args.userId,
+        actor_type: args.origin === "hermes_chat" ? "hermes" : "user",
+        event_type: "brief_update_candidates_queued",
+        title: "AI brief update queued for review",
+        summary: `${candidateIds.length} field-level candidate(s) queued`,
+        metadata: {
+          origin: args.origin,
+          candidate_count: candidateIds.length,
+          patch_errors_count: args.patchErrors?.length ?? 0,
+        },
+      });
+    }
+    return { candidateIds };
+  });
+  try {
+    return tx();
+  } catch (error) {
+    if (error instanceof HttpError || error instanceof BriefUpdateProposalError) throw error;
+    throw new BriefUpdateProposalError();
+  }
+}
+
 const READ_ONLY_VIEWER_ADDENDUM =
   "\n\nNote: you are answering on behalf of a read-only reader. Do NOT call update_brief or any tool. Do NOT propose edits. Only answer questions using the brief content above. Cite specific brief fields where helpful.";
 
@@ -129,16 +232,21 @@ async function handleReadOnlyChat({
   briefId,
   userId,
   brief,
+  baselineJson,
   userMessage,
 }: {
   briefId: string;
   userId: string;
   brief: BriefT;
+  baselineJson: string;
   userMessage: string;
 }): Promise<Response> {
   const history = loadHistory(briefId);
   const documents = listRecentDocumentsForBrief(briefId);
-  const client = new Anthropic();
+  if (!currentChatUser(userId, briefId, false)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
+  const client = chatClient();
   const system =
     buildBriefChatSystemPrompt({ brief, documents, canWrite: false }) +
     READ_ONLY_VIEWER_ADDENDUM;
@@ -158,8 +266,17 @@ async function handleReadOnlyChat({
         .join("\n")
         .trim() || "(no reply)";
 
-    appendChat(briefId, userId, "user", userMessage);
-    appendChat(briefId, userId, "assistant", finalText);
+    commitChatOutcome({
+      briefId,
+      userId,
+      baselineJson,
+      baseline: brief,
+      userMessage,
+      assistantReply: finalText,
+      write: false,
+      origin: "direct_chat",
+      source: "anthropic",
+    });
 
     return NextResponse.json({
       reply: finalText,
@@ -167,6 +284,8 @@ async function handleReadOnlyChat({
       patch_errors: [],
     });
   } catch (err: any) {
+    const denied = authError(err);
+    if (denied) return denied;
     return NextResponse.json(
       { error: friendlyAnthropicError(err, "Chat") },
       { status: 500 },
@@ -248,12 +367,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const userMessage = (body.message ?? "").trim();
-  if (!userMessage) {
-    return NextResponse.json({ error: "Empty message" }, { status: 400 });
+  let userMessage: string;
+  try {
+    userMessage = boundedChatText(body.message ?? "", "message");
+  } catch {
+    return NextResponse.json({ error: "Empty or oversized message" }, { status: 400 });
   }
   const chatPath = selectChatPath();
-  if (chatPath === "direct" && !process.env.ANTHROPIC_API_KEY) {
+  if (chatPath === "direct" && !testChatClient && !process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: "Server is missing ANTHROPIC_API_KEY" },
       { status: 500 },
@@ -265,10 +386,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const brief = loadBrief(params.id);
-  if (!brief) {
+  const loaded = loadBrief(params.id);
+  if (!loaded) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  const { brief, briefJson: baselineJson } = loaded;
 
   if (chatPath === "hermes") {
     const history = loadHistory(params.id);
@@ -278,6 +400,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         ? `${userMessage}\n\n${buildBriefChatDocumentContext({ documents, canWrite: writer })}`
         : userMessage;
     try {
+      if (!currentChatUser(user.id, params.id, writer)) {
+        return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+      }
       const result = await runChatViaHermes({
         brief_id: params.id,
         user_id: user.id,
@@ -287,40 +412,39 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         can_write: writer,
       });
 
-      if (writer && result.brief) {
-        saveBrief(params.id, result.brief);
-      }
-      if (writer && result.patches_applied.length > 0) {
-        const touchedFields = Array.from(
-          new Set(result.patches_applied.map((p) => p.field)),
-        );
-        logChatPatchedBrief({
-          briefId: params.id,
-          actorUserId: user.id,
-          patchesApplied: result.patches_applied.length,
-          patchErrors: result.patch_errors.length,
-          touchedFields,
-        });
-      }
-
-      appendChat(params.id, user.id, "user", userMessage);
-      appendChat(
-        params.id,
-        user.id,
-        "assistant",
-        result.reply,
-        result.patches_applied.length > 0 ? result.patches_applied : undefined,
-      );
+      const proposedPatches = writer && result.brief
+        ? patchesFromWholeBrief(brief, result.brief)
+        : writer
+          ? result.patches_applied
+          : [];
+      const committed = commitChatOutcome({
+        briefId: params.id,
+        userId: user.id,
+        baselineJson,
+        baseline: brief,
+        userMessage,
+        assistantReply: result.reply,
+        write: writer,
+        origin: "hermes_chat",
+        source: "hermes",
+        patches: proposedPatches,
+        patchErrors: result.patch_errors,
+      });
 
       return NextResponse.json({
         reply: result.reply,
-        patches_applied: result.patches_applied,
+        patches_applied: [],
+        candidates_queued: committed.candidateIds.length,
         patch_errors: result.patch_errors,
-        brief: writer ? result.brief : undefined,
         canvas_version: writer ? result.canvas_version : undefined,
       });
     } catch (err: any) {
-      return NextResponse.json({ error: friendlyAnthropicError(err, "Chat") }, { status: 500 });
+      const denied = authError(err);
+      if (denied) return denied;
+      const message = err instanceof BriefUpdateProposalError
+        ? "Chat proposal could not be queued for review"
+        : friendlyAnthropicError(err, "Chat");
+      return NextResponse.json({ error: message }, { status: 500 });
     }
   }
 
@@ -331,13 +455,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       briefId: params.id,
       userId: user.id,
       brief,
+      baselineJson,
       userMessage,
     });
   }
 
   const history = loadHistory(params.id);
   const documents = listRecentDocumentsForBrief(params.id);
-  const client = new Anthropic();
+  if (!currentChatUser(user.id, params.id, true)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
+  const client = chatClient();
   const system = buildBriefChatSystemPrompt({
     brief,
     documents,
@@ -402,7 +530,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
             }
             workingBrief = validated.data;
             appliedPatches.push(...patches);
-            resultText = `Applied ${patches.length} patch${patches.length === 1 ? "" : "es"}: ${tu.input?.summary || patches.map((p) => p.field).join(", ")}`;
+            resultText = `Validated ${patches.length} proposed patch${patches.length === 1 ? "" : "es"} for human review: ${tu.input?.summary || patches.map((p) => p.field).join(", ")}`;
           } catch (e: any) {
             const msg = e?.message ?? String(e);
             patchErrors.push(msg);
@@ -429,37 +557,32 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     if (!finalText) finalText = "(no reply)";
 
-    if (appliedPatches.length > 0) {
-      saveBrief(params.id, workingBrief);
-      const touchedFields = Array.from(
-        new Set(appliedPatches.map((p) => p.field)),
-      );
-      logChatPatchedBrief({
-        briefId: params.id,
-        actorUserId: user.id,
-        patchesApplied: appliedPatches.length,
-        patchErrors: patchErrors.length,
-        touchedFields,
-      });
-    }
-
-    appendChat(params.id, user.id, "user", userMessage);
-    appendChat(
-      params.id,
-      user.id,
-      "assistant",
-      finalText,
-      appliedPatches.length > 0 ? appliedPatches : undefined,
-    );
+    const committed = commitChatOutcome({
+      briefId: params.id,
+      userId: user.id,
+      baselineJson,
+      baseline: brief,
+      userMessage,
+      assistantReply: finalText,
+      write: true,
+      origin: "direct_chat",
+      source: "anthropic",
+      patches: appliedPatches,
+      patchErrors,
+    });
 
     return NextResponse.json({
       reply: finalText,
-      patches_applied: appliedPatches,
+      patches_applied: [],
+      candidates_queued: committed.candidateIds.length,
       patch_errors: patchErrors,
-      brief: appliedPatches.length > 0 ? workingBrief : undefined,
     });
   } catch (err: any) {
-    const msg = friendlyAnthropicError(err, "Chat");
+    const auth = authError(err);
+    if (auth) return auth;
+    const msg = err instanceof BriefUpdateProposalError
+      ? "Chat proposal could not be queued for review"
+      : friendlyAnthropicError(err, "Chat");
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

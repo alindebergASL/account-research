@@ -157,24 +157,25 @@ async function main() {
   });
 
   const job1 = insertMonitorJob(briefId, ownerId, "Acme Corp");
+  const beforeCandidateJson = (db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json;
   await executeMonitorJob(job1 as any);
 
-  const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert(after.recent_signals.some((s: any) => /Series C/.test(s.text)), "signal appended");
-  assert(/Series C/.test(after.priority_summary), "priority_summary revised");
-  const ver = db().prepare("SELECT reason FROM brief_versions WHERE brief_id = ?").get(briefId) as any;
-  assert(ver?.reason === "pre-monitor", "pre-monitor version snapshot taken");
-  const ev = db().prepare("SELECT event_type, summary FROM brief_events WHERE brief_id = ? AND event_type = 'monitor_update'").get(briefId) as any;
-  assert(!!ev, "monitor_update event logged");
-  const je = db().prepare("SELECT author_type, body FROM journal_entries WHERE brief_id = ?").get(briefId) as any;
-  assert(je?.author_type === "assistant" && /Series C/.test(je.body), "journal assistant entry posted with summary");
-  assert(JSON.stringify(sentTo.sort()) === JSON.stringify(["owner@example.com", "reader@example.com"]), `emailed = ${sentTo.join(",")}`);
+  const afterCandidateJson = (db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json;
+  assert(afterCandidateJson === beforeCandidateJson, "candidate path keeps brief_json byte-identical");
+  const candidates = db().prepare("SELECT target, proposed_text FROM journal_review_candidates WHERE brief_id = ? ORDER BY target").all(briefId) as any[];
+  assert(candidates.length === 2, "two field-level review candidates queued");
+  assert(candidates.some((row) => row.target === "recent_signals" && /Series C/.test(row.proposed_text)), "signal candidate queued");
+  assert(candidates.some((row) => row.target === "priority_summary" && /Series C/.test(row.proposed_text)), "priority candidate queued");
+  assert(!(db().prepare("SELECT 1 FROM brief_versions WHERE brief_id = ?").get(briefId)), "no pre-monitor version snapshot");
+  assert(!(db().prepare("SELECT 1 FROM brief_events WHERE brief_id = ? AND event_type = 'monitor_update'").get(briefId)), "no applied monitor event");
+  assert(!(db().prepare("SELECT 1 FROM journal_entries WHERE brief_id = ?").get(briefId)), "no applied journal entry");
+  assert(sentTo.length === 0, "candidate path sends no applied-update email");
   const j1 = db().prepare("SELECT status FROM research_jobs WHERE id = ?").get((job1 as any).id) as any;
   assert(j1.status === "done", "update job marked done");
   const lm = (db().prepare("SELECT last_monitored_at FROM briefs WHERE id = ?").get(briefId) as any).last_monitored_at;
   assert(typeof lm === "number", "last_monitored_at set");
   const updRun = db().prepare("SELECT outcome, patches_applied FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
-  assert(updRun?.outcome === "updated" && updRun?.patches_applied >= 1, "update path recorded an 'updated' monitor_run");
+  assert(updRun?.outcome === "candidate_queued" && updRun?.patches_applied === 0, "candidate path recorded candidate_queued");
   const updRun2 = db().prepare("SELECT tier, usage_json FROM monitor_runs WHERE brief_id = ? ORDER BY ran_at DESC LIMIT 1").get(briefId) as any;
   assert(updRun2?.tier === "deep", "update run recorded tier 'deep'");
   assert(typeof updRun2?.usage_json === "string", "update run recorded usage_json");

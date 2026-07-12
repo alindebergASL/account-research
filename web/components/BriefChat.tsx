@@ -36,7 +36,7 @@ type ChatMessage = {
 const SAMPLE_PROMPTS = [
   "Summarize the AI maturity rationale in one sentence.",
   "What's the most important conversation angle here?",
-  "Find their CISO and add to personas if you can.",
+  "Find their CISO and propose a persona update if you can.",
   "What active RFPs do they have?",
 ];
 
@@ -161,9 +161,6 @@ export default function BriefChat({
                 : null,
           }),
       );
-      if (data.brief && onBriefUpdate) {
-        onBriefUpdate(data.brief);
-      }
     } catch (e: any) {
       setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
       setError(e?.message ?? "Chat failed");

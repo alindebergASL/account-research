@@ -884,7 +884,7 @@ export default function JournalSection({
           current_baseline: briefContext.priority_summary,
           evidence: draft.evidence ?? "",
           confidence: draft.confidence ?? "",
-          risk: draft.risk ?? "Review before applying; this card was promoted from an assistant reply.",
+          risk: draft.risk ?? "Review before manual incorporation; this card was promoted from an assistant reply.",
           source_entry_id: draft.source_entry_id,
         }),
       });
@@ -912,7 +912,7 @@ export default function JournalSection({
     setNewCandidateText(draft.proposed_text);
     setNewCandidateEvidence(draft.evidence ?? "");
     setNewCandidateConfidence(draft.confidence ?? "");
-    setNewCandidateRisk(draft.risk ?? "Review before applying; this card was drafted from an assistant reply.");
+    setNewCandidateRisk(draft.risk ?? "Review before manual incorporation; this card was drafted from an assistant reply.");
     setNewCandidateSourceEntryId(draft.source_entry_id);
     setReviewError(null);
     setCreateFormOpen(true);
@@ -971,20 +971,20 @@ export default function JournalSection({
     const provenance = candidate.source_entry_id
       ? `\nSource assistant reply: ${candidate.source_entry_id}\nNote: Evidence labels such as [J1] or [D1] are response-scoped to that assistant reply. Resolve them from the saved Journal reply/source legend before using them as brief evidence.`
       : "";
-    return `Please review this human-accepted Journal candidate and update the brief only if appropriate.\n\nType: ${candidateTypeLabels[candidate.candidate_type]}\nStatus: ${candidateStatusLabels[candidate.status]}\nTarget: ${candidate.target || "Not specified"}\nCurrent brief baseline: ${candidate.current_baseline || "Not specified"}\nProposed text: ${candidate.proposed_text}\nEvidence: ${candidate.evidence || "Not specified"}${provenance}\nConfidence: ${candidate.confidence || "Not specified"}\nRisk / review notes: ${candidate.risk || "Not specified"}\n\nPreserve version history and do not invent evidence.`;
+    return `Manual incorporation reference only — this text does not apply a Brief change.\n\nType: ${candidateTypeLabels[candidate.candidate_type]}\nStatus: ${candidateStatusLabels[candidate.status]}\nTarget: ${candidate.target || "Not specified"}\nCurrent brief baseline SHA-256: ${candidate.current_baseline || "Not specified"}\nProposed text: ${candidate.proposed_text}\nEvidence: ${candidate.evidence || "Not specified"}${provenance}\nConfidence: ${candidate.confidence || "Not specified"}\nProvenance / review notes: ${candidate.risk || "Not specified"}\n\nVerify the baseline and evidence, then incorporate manually using the normal human editing controls.`;
   }
 
   async function copyBriefChatPrompt(candidate: ReviewCandidate) {
     const prompt = briefChatPromptForCandidate(candidate);
     try {
       await navigator.clipboard.writeText(prompt);
-      setUploadNotice("Copied brief-chat prompt. Open the brief to apply it through the normal versioned chat flow.");
+      setUploadNotice("Copied a manual-incorporation reference. It does not apply or request an AI-applied Brief change.");
     } catch {
       setComposeText(prompt);
       setAskAi(false);
       goToComposer();
       window.setTimeout(() => composeRef.current?.focus(), 0);
-      setUploadNotice("Clipboard was unavailable, so the brief-chat prompt was copied into the Journal composer.");
+      setUploadNotice("Clipboard was unavailable, so the manual-incorporation reference was copied into the Journal composer.");
     }
   }
 
@@ -1027,7 +1027,7 @@ export default function JournalSection({
     finally { setReviewLoading(false); }
   }
 
-  async function openBriefToApply(candidate?: ReviewCandidate) {
+  async function openBriefForManualIncorporation(candidate?: ReviewCandidate) {
     if (candidate && !(await updateCandidateStatus(candidate.id, "sent_to_brief_chat"))) return;
     onViewBriefBaseline?.();
   }
@@ -1656,12 +1656,12 @@ export default function JournalSection({
           {onViewBriefBaseline && (
             <button
               type="button"
-              onClick={() => void openBriefToApply(candidate)}
+              onClick={() => void openBriefForManualIncorporation(candidate)}
               disabled={reviewLoading || !canWrite}
-              title={!canWrite ? "Brief writer access is required to send a candidate to brief chat" : undefined}
+              title={!canWrite ? "Brief writer access is required for manual incorporation" : undefined}
               className="rounded-md border border-[var(--border-subtle)] bg-[var(--success-bg)] px-2 py-1 text-xs font-medium text-[var(--success-text)] hover:opacity-90"
             >
-              Open brief to apply
+              View brief for manual incorporation
             </button>
           )}
         </div>
@@ -2769,7 +2769,7 @@ export default function JournalSection({
                 </div>
                 <h3 className="mt-3 text-base font-semibold text-ink">Catch up, review, then promote durable signals</h3>
                 <p className="mt-1 max-w-3xl text-sm text-muted">
-                  Use advisory prompts to find what changed, promote only the useful suggestions into human review, then let accepted/sent/applied cards feed the cockpit.
+                  Use advisory prompts to find what changed, promote only useful suggestions into human review, then let manually reviewed cards feed the cockpit.
                 </p>
               </div>
               <span className="w-fit rounded-full border border-[var(--border-subtle)] bg-[var(--success-bg)] px-3 py-1 text-xs font-medium text-[var(--success-text)]">
@@ -2787,7 +2787,7 @@ export default function JournalSection({
               </div>
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-muted)]/70 p-3">
                 <div className="text-sm font-semibold text-ink">3. Promote cockpit signals</div>
-                <p className="mt-1 text-xs text-ink">Accepted, sent-to-brief-chat, or applied cards become durable cockpit signals with provenance.</p>
+                <p className="mt-1 text-xs text-ink">Cards accepted for manual incorporation or marked as manually incorporated become durable cockpit signals with provenance.</p>
               </div>
             </div>
             <div className="mt-4 grid gap-3 text-xs md:grid-cols-2">
@@ -2844,7 +2844,7 @@ export default function JournalSection({
                 </div>
                 <h3 className="mt-1 text-base font-semibold text-ink">Account Intelligence Cockpit</h3>
                 <p className="mt-1 max-w-3xl text-sm text-muted">
-                  Durable cockpit cards are loaded from the Journal read model and derived only from review candidates that are accepted, sent to brief chat, or applied. New, reviewing, and dismissed cards remain in the Review Queue until a human promotes them.
+                  Durable cockpit cards are loaded from the Journal read model and derived only from review candidates accepted for manual incorporation, marked for incorporation, or manually incorporated. New, reviewing, and dismissed cards remain in the Review Queue until a human promotes them.
                 </p>
                 <p className="mt-1 text-xs text-muted">
                   {cockpitLoading
@@ -2894,7 +2894,7 @@ export default function JournalSection({
                 <div className="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--surface-muted)]/60 p-4 text-sm text-ink">
                   <div className="font-semibold">No reviewed cockpit signals yet</div>
                   <p className="mt-1 text-ink/80">
-                    No accepted, sent, or applied review candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
+                    No manually reviewed incorporation candidates yet. Promote reviewed cards from the Review Queue to seed cockpit intelligence.
                   </p>
                   <button
                     type="button"
@@ -3024,7 +3024,7 @@ export default function JournalSection({
                       ? "Choose another type or All."
                       : reviewInboxTab === "pending"
                         ? "New and reviewing candidates will appear here."
-                        : "Accepted, handed-off, applied, and dismissed candidates will appear here."}
+                        : "Accepted-for-incorporation, manually incorporated, and dismissed candidates will appear here."}
                 </p>
                 {matchingCandidatesInOtherReviewTab > 0 && (
                   <button
@@ -3056,7 +3056,7 @@ export default function JournalSection({
             {createFormOpen && (
               <>
                 <p className="mt-2 text-xs text-muted">
-                  Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted, Sent to brief chat, Applied, or Dismissed without automatically changing the brief.
+                  Save the human-reviewed takeaway as a durable card. Cards can move through New, Reviewing, Accepted for manual incorporation, Marked for manual incorporation, Manually incorporated, or Dismissed without automatically changing the brief.
                 </p>
             {newCandidateSourceEntryId && (
               <div className="mt-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--ai-bg)] px-3 py-2 text-xs text-[var(--ai-text)]">
@@ -3118,7 +3118,7 @@ export default function JournalSection({
               <textarea
                 value={newCandidateRisk}
                 onChange={(ev) => setNewCandidateRisk(ev.target.value)}
-                placeholder="Risk of applying / reviewer note"
+                placeholder="Incorporation risk / reviewer note"
                 rows={2}
                 className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
               />

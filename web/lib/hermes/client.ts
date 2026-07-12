@@ -35,6 +35,14 @@ const RESEARCH_TIMEOUT_MS = 60_000;
 const CHAT_TIMEOUT_MS = 30_000;
 const CANVAS_TIMEOUT_MS = 60_000;
 
+let testChatRunner: ((req: HermesChatRequest) => Promise<HermesChatResponse>) | null = null;
+
+export function __setTestHermesChatRunner(
+  runner: ((req: HermesChatRequest) => Promise<HermesChatResponse>) | null,
+): void {
+  testChatRunner = runner;
+}
+
 export class HermesRuntimeDisabledError extends Error {
   constructor() {
     super(
@@ -221,6 +229,7 @@ export async function runHermesResearch(
 export async function runHermesChat(
   req: HermesChatRequest,
 ): Promise<HermesChatResponse> {
+  if (testChatRunner) return testChatRunner(req);
   const mode = hermesRuntimeMode();
   if (mode === "fake") return fakeChat(req);
   if (mode === "hermes")
