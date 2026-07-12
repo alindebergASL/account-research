@@ -1,4 +1,5 @@
 import { db, type JournalTaskRow } from "@/lib/db";
+import { createBriefEventStrict } from "@/lib/briefEvents";
 import { newId } from "@/lib/password";
 
 // Hierarchical to-do checklists scoped to a brief's journal. Tasks nest via
@@ -7,6 +8,10 @@ import { newId } from "@/lib/password";
 // the whole subtree in this layer.
 
 export const MAX_TASK_BODY_CHARS = 500;
+export const MAX_TASK_OWNER_CHARS = 160;
+export const MAX_TASK_EVIDENCE_CHARS = 8000;
+export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 // Depth is 0-based: a top-level task is depth 0. Four levels keeps the nested
 // checklist UI readable and bounds the recursion.
 export const MAX_TASK_DEPTH_LEVELS = 4;
@@ -24,8 +29,45 @@ export type JournalTaskDto = {
   created_by: string | null;
   created_at: number;
   updated_at: number;
+  owner_text: string | null;
+  assignee_user_id: string | null;
+  due_at: number | null;
+  priority: TaskPriority | null;
+  source_candidate_id: string | null;
+  source_entry_id: string | null;
+  evidence_snapshot: string | null;
+  promoted_by: string | null;
+  promoted_at: number | null;
   children: JournalTaskDto[];
 };
+
+function auditTaskMetadata(args: {
+  briefId: string;
+  taskId: string;
+  actorUserId: string | null;
+  operation: "created" | "updated";
+  ownerChanged: boolean;
+  assigneeUserId: string | null;
+  dueAt: number | null;
+  priority: TaskPriority | null;
+  evidenceUpdated: boolean;
+}): void {
+  createBriefEventStrict({
+    brief_id: args.briefId,
+    actor_user_id: args.actorUserId,
+    event_type: "journal_task_metadata_updated",
+    title: args.operation === "created" ? "Journal task metadata recorded" : "Journal task metadata updated",
+    metadata: {
+      task_id: args.taskId,
+      operation: args.operation,
+      owner_changed: args.ownerChanged,
+      assignee_user_id: args.assigneeUserId,
+      due_at: args.dueAt,
+      priority: args.priority,
+      evidence_updated: args.evidenceUpdated,
+    },
+  });
+}
 
 export function validateTaskBody(value: unknown): string {
   if (typeof value !== "string") throw new Error("body must be a string");
@@ -33,6 +75,47 @@ export function validateTaskBody(value: unknown): string {
   if (!trimmed) throw new Error("body is required");
   if (trimmed.length > MAX_TASK_BODY_CHARS) throw new Error("body is too long");
   return trimmed;
+}
+
+function nullableText(value: unknown, field: string, max: number): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string") throw new Error(`${field} must be a string or null`);
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > max) throw new Error(`${field} is too long`);
+  return trimmed;
+}
+
+export function validateTaskOwner(value: unknown): string | null {
+  return nullableText(value, "owner_text", MAX_TASK_OWNER_CHARS);
+}
+
+export function validateTaskEvidence(value: unknown): string | null {
+  return nullableText(value, "evidence_snapshot", MAX_TASK_EVIDENCE_CHARS);
+}
+
+export function validateTaskDueAt(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error("due_at must be a non-negative integer timestamp or null");
+  }
+  return value;
+}
+
+export function validateTaskPriority(value: unknown): TaskPriority | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !(TASK_PRIORITIES as readonly string[]).includes(value)) {
+    throw new Error("priority is invalid");
+  }
+  return value as TaskPriority;
+}
+
+export function validateTaskAssignee(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !value.trim() || value.length > 128) {
+    throw new Error("assignee_user_id must be a user id or null");
+  }
+  return value;
 }
 
 function rowToDto(row: JournalTaskRow, children: JournalTaskDto[]): JournalTaskDto {
@@ -47,6 +130,15 @@ function rowToDto(row: JournalTaskRow, children: JournalTaskDto[]): JournalTaskD
     created_by: row.created_by,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    owner_text: row.owner_text,
+    assignee_user_id: row.assignee_user_id,
+    due_at: row.due_at,
+    priority: row.priority,
+    source_candidate_id: row.source_candidate_id,
+    source_entry_id: row.source_entry_id,
+    evidence_snapshot: row.evidence_snapshot,
+    promoted_by: row.promoted_by,
+    promoted_at: row.promoted_at,
     children,
   };
 }
@@ -130,8 +222,22 @@ export function insertTask(args: {
   parentId?: string | null;
   body: unknown;
   createdBy: string | null;
+  ownerText?: unknown;
+  assigneeUserId?: unknown;
+  dueAt?: unknown;
+  priority?: unknown;
+  evidenceSnapshot?: unknown;
+  sourceCandidateId?: string | null;
+  sourceEntryId?: string | null;
+  promotedBy?: string | null;
+  promotedAt?: number | null;
 }): JournalTaskDto {
   const body = validateTaskBody(args.body);
+  const ownerText = validateTaskOwner(args.ownerText);
+  const assigneeUserId = validateTaskAssignee(args.assigneeUserId);
+  const dueAt = validateTaskDueAt(args.dueAt);
+  const priority = validateTaskPriority(args.priority);
+  const evidenceSnapshot = validateTaskEvidence(args.evidenceSnapshot);
   const parentId = args.parentId ?? null;
   const { byId, childrenOf, rows } = indexLive(args.briefId);
 
@@ -154,14 +260,39 @@ export function insertTask(args: {
 
   const id = newId();
   const now = Date.now();
-  db()
-    .prepare(
+  const hasMetadata = [args.ownerText, args.assigneeUserId, args.dueAt, args.priority, args.evidenceSnapshot]
+    .some((value) => value !== undefined);
+  const create = db().transaction(() => {
+    db().prepare(
       `INSERT INTO journal_tasks
-         (id, brief_id, parent_id, body, done, done_by, done_at, position, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, NULL, NULL, ?, ?, ?, ?)`,
-    )
-    .run(id, args.briefId, parentId, body, position, args.createdBy, now, now);
-  return rowToDto(loadRow(args.briefId, id)!, []);
+         (id, brief_id, parent_id, body, done, done_by, done_at, position, created_by,
+          created_at, updated_at, owner_text, assignee_user_id, due_at, priority,
+          evidence_snapshot, source_candidate_id, source_entry_id, promoted_by, promoted_at)
+       VALUES (?, ?, ?, ?, 0, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id, args.briefId, parentId, body, position, args.createdBy, now, now,
+      ownerText, assigneeUserId, dueAt, priority, evidenceSnapshot,
+      args.sourceCandidateId ?? null, args.sourceEntryId ?? null,
+      args.promotedBy ?? null, args.promotedAt ?? null,
+    );
+    // Promoted tasks have their own single promotion event in the outer
+    // transaction. Manual task metadata uses this consistent sanitized event.
+    if (hasMetadata && !args.sourceCandidateId) {
+      auditTaskMetadata({
+        briefId: args.briefId,
+        taskId: id,
+        actorUserId: args.createdBy,
+        operation: "created",
+        ownerChanged: args.ownerText !== undefined,
+        assigneeUserId,
+        dueAt,
+        priority,
+        evidenceUpdated: args.evidenceSnapshot !== undefined,
+      });
+    }
+    return rowToDto(loadRow(args.briefId, id)!, []);
+  });
+  return create();
 }
 
 export function updateTask(args: {
@@ -169,6 +300,11 @@ export function updateTask(args: {
   taskId: string;
   body?: unknown;
   done?: unknown;
+  ownerText?: unknown;
+  assigneeUserId?: unknown;
+  dueAt?: unknown;
+  priority?: unknown;
+  evidenceSnapshot?: unknown;
   actorUserId: string | null;
 }): JournalTaskDto {
   const row = loadRow(args.briefId, args.taskId);
@@ -195,14 +331,47 @@ export function updateTask(args: {
     }
   }
 
-  db()
-    .prepare(
+  const ownerText = args.ownerText === undefined ? row.owner_text : validateTaskOwner(args.ownerText);
+  const assigneeUserId = args.assigneeUserId === undefined
+    ? row.assignee_user_id
+    : validateTaskAssignee(args.assigneeUserId);
+  const dueAt = args.dueAt === undefined ? row.due_at : validateTaskDueAt(args.dueAt);
+  const priority = args.priority === undefined ? row.priority : validateTaskPriority(args.priority);
+  if (row.source_candidate_id && args.evidenceSnapshot !== undefined) {
+    throw new Error("promoted task evidence is immutable");
+  }
+  const evidenceSnapshot = args.evidenceSnapshot === undefined
+    ? row.evidence_snapshot
+    : validateTaskEvidence(args.evidenceSnapshot);
+
+  const updatesMetadata = [args.ownerText, args.assigneeUserId, args.dueAt, args.priority, args.evidenceSnapshot]
+    .some((value) => value !== undefined);
+  const update = db().transaction(() => {
+    db().prepare(
       `UPDATE journal_tasks
-          SET body = ?, done = ?, done_by = ?, done_at = ?, updated_at = ?
+          SET body = ?, done = ?, done_by = ?, done_at = ?, owner_text = ?,
+              assignee_user_id = ?, due_at = ?, priority = ?, evidence_snapshot = ?, updated_at = ?
         WHERE id = ? AND brief_id = ? AND deleted_at IS NULL`,
-    )
-    .run(body, done, doneBy, doneAt, now, args.taskId, args.briefId);
-  return rowToDto(loadRow(args.briefId, args.taskId)!, []);
+    ).run(
+      body, done, doneBy, doneAt, ownerText, assigneeUserId, dueAt, priority,
+      evidenceSnapshot, now, args.taskId, args.briefId,
+    );
+    if (updatesMetadata) {
+      auditTaskMetadata({
+        briefId: args.briefId,
+        taskId: args.taskId,
+        actorUserId: args.actorUserId,
+        operation: "updated",
+        ownerChanged: args.ownerText !== undefined,
+        assigneeUserId,
+        dueAt,
+        priority,
+        evidenceUpdated: args.evidenceSnapshot !== undefined,
+      });
+    }
+    return rowToDto(loadRow(args.briefId, args.taskId)!, []);
+  });
+  return update();
 }
 
 // Reparent and/or reorder a task. Rejects cycles (moving a task under its own

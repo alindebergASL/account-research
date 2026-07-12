@@ -73,6 +73,7 @@ export type JournalWorkspace =
   | "timeline"
   | "sources"
   | "tasks"
+  | "decisions"
   | "intelligence"
   | "review"
   | "team";
@@ -127,6 +128,8 @@ export type ReviewCandidate = {
   source_entry_id: string | null;
   created_at: number;
   updated_at: number;
+  promoted_task_id: string | null;
+  promoted_decision_id: string | null;
 };
 
 export type CockpitDisplay = {

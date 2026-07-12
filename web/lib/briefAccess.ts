@@ -33,3 +33,22 @@ export function canUserAccessBrief(userId: string, briefId: string): boolean {
   if (row.role === "admin") return true;
   return !!row.shared;
 }
+
+// Assignment targets must still be active and must be a real member of the
+// brief (owner/admin/shared). This intentionally checks disabled_at, unlike a
+// historical share row by itself.
+export function isActiveBriefMember(userId: string, briefId: string): boolean {
+  const row = db()
+    .prepare(
+      `SELECT 1 AS allowed
+         FROM users u
+         JOIN briefs b ON b.id = ?
+        WHERE u.id = ?
+          AND u.disabled_at IS NULL
+          AND (u.role = 'admin' OR b.user_id = u.id OR EXISTS (
+            SELECT 1 FROM brief_shares s WHERE s.brief_id = b.id AND s.user_id = u.id
+          ))`,
+    )
+    .get(briefId, userId) as { allowed: number } | undefined;
+  return !!row;
+}

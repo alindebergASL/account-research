@@ -115,6 +115,7 @@ import {
 } from "./journal/helpers";
 import { Badge, type BadgeTone, Card, EmptyState, SectionHeader } from "./journal/ui";
 import JournalTasks from "./journal/JournalTasks";
+import JournalDecisions from "./journal/JournalDecisions";
 
 function renderCitationChips(
   entry: Entry,
@@ -145,6 +146,7 @@ export default function JournalSection({
   currentUserId,
   isAdmin,
   canManage,
+  canWrite,
   briefContext,
   onViewBriefBaseline,
   journalSearchQuery: controlledJournalSearchQuery,
@@ -154,6 +156,7 @@ export default function JournalSection({
   currentUserId: string;
   isAdmin: boolean;
   canManage: boolean;
+  canWrite: boolean;
   briefContext: JournalBriefContext;
   onViewBriefBaseline?: () => void;
   journalSearchQuery?: string;
@@ -252,8 +255,13 @@ export default function JournalSection({
   const [reviewInboxTab, setReviewInboxTab] = useState<ReviewInboxTab>("pending");
   const [reviewTypeFilter, setReviewTypeFilter] = useState<ReviewInboxTypeFilter>("all");
   const [reviewMovedNotice, setReviewMovedNotice] = useState<string | null>(null);
+  const [promotionCandidate, setPromotionCandidate] = useState<ReviewCandidate | null>(null);
+  const [promotionDraft, setPromotionDraft] = useState({
+    body: "", owner_text: "", assignee_user_id: "", due_date: "", priority: "normal",
+    title: "", decision_statement: "", rationale: "", decision_date: new Date().toISOString().slice(0, 10),
+  });
   const [activeFullView, setActiveFullView] = useState<
-    "sources" | "intelligence" | "review" | "tasks" | null
+    "sources" | "intelligence" | "review" | "tasks" | "decisions" | null
   >(null);
   const applyJournalWorkspaceState = useCallback((
     workspace: AddressableJournalWorkspace,
@@ -261,7 +269,7 @@ export default function JournalSection({
   ) => {
     setCenterTab(workspace === "team" ? "team" : "timeline");
     setActiveFullView(
-      workspace === "sources" || workspace === "tasks" || workspace === "review"
+      workspace === "sources" || workspace === "tasks" || workspace === "decisions" || workspace === "review"
         ? workspace
         : null,
     );
@@ -946,6 +954,45 @@ export default function JournalSection({
     }
   }
 
+  function beginPromotion(candidate: ReviewCandidate) {
+    setPromotionCandidate(candidate);
+    setPromotionDraft({
+      body: candidate.proposed_text.slice(0, 500), owner_text: "", assignee_user_id: "",
+      due_date: "", priority: "normal", title: candidate.title,
+      decision_statement: candidate.proposed_text, rationale: candidate.risk ?? "",
+      decision_date: new Date().toISOString().slice(0, 10),
+    });
+  }
+
+  async function confirmPromotion() {
+    if (!promotionCandidate) return;
+    setReviewLoading(true); setReviewError(null);
+    try {
+      const isTask = promotionCandidate.candidate_type === "action_item";
+      const payload = isTask ? {
+        body: promotionDraft.body, owner_text: promotionDraft.owner_text || null,
+        assignee_user_id: promotionDraft.assignee_user_id || null,
+        due_at: promotionDraft.due_date ? new Date(`${promotionDraft.due_date}T12:00:00Z`).getTime() : null,
+        priority: promotionDraft.priority || null,
+      } : {
+        title: promotionDraft.title, decision_statement: promotionDraft.decision_statement,
+        rationale: promotionDraft.rationale || null, owner_text: promotionDraft.owner_text || null,
+        decision_at: new Date(`${promotionDraft.decision_date}T12:00:00Z`).getTime(),
+      };
+      const response = await fetch(`/api/briefs/${briefId}/journal/review-candidates/${promotionCandidate.id}/promote`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Promotion failed");
+      setPromotionCandidate(null);
+      await loadReviewCandidates();
+      navigateJournalWorkspace(isTask ? "tasks" : "decisions");
+      const durableId = isTask ? data.task.id : data.decision.id;
+      window.location.hash = `${isTask ? "journal-task" : "journal-decision"}-${durableId}`;
+    } catch (caught: any) { setReviewError(caught?.message || "Promotion failed"); }
+    finally { setReviewLoading(false); }
+  }
+
   async function openBriefToApply(candidate?: ReviewCandidate) {
     if (candidate && !(await updateCandidateStatus(candidate.id, "sent_to_brief_chat"))) return;
     onViewBriefBaseline?.();
@@ -1539,6 +1586,22 @@ export default function JournalSection({
           </p>
         )}
         <div className="mt-3 flex flex-wrap gap-2">
+          {(candidate.promoted_task_id || candidate.promoted_decision_id) ? (
+            <button type="button" onClick={() => {
+              const task = !!candidate.promoted_task_id;
+              const id = candidate.promoted_task_id ?? candidate.promoted_decision_id!;
+              navigateJournalWorkspace(task ? "tasks" : "decisions");
+              window.location.hash = `${task ? "journal-task" : "journal-decision"}-${id}`;
+            }} className="rounded-md border border-[var(--success-text)] bg-[var(--success-bg)] px-2 py-1 text-xs font-medium text-[var(--success-text)]">
+              Created →
+            </button>
+          ) : candidate.status === "accepted" && (candidate.candidate_type === "action_item" || candidate.candidate_type === "decision") && (
+            <button type="button" disabled={reviewLoading || !canWrite} onClick={() => beginPromotion(candidate)}
+              title={!canWrite ? "Brief owner, editor, or admin required" : undefined}
+              className="rounded-md bg-[var(--active-dark)] px-2 py-1 text-xs font-medium text-white disabled:opacity-50">
+              {candidate.candidate_type === "action_item" ? "Create to-do" : "Record decision"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => copyBriefChatPrompt(candidate)}
@@ -2342,6 +2405,7 @@ export default function JournalSection({
           {(
             [
               ["tasks", "To-dos"],
+              ["decisions", "Decisions"],
               ["sources", "Sources"],
               ["review", "Review Queue"],
             ] as const
@@ -2586,6 +2650,8 @@ export default function JournalSection({
                     ? "Review queue"
                     : activeFullView === "tasks"
                       ? "To-dos"
+                      : activeFullView === "decisions"
+                        ? "Decisions"
                       : "Intelligence"}
               </h2>
               <button
@@ -2601,8 +2667,9 @@ export default function JournalSection({
             </div>
             <div className="p-5">
       {activeFullView === "tasks" && (
-        <JournalTasks briefId={briefId} currentUserId={currentUserId} />
+        <JournalTasks briefId={briefId} currentUserId={currentUserId} members={mentionMembers} canWrite={canWrite} />
       )}
+      {activeFullView === "decisions" && <JournalDecisions briefId={briefId} canWrite={canWrite} />}
       {activeFullView === "intelligence" && (
         <div className="mb-4 space-y-4">
           <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
@@ -3684,6 +3751,39 @@ export default function JournalSection({
                 The selected source preview does not match this search. Clear search or open a matching source.
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {promotionCandidate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Confirm promotion">
+          <div className="absolute inset-0 bg-slate-900/40" onClick={() => setPromotionCandidate(null)} aria-hidden="true" />
+          <div className="relative z-10 max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-[var(--line)] bg-white p-5 shadow-2xl">
+            <h2 className="font-editorial text-lg font-semibold text-ink">
+              {promotionCandidate.candidate_type === "action_item" ? "Create durable to-do" : "Record durable decision"}
+            </h2>
+            <p className="mt-1 text-sm text-muted">Confirm exactly what will be created. This does not edit the Brief.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {promotionCandidate.candidate_type === "action_item" ? <>
+                <label className="sm:col-span-2 text-xs font-medium text-ink">To-do body<textarea value={promotionDraft.body} onChange={(e) => setPromotionDraft((d) => ({ ...d, body: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+                <label className="text-xs font-medium text-ink">Owner<input value={promotionDraft.owner_text} onChange={(e) => setPromotionDraft((d) => ({ ...d, owner_text: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" placeholder="Owner text" /></label>
+                <label className="text-xs font-medium text-ink">Assignee<select value={promotionDraft.assignee_user_id} onChange={(e) => setPromotionDraft((d) => ({ ...d, assignee_user_id: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm"><option value="">Unassigned</option>{mentionMembers.map((member) => <option key={member.id} value={member.id}>{member.display_name || member.email}</option>)}</select></label>
+                <label className="text-xs font-medium text-ink">Due date<input type="date" value={promotionDraft.due_date} onChange={(e) => setPromotionDraft((d) => ({ ...d, due_date: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+                <label className="text-xs font-medium text-ink">Priority<select value={promotionDraft.priority} onChange={(e) => setPromotionDraft((d) => ({ ...d, priority: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm"><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+              </> : <>
+                <label className="text-xs font-medium text-ink">Title<input value={promotionDraft.title} onChange={(e) => setPromotionDraft((d) => ({ ...d, title: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+                <label className="text-xs font-medium text-ink">Owner / decider<input value={promotionDraft.owner_text} onChange={(e) => setPromotionDraft((d) => ({ ...d, owner_text: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+                <label className="sm:col-span-2 text-xs font-medium text-ink">Decision statement<textarea value={promotionDraft.decision_statement} onChange={(e) => setPromotionDraft((d) => ({ ...d, decision_statement: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+                <label className="sm:col-span-2 text-xs font-medium text-ink">Rationale<textarea value={promotionDraft.rationale} onChange={(e) => setPromotionDraft((d) => ({ ...d, rationale: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+                <label className="text-xs font-medium text-ink">Decision date<input type="date" value={promotionDraft.decision_date} onChange={(e) => setPromotionDraft((d) => ({ ...d, decision_date: e.target.value }))} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" /></label>
+              </>}
+            </div>
+            <div className="mt-4 rounded-xl bg-[var(--ai-bg)] p-3 text-xs text-[var(--ai-text)]">
+              <div className="font-semibold">Frozen evidence and provenance</div>
+              <p className="mt-1 whitespace-pre-wrap">{promotionCandidate.evidence || "No evidence text supplied."}</p>
+              <p className="mt-1">Source entry: {promotionCandidate.source_entry_id || "None"} · Candidate: {promotionCandidate.id}</p>
+              {promotionCandidate.confidence && <p>Confidence: {promotionCandidate.confidence}</p>}
+            </div>
+            <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setPromotionCandidate(null)} className="rounded-md border px-3 py-2 text-sm">Cancel</button><button type="button" disabled={reviewLoading} onClick={() => void confirmPromotion()} className="rounded-md bg-[var(--active-dark)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">Confirm creation</button></div>
           </div>
         </div>
       )}

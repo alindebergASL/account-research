@@ -35,6 +35,10 @@ const {
   runJournalReply,
   __setTestJournalClient,
 } = require("../lib/journalAi") as typeof import("../lib/journalAi");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { promoteReviewCandidate } = require("../lib/journalPromotion") as typeof import("../lib/journalPromotion");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { insertDecision, getDecision } = require("../lib/journalDecisions") as typeof import("../lib/journalDecisions");
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
@@ -115,6 +119,47 @@ async function main() {
   assert(result.text === "Stub reply grounded in brief.", "stub reply returned");
   assert(receivedSystem.includes("Acme Corp"), "stub received brief-grounded system prompt");
   __setTestJournalClient(null);
+
+  // Plan 3 load-bearing contract: accepted action/decision candidates promote
+  // into durable tables without touching brief_json, with frozen evidence and
+  // auditable two-way supersession linkage.
+  const briefJsonBeforePromotion = (
+    db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as { brief_json: string }
+  ).brief_json;
+  const actionCandidateId = randomUUID();
+  db().prepare(
+    `INSERT INTO journal_review_candidates
+     (id, brief_id, user_id, source_entry_id, candidate_type, status, title, proposed_text,
+      evidence, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'action_item', 'accepted', 'Follow up', 'Call the buyer', 'CRM note', ?, ?)`,
+  ).run(actionCandidateId, briefId, adminId, assistantEntryId, now + 10, now + 10);
+  const promoted = promoteReviewCandidate({
+    briefId, candidateId: actionCandidateId, actorUserId: adminId,
+    input: { body: "Call the buyer", priority: "high" },
+  });
+  assert(promoted.kind === "task", "accepted action promotes to task");
+  assert(promoted.task.evidence_snapshot?.includes("CRM note"), "task freezes candidate evidence");
+  const promotedRetry = promoteReviewCandidate({
+    briefId, candidateId: actionCandidateId, actorUserId: adminId, input: {},
+  });
+  assert(promotedRetry.kind === "task", "promotion retry remains a task");
+  assert(promotedRetry.task.id === promoted.task.id, "promotion retry resolves durable task");
+  const decision = insertDecision({
+    briefId, title: "Commercial model", decisionStatement: "Use annual terms",
+    rationale: "Approved pricing", decisionAt: now + 20, createdBy: adminId,
+  });
+  const replacement = insertDecision({
+    briefId, title: "Commercial model", decisionStatement: "Use monthly terms",
+    rationale: "Customer request", decisionAt: now + 30, supersedesId: decision.id,
+    createdBy: adminId,
+  });
+  const prior = getDecision(briefId, decision.id);
+  assert(prior.lifecycle === "superseded", "prior decision lifecycle becomes superseded");
+  assert(prior.superseded_by_id === replacement.id && replacement.supersedes_id === prior.id, "supersession links both records");
+  assert(
+    (db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as { brief_json: string }).brief_json === briefJsonBeforePromotion,
+    "promotion and decisions leave brief_json byte-for-byte unchanged",
+  );
 
   // eslint-disable-next-line no-console
   console.log("verify-journal: OK");

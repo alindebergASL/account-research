@@ -282,6 +282,7 @@ export default function BriefPage(props: { params: Promise<{ id: string }> }) {
             currentUserId={me.id}
             isAdmin={me.role === "admin"}
             canManage={access.can_manage}
+            canWrite={access.can_write}
             briefContext={{
               account_name: brief.account_name,
               priority_summary: brief.priority_summary,
