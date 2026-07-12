@@ -190,3 +190,10 @@ test("explicit navigation clears incompatible notification hashes in both direct
     );
   }
 });
+
+test("record anchors are recognized exactly for post-load focus", () => {
+  assert.equal(location.recordAnchorIdFromHash("#journal-task-task-1", "journal-task"), "journal-task-task-1");
+  assert.equal(location.recordAnchorIdFromHash("#journal-decision-decision-1", "journal-decision"), "journal-decision-decision-1");
+  assert.equal(location.recordAnchorIdFromHash("#journal-decision-decision-1", "journal-task"), null);
+  assert.equal(location.recordAnchorIdFromHash("#journal-task-", "journal-task"), null);
+});

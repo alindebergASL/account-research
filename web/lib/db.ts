@@ -835,6 +835,87 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "030_journal_promotions_and_decisions",
+    // Durable, human-promoted Journal action items and decisions. SQLite cannot
+    // add foreign keys with ALTER TABLE, so the added task pointer columns are
+    // validated by the application layer; the new decisions table carries its
+    // foreign keys directly. Partial unique indexes make promotion idempotent
+    // while allowing a soft-deleted durable record to be replaced deliberately.
+    up: (c) => {
+      const taskColumns = new Set(
+        (c.prepare("PRAGMA table_info(journal_tasks)").all() as Array<{ name: string }>).map(
+          (row) => row.name,
+        ),
+      );
+      const additions: Array<[string, string]> = [
+        ["owner_text", "TEXT"],
+        ["assignee_user_id", "TEXT"],
+        ["due_at", "INTEGER"],
+        ["priority", "TEXT"],
+        ["source_candidate_id", "TEXT"],
+        ["source_entry_id", "TEXT"],
+        ["evidence_snapshot", "TEXT"],
+        ["promoted_by", "TEXT"],
+        ["promoted_at", "INTEGER"],
+      ];
+      for (const [name, type] of additions) {
+        if (!taskColumns.has(name)) c.exec(`ALTER TABLE journal_tasks ADD COLUMN ${name} ${type}`);
+      }
+      c.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_tasks_live_source_candidate
+          ON journal_tasks(source_candidate_id)
+          WHERE source_candidate_id IS NOT NULL AND deleted_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_journal_tasks_brief_assignee
+          ON journal_tasks(brief_id, assignee_user_id, deleted_at);
+        CREATE INDEX IF NOT EXISTS idx_journal_tasks_brief_due
+          ON journal_tasks(brief_id, due_at, deleted_at);
+
+        CREATE TABLE IF NOT EXISTS journal_decisions (
+          id                  TEXT PRIMARY KEY,
+          brief_id            TEXT NOT NULL,
+          title               TEXT NOT NULL,
+          decision_statement  TEXT NOT NULL,
+          rationale           TEXT,
+          owner_text          TEXT,
+          decision_at         INTEGER NOT NULL,
+          lifecycle           TEXT NOT NULL DEFAULT 'active'
+                              CHECK (lifecycle IN ('active', 'superseded', 'revoked')),
+          source_candidate_id TEXT,
+          source_entry_id     TEXT,
+          evidence_snapshot   TEXT,
+          supersedes_id       TEXT,
+          superseded_by_id    TEXT,
+          created_by          TEXT,
+          created_at          INTEGER NOT NULL,
+          updated_at          INTEGER NOT NULL,
+          deleted_at          INTEGER,
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (source_candidate_id) REFERENCES journal_review_candidates(id) ON DELETE SET NULL,
+          FOREIGN KEY (source_entry_id) REFERENCES journal_entries(id) ON DELETE SET NULL,
+          FOREIGN KEY (supersedes_id) REFERENCES journal_decisions(id),
+          FOREIGN KEY (superseded_by_id) REFERENCES journal_decisions(id),
+          FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+          CHECK (supersedes_id IS NULL OR supersedes_id <> id),
+          CHECK (superseded_by_id IS NULL OR superseded_by_id <> id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_decisions_live_source_candidate
+          ON journal_decisions(source_candidate_id)
+          WHERE source_candidate_id IS NOT NULL AND deleted_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_decisions_live_supersedes
+          ON journal_decisions(supersedes_id)
+          WHERE supersedes_id IS NOT NULL AND deleted_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_decisions_live_superseded_by
+          ON journal_decisions(superseded_by_id)
+          WHERE superseded_by_id IS NOT NULL AND deleted_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_journal_decisions_brief_lifecycle
+          ON journal_decisions(brief_id, lifecycle, decision_at DESC)
+          WHERE deleted_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_journal_decisions_brief_created
+          ON journal_decisions(brief_id, created_at DESC);
+      `);
+    },
+  },
 ];
 
 export type BriefCommentRow = {
@@ -887,6 +968,35 @@ export type JournalTaskRow = {
   done_by: string | null;
   done_at: number | null;
   position: number;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+  deleted_at: number | null;
+  owner_text: string | null;
+  assignee_user_id: string | null;
+  due_at: number | null;
+  priority: "low" | "normal" | "high" | "urgent" | null;
+  source_candidate_id: string | null;
+  source_entry_id: string | null;
+  evidence_snapshot: string | null;
+  promoted_by: string | null;
+  promoted_at: number | null;
+};
+
+export type JournalDecisionRow = {
+  id: string;
+  brief_id: string;
+  title: string;
+  decision_statement: string;
+  rationale: string | null;
+  owner_text: string | null;
+  decision_at: number;
+  lifecycle: "active" | "superseded" | "revoked";
+  source_candidate_id: string | null;
+  source_entry_id: string | null;
+  evidence_snapshot: string | null;
+  supersedes_id: string | null;
+  superseded_by_id: string | null;
   created_by: string | null;
   created_at: number;
   updated_at: number;

@@ -76,32 +76,31 @@ export function sanitizeEventMetadata(
   return cleaned;
 }
 
+function insertBriefEvent(input: CreateBriefEventInput): void {
+  const id = newId();
+  const cleaned = input.metadata ? sanitizeEventMetadata(input.metadata) : null;
+  const metadataJson = cleaned ? JSON.stringify(cleaned) : null;
+  db().prepare(
+    `INSERT INTO brief_events
+     (id, brief_id, job_id, actor_user_id, actor_type, event_type, title, summary, metadata_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id, input.brief_id ?? null, input.job_id ?? null, input.actor_user_id ?? null,
+    input.actor_type ?? "user", input.event_type, input.title, input.summary ?? null,
+    metadataJson, Date.now(),
+  );
+}
+
+// Transactional callers use the strict variant so an audit insertion failure
+// aborts the surrounding durable write. Metadata is sanitized identically.
+export function createBriefEventStrict(input: CreateBriefEventInput): void {
+  insertBriefEvent(input);
+}
+
 // Fire-and-forget. NEVER throws. Call sites must not need try/catch.
 export function createBriefEvent(input: CreateBriefEventInput): void {
   try {
-    const id = newId();
-    const cleaned = input.metadata
-      ? sanitizeEventMetadata(input.metadata)
-      : null;
-    const metadataJson = cleaned ? JSON.stringify(cleaned) : null;
-    db()
-      .prepare(
-        `INSERT INTO brief_events
-         (id, brief_id, job_id, actor_user_id, actor_type, event_type, title, summary, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        input.brief_id ?? null,
-        input.job_id ?? null,
-        input.actor_user_id ?? null,
-        input.actor_type ?? "user",
-        input.event_type,
-        input.title,
-        input.summary ?? null,
-        metadataJson,
-        Date.now(),
-      );
+    insertBriefEvent(input);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("[brief_events] insert failed", err);

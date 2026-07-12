@@ -1,5 +1,5 @@
 export type BriefView = "brief" | "canvas" | "journal";
-export type JournalWorkspace = "timeline" | "team" | "sources" | "tasks" | "review";
+export type JournalWorkspace = "timeline" | "team" | "sources" | "tasks" | "decisions" | "review";
 export type ReviewInboxTab = "pending" | "history";
 
 export type JournalWorkspaceLocationState = {
@@ -14,6 +14,7 @@ const WORKSPACES = new Set<JournalWorkspace>([
   "team",
   "sources",
   "tasks",
+  "decisions",
   "review",
 ]);
 const REVIEW_TABS = new Set<ReviewInboxTab>(["pending", "history"]);
@@ -106,4 +107,12 @@ export function hashForExplicitNavigation(
     return destination.view === "brief" ? currentHash : "";
   }
   return currentHash;
+}
+
+export function recordAnchorIdFromHash(
+  hash: string,
+  kind: "journal-task" | "journal-decision",
+): string | null {
+  const prefix = `#${kind}-`;
+  return hash.startsWith(prefix) && hash.length > prefix.length ? hash.slice(1) : null;
 }

@@ -34,6 +34,13 @@ export type ReviewCandidateDto = {
   source_entry_id: string | null;
   created_at: number;
   updated_at: number;
+  promoted_task_id: string | null;
+  promoted_decision_id: string | null;
+};
+
+type DecoratedCandidateRow = JournalReviewCandidateRow & {
+  promoted_task_id: string | null;
+  promoted_decision_id: string | null;
 };
 
 const MAX_TITLE_CHARS = 160;
@@ -95,7 +102,7 @@ export function parseReviewCandidateStatus(value: unknown): ReviewCandidateStatu
   return value;
 }
 
-export function rowToReviewCandidateDto(row: JournalReviewCandidateRow): ReviewCandidateDto {
+export function rowToReviewCandidateDto(row: DecoratedCandidateRow): ReviewCandidateDto {
   return {
     id: row.id,
     candidate_type: row.candidate_type,
@@ -110,17 +117,24 @@ export function rowToReviewCandidateDto(row: JournalReviewCandidateRow): ReviewC
     source_entry_id: row.source_entry_id,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    promoted_task_id: row.promoted_task_id ?? null,
+    promoted_decision_id: row.promoted_decision_id ?? null,
   };
 }
 
 export function listReviewCandidates(briefId: string): ReviewCandidateDto[] {
   const rows = db()
     .prepare(
-      `SELECT * FROM journal_review_candidates
-        WHERE brief_id = ? AND deleted_at IS NULL
+      `SELECT c.*,
+              (SELECT t.id FROM journal_tasks t
+                WHERE t.source_candidate_id = c.id AND t.deleted_at IS NULL LIMIT 1) AS promoted_task_id,
+              (SELECT d.id FROM journal_decisions d
+                WHERE d.source_candidate_id = c.id AND d.deleted_at IS NULL LIMIT 1) AS promoted_decision_id
+         FROM journal_review_candidates c
+        WHERE c.brief_id = ? AND c.deleted_at IS NULL
         ORDER BY updated_at DESC, created_at DESC`,
     )
-    .all(briefId) as JournalReviewCandidateRow[];
+    .all(briefId) as DecoratedCandidateRow[];
   return rows.map(rowToReviewCandidateDto);
 }
 
@@ -169,10 +183,15 @@ export function insertReviewCandidate(args: {
 export function getReviewCandidate(briefId: string, candidateId: string): ReviewCandidateDto {
   const row = db()
     .prepare(
-      `SELECT * FROM journal_review_candidates
-        WHERE id = ? AND brief_id = ? AND deleted_at IS NULL`,
+      `SELECT c.*,
+              (SELECT t.id FROM journal_tasks t
+                WHERE t.source_candidate_id = c.id AND t.deleted_at IS NULL LIMIT 1) AS promoted_task_id,
+              (SELECT d.id FROM journal_decisions d
+                WHERE d.source_candidate_id = c.id AND d.deleted_at IS NULL LIMIT 1) AS promoted_decision_id
+         FROM journal_review_candidates c
+        WHERE c.id = ? AND c.brief_id = ? AND c.deleted_at IS NULL`,
     )
-    .get(candidateId, briefId) as JournalReviewCandidateRow | undefined;
+    .get(candidateId, briefId) as DecoratedCandidateRow | undefined;
   if (!row) throw new Error("Review candidate not found");
   return rowToReviewCandidateDto(row);
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
+import { isActiveBriefMember } from "@/lib/briefAccess";
 import { moveTask, softDeleteTask, updateTask } from "@/lib/journalTasks";
 
 export const runtime = "nodejs";
@@ -40,9 +41,30 @@ export async function PATCH(
   if (body == null || typeof body !== "object") {
     return NextResponse.json({ error: "Invalid task patch" }, { status: 400 });
   }
+  for (const field of ["source_candidate_id", "source_entry_id", "promoted_by", "promoted_at"]) {
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      return NextResponse.json({ error: `${field} is promotion-managed` }, { status: 400 });
+    }
+  }
+  const isMove = Object.prototype.hasOwnProperty.call(body, "parent_id");
+  const editFields = ["body", "done", "owner_text", "assignee_user_id", "due_at", "priority", "evidence_snapshot"];
+  if (isMove && editFields.some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+    return NextResponse.json({ error: "Move/reorder fields cannot be mixed with edit or metadata fields" }, { status: 400 });
+  }
+  const changesOwner = Object.prototype.hasOwnProperty.call(body, "owner_text");
+  const changesAssignee = Object.prototype.hasOwnProperty.call(body, "assignee_user_id");
+  const changesAssignment = changesOwner || changesAssignee;
+  const changesEvidence = Object.prototype.hasOwnProperty.call(body, "evidence_snapshot");
+  if ((changesAssignment || changesEvidence) && !canWriteBrief(user, params.id)) {
+    return NextResponse.json({ error: "Brief write access required to change task assignment or evidence" }, { status: 403 });
+  }
+  if (changesAssignee && body.assignee_user_id != null && body.assignee_user_id !== "") {
+    if (typeof body.assignee_user_id !== "string" || !isActiveBriefMember(body.assignee_user_id, params.id)) {
+      return NextResponse.json({ error: "assignee must be an active member with brief access" }, { status: 400 });
+    }
+  }
 
   try {
-    const isMove = Object.prototype.hasOwnProperty.call(body, "parent_id");
     const task = isMove
       ? moveTask({
           briefId: params.id,
@@ -55,6 +77,11 @@ export async function PATCH(
           taskId: params.taskId,
           body: Object.prototype.hasOwnProperty.call(body, "body") ? body.body : undefined,
           done: Object.prototype.hasOwnProperty.call(body, "done") ? body.done : undefined,
+          ownerText: Object.prototype.hasOwnProperty.call(body, "owner_text") ? body.owner_text : undefined,
+          assigneeUserId: changesAssignee ? body.assignee_user_id : undefined,
+          dueAt: Object.prototype.hasOwnProperty.call(body, "due_at") ? body.due_at : undefined,
+          priority: Object.prototype.hasOwnProperty.call(body, "priority") ? body.priority : undefined,
+          evidenceSnapshot: Object.prototype.hasOwnProperty.call(body, "evidence_snapshot") ? body.evidence_snapshot : undefined,
           actorUserId: user.id,
         });
     return NextResponse.json({ task });

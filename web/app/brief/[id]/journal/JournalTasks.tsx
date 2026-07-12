@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, ChevronRight, Plus, Trash2, X, ListTodo } from "lucide-react";
 import { Card, SectionHeader, EmptyState } from "./ui";
+import type { BriefMemberOption } from "./types";
+import { recordAnchorIdFromHash } from "@/lib/journalWorkspaceLocation";
 
 type Task = {
   id: string;
@@ -19,6 +21,15 @@ type Task = {
   created_by: string | null;
   created_at: number;
   updated_at: number;
+  owner_text: string | null;
+  assignee_user_id: string | null;
+  due_at: number | null;
+  priority: "low" | "normal" | "high" | "urgent" | null;
+  source_candidate_id: string | null;
+  source_entry_id: string | null;
+  evidence_snapshot: string | null;
+  promoted_by: string | null;
+  promoted_at: number | null;
   children: Task[];
 };
 
@@ -31,9 +42,12 @@ function flatten(tasks: Task[]): Task[] {
 
 export default function JournalTasks({
   briefId,
+  members,
 }: {
   briefId: string;
   currentUserId: string;
+  members: BriefMemberOption[];
+  canWrite: boolean;
 }) {
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +75,19 @@ export default function JournalTasks({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (tasks === null) return;
+    const anchorId = recordAnchorIdFromHash(window.location.hash, "journal-task");
+    if (!anchorId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const anchor = document.getElementById(anchorId);
+      if (!anchor) return;
+      anchor.scrollIntoView({ block: "center" });
+      anchor.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [tasks]);
 
   async function mutate(fn: () => Promise<Response>) {
     if (busy) return;
@@ -138,6 +165,8 @@ export default function JournalTasks({
     return (
       <div key={task.id}>
         <div
+          id={`journal-task-${task.id}`}
+          tabIndex={-1}
           className="group flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-[var(--surface-muted)]"
           style={{ marginLeft: depth * 22 }}
         >
@@ -188,6 +217,16 @@ export default function JournalTasks({
               >
                 {task.body}
               </button>
+            )}
+            {!isEditing && (task.owner_text || task.assignee_user_id || task.due_at || task.priority || task.evidence_snapshot) && (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
+                <span className={`rounded-full px-1.5 py-0.5 ${task.done ? "bg-[var(--success-bg)] text-[var(--success-text)]" : "bg-[var(--surface-muted)]"}`}>{task.done ? "Completed" : "Open"}</span>
+                {task.owner_text && <span>Owner: {task.owner_text}</span>}
+                {task.assignee_user_id && <span>Assignee: {members.find((member) => member.id === task.assignee_user_id)?.display_name || members.find((member) => member.id === task.assignee_user_id)?.email || task.assignee_user_id}</span>}
+                {task.due_at && <span>Due: {new Date(task.due_at).toLocaleDateString()}</span>}
+                {task.priority && <span className="capitalize">Priority: {task.priority}</span>}
+                {task.evidence_snapshot && <details className="basis-full rounded-md bg-[var(--ai-bg)] p-2 text-[var(--ai-text)]"><summary className="cursor-pointer font-medium">{task.source_candidate_id ? "Frozen evidence" : "Evidence"}</summary><pre className="mt-1 whitespace-pre-wrap font-sans">{task.evidence_snapshot}</pre></details>}
+              </div>
             )}
           </div>
 
