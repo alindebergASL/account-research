@@ -12,9 +12,22 @@ import { MONITOR_SCAN_MODEL, MONITOR_TRIAGE_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Brief } from "./schema";
 import type { BriefPatch } from "./briefPatches";
+import { assertProviderCallsEnabled } from "./providerAccess";
 
-export const MAX_OUTPUT_TOKENS = 6000;
-const MAX_TOOL_ITERATIONS = 6;
+export const MONITOR_BUDGETS = {
+  outputTokens: 2_500,
+  maxToolIterations: 3,
+  maxFindingsBytes: 64 * 1024,
+  maxPatches: 12,
+} as const;
+export const MAX_OUTPUT_TOKENS = MONITOR_BUDGETS.outputTokens;
+const MAX_TOOL_ITERATIONS = MONITOR_BUDGETS.maxToolIterations;
+
+function assertMonitorProviderOutputBounded(value: unknown): void {
+  if (Buffer.byteLength(JSON.stringify(value ?? null), "utf8") > MONITOR_BUDGETS.maxFindingsBytes) {
+    throw new Error("Monitor output exceeded the allowed size");
+  }
+}
 
 export type MonitorFindings = {
   has_updates: boolean;
@@ -226,8 +239,9 @@ export async function runMonitorTriage(
   client?: MonitorClient,
   usage?: MonitorUsage,
 ): Promise<MonitorTriageResult> {
+  assertProviderCallsEnabled();
   const c: MonitorClient =
-    client ?? _testClient ?? (new Anthropic() as unknown as MonitorClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as MonitorClient);
   const system = buildTriageSystemPrompt(input);
   let messages: any[] = [
     {
@@ -255,6 +269,7 @@ export async function runMonitorTriage(
       ],
       messages,
     });
+    assertMonitorProviderOutputBounded(response.content);
     if (usage) accumulateUsage(usage, response, "triage");
     containerId = response.container?.id ?? containerId;
 
@@ -301,8 +316,9 @@ export async function runMonitorCheck(
   client?: MonitorClient,
   usage: MonitorUsage = emptyMonitorUsage(),
 ): Promise<MonitorCheckResult> {
+  assertProviderCallsEnabled();
   const c: MonitorClient =
-    client ?? _testClient ?? (new Anthropic() as unknown as MonitorClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as MonitorClient);
   const triage = await runMonitorTriage(input, c, usage);
   if (!triage.anythingNew) {
     return {
@@ -338,11 +354,17 @@ export function __setTestMonitorClient(c: MonitorClient | null) {
 }
 
 function extractFindings(toolInput: any): MonitorFindings {
+  if (Buffer.byteLength(JSON.stringify(toolInput ?? null), "utf8") > MONITOR_BUDGETS.maxFindingsBytes) {
+    throw new Error("Monitor output exceeded the allowed size");
+  }
   const has_updates = toolInput?.has_updates === true;
   const summary = typeof toolInput?.summary === "string" ? toolInput.summary.trim() : "";
   const patches: BriefPatch[] = Array.isArray(toolInput?.patches)
     ? toolInput.patches
     : [];
+  if (patches.length > MONITOR_BUDGETS.maxPatches) {
+    throw new Error("Monitor output exceeded the allowed patch count");
+  }
   // Guard against a model that flags updates but supplies nothing actionable.
   if (!has_updates || (patches.length === 0 && !summary)) {
     return { has_updates: false, summary: "", patches: [] };
@@ -355,8 +377,9 @@ export async function runMonitorScan(
   client?: MonitorClient,
   usage?: MonitorUsage,
 ): Promise<MonitorFindings> {
+  assertProviderCallsEnabled();
   const c: MonitorClient =
-    client ?? _testClient ?? (new Anthropic() as unknown as MonitorClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as MonitorClient);
   const system = buildSystemPrompt(input);
   let messages: any[] = [
     {
@@ -384,6 +407,7 @@ export async function runMonitorScan(
       ],
       messages,
     });
+    assertMonitorProviderOutputBounded(response.content);
     if (usage) accumulateUsage(usage, response, "deep");
     containerId = response.container?.id ?? containerId;
 

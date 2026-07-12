@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { HttpError, canCollaborateBrief, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { isActiveBriefMember } from "@/lib/briefAccess";
 import { moveTask, softDeleteTask, updateTask } from "@/lib/journalTasks";
@@ -37,9 +38,9 @@ export async function PATCH(
 
   let body: any;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (body == null || typeof body !== "object") {
     return NextResponse.json({ error: "Invalid task patch" }, { status: 400 });

@@ -28,6 +28,7 @@ import type {
   HermesChatResponse,
   HermesRuntimeEventInput,
 } from "./types";
+import { assertProviderCallsEnabled } from "../providerAccess";
 
 export type ChatProviderResult = {
   reply: string;
@@ -134,6 +135,7 @@ function validateWritableResponse(
 export async function runChatViaHermes(
   ctx: HermesChatAdapterContext,
 ): Promise<ChatProviderResult> {
+  assertProviderCallsEnabled();
   const fake = hermesRuntimeFake();
   const jobId = createHermesJob({
     kind: "chat",
@@ -169,6 +171,13 @@ export async function runChatViaHermes(
 
   try {
     const resp = await runHermesChat(req);
+    if (
+      Buffer.byteLength(resp.reply ?? "", "utf8") > 12 * 1024 ||
+      Buffer.byteLength(JSON.stringify(resp.patch_errors ?? []), "utf8") > 24 * 1024 ||
+      Buffer.byteLength(JSON.stringify(resp.patches_applied ?? []), "utf8") > 64 * 1024
+    ) {
+      throw new Error("Hermes chat output exceeded the allowed size");
+    }
     appendRuntimeEvents(jobId, ctx.brief_id, ctx.user_id, resp.events);
 
     const result: ChatProviderResult = {

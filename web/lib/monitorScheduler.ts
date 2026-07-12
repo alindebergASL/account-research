@@ -8,6 +8,8 @@
 
 import { db } from "./db";
 import { newId } from "./password";
+import { providerCallsEnabled } from "./providerAccess";
+import { enqueueResearchJob, ResearchQueueError } from "./researchQueueLimits";
 
 const SCHEDULE_ID = "singleton";
 const MONITOR_HOUR = 2; // 2 AM, server local time
@@ -77,17 +79,19 @@ export function enqueueMonitorJob(
   briefId: string,
   userId: string,
 ): string | null {
-  const active = db()
-    .prepare(
-      `SELECT id FROM research_jobs
-        WHERE intent = 'monitor'
-          AND target_brief_id = ?
-          AND status IN ('queued','running')
-        LIMIT 1`,
-    )
-    .get(briefId) as { id: string } | undefined;
-  if (active) return null;
+  try {
+    return enqueueMonitorJobOrThrow(briefId, userId);
+  } catch (error) {
+    if (error instanceof ResearchQueueError) return null;
+    if (!providerCallsEnabled()) return null;
+    throw error;
+  }
+}
 
+export function enqueueMonitorJobOrThrow(
+  briefId: string,
+  userId: string,
+): string | null {
   const brief = db()
     .prepare(`SELECT account_name, segment FROM briefs WHERE id = ?`)
     .get(briefId) as { account_name: string; segment: string | null } | undefined;
@@ -98,26 +102,11 @@ export function enqueueMonitorJob(
     account: brief.account_name,
     segment: brief.segment || undefined,
   };
-  db()
-    .prepare(
-      `INSERT INTO research_jobs
-        (id, user_id, account_name, account_segment, region, goal,
-         intake_json, mode, status, created_at, intent, target_brief_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 'monitor', ?)`,
-    )
-    .run(
-      jobId,
-      userId,
-      brief.account_name,
-      brief.segment,
-      null,
-      null,
-      JSON.stringify(intake),
-      "standard",
-      Date.now(),
-      briefId,
-    );
-  return jobId;
+  return enqueueResearchJob({
+    id: jobId, userId, accountName: brief.account_name,
+    accountSegment: brief.segment, intakeJson: JSON.stringify(intake),
+    mode: "standard", intent: "monitor", targetBriefId: briefId,
+  });
 }
 
 // Disable/cancel semantics: once a user turns monitoring off, active monitor
@@ -143,6 +132,7 @@ export const cancelQueuedMonitorJobsForBrief = cancelActiveMonitorJobsForBrief;
 // Enqueue a monitor job for every monitor-enabled brief, attributed to the
 // brief owner. Deduped per brief. Returns the number of jobs enqueued.
 export function enqueueAllMonitorJobs(now: number = Date.now()): number {
+  if (!providerCallsEnabled()) return 0;
   const briefs = db()
     .prepare(
       `SELECT id, user_id, monitor_cadence, last_monitored_at
@@ -168,6 +158,7 @@ export function enqueueAllMonitorJobs(now: number = Date.now()): number {
 // daily batch. Cheap and self-throttling — the date comparison short-circuits
 // the rest of the day. Exposed `now` for deterministic testing.
 export function maybeRunDailySchedule(now: Date = new Date()): number {
+  if (!providerCallsEnabled()) return 0;
   if (now.getHours() < MONITOR_HOUR) return 0;
   const today = localDateKey(now);
 

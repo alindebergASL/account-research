@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db, BriefRow } from "@/lib/db";
 import {
   HttpError,
@@ -116,9 +117,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
   let body: { audience?: string };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const audience =
     body.audience === "shareable" || body.audience === "internal"

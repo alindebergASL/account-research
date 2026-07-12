@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
 import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
 import { newId, randomShareToken } from "@/lib/password";
@@ -97,9 +98,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   let body: { ttl?: string };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const ttl = body.ttl as ShareLinkTtl | undefined;
   if (!ttl || !SHARE_LINK_TTL_OPTIONS.some((o) => o.id === ttl)) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import {
   countUnreadNotifications,
   markAllNotificationsRead,
@@ -19,9 +20,9 @@ export async function POST(req: NextRequest) {
   }
   let body: { all?: unknown; ids?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (body.all === true) {
     const marked = markAllNotificationsRead(s.user.id);

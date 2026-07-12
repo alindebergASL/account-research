@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
 import {
   JournalRadarStaleManifestError,
@@ -26,9 +27,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ error: "Expected a JSON object" }, { status: 400 });

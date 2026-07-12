@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
 import { HttpError, requireAdmin } from "@/lib/auth";
 
@@ -19,9 +20,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
   let body: { email_notifications_enabled?: boolean };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (typeof body.email_notifications_enabled !== "boolean") {
     return NextResponse.json(

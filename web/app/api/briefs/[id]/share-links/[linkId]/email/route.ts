@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
 import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
 import { appBaseUrl, isEmailConfigured, sendShareLinkEmail } from "@/lib/email";
@@ -67,9 +68,9 @@ export async function POST(
 
   let body: { recipient?: string };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const recipient = (body.recipient ?? "").trim().toLowerCase();
   if (!EMAIL_RE.test(recipient)) {

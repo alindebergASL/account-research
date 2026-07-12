@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db, type BriefCommentRow } from "@/lib/db";
 import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
 
@@ -64,9 +65,9 @@ export async function PATCH(
 
   let body: { body?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const text = typeof body.body === "string" ? body.body.trim() : "";
   if (!text) {

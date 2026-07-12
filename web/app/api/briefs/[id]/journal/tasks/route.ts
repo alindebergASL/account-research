@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { HttpError, canCollaborateBrief, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { isActiveBriefMember } from "@/lib/briefAccess";
 import { insertTask, listTasksForBrief } from "@/lib/journalTasks";
@@ -47,9 +48,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   if (!body || typeof body !== "object" || Array.isArray(body)) {

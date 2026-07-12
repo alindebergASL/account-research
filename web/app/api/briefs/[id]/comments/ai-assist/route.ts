@@ -7,6 +7,9 @@ import {
   runAssist,
   type ThreadComment,
 } from "@/lib/briefCommentsAi";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
+import { providerConcurrencyErrorResponse, withProviderConcurrency } from "@/lib/providerConcurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -31,19 +34,23 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (user.role === "viewer") {
+    return NextResponse.json({ error: "Read-only users cannot use AI assist" }, { status: 403 });
+  }
   if (!canCollaborateBrief(user, params.id)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   let body: { mode?: unknown; parent_id?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (!isAssistMode(body.mode)) {
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
   }
+  const mode = body.mode;
   const parentId =
     typeof body.parent_id === "string" && body.parent_id ? body.parent_id : null;
 
@@ -101,14 +108,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   try {
-    const result = await runAssist({
-      mode: body.mode,
+    assertProviderCallsEnabled();
+    const result = await withProviderConcurrency(`brief:${params.id}`, () => runAssist({
+      mode,
       brief_json: briefJson,
       thread,
       parent_id: parentId,
-    });
+    }));
     return NextResponse.json(result);
   } catch (err: any) {
+    const limited = providerAccessErrorResponse(err) ?? providerConcurrencyErrorResponse(err);
+    if (limited) return limited;
     return NextResponse.json(
       { error: friendlyAnthropicError(err, "AI assist") },
       { status: 500 },

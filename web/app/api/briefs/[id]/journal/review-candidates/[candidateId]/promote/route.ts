@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { promoteReviewCandidate } from "@/lib/journalPromotion";
 
@@ -22,9 +23,9 @@ export async function POST(
   }
   let input: unknown;
   try {
-    input = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    input = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   try {
     const result = promoteReviewCandidate({

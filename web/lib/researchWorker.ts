@@ -38,6 +38,7 @@ import {
   patchesFromWholeBrief,
   prepareBriefUpdateCandidates,
 } from "./briefUpdateReviewBoundary";
+import { providerCallsEnabled } from "./providerAccess";
 
 const POLL_INTERVAL_MS = 2000;
 const MONITOR_ALLOWED_PATCH_FIELDS = new Set([
@@ -708,6 +709,11 @@ export async function executeMonitorJob(job: ResearchJobRow) {
       return;
     }
 
+    if (!providerCallsEnabled()) {
+      markJobFailed(job.id, "AI provider access is disabled");
+      return;
+    }
+
     let rawBrief: unknown;
     try {
       rawBrief = JSON.parse(row.brief_json);
@@ -877,6 +883,12 @@ export async function executeResearchJob(job: ResearchJobRow) {
       return;
     }
 
+    const currentActor = findUserById(job.user_id);
+    if (!currentActor || currentActor.role === "viewer") {
+      markJobFailed(job.id, "Research job is no longer authorized");
+      return;
+    }
+
     let intake: Intake;
     try {
       intake = JSON.parse(job.intake_json);
@@ -911,6 +923,12 @@ export async function executeResearchJob(job: ResearchJobRow) {
         markJobFailed(job.id, "Refresh job is no longer authorized");
         return;
       }
+    }
+
+
+    if (!providerCallsEnabled()) {
+      markJobFailed(job.id, "AI provider access is disabled");
+      return;
     }
 
     const { brief, stages } = await runResearchPipeline(intake, {

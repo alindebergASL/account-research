@@ -102,8 +102,8 @@ function sourceFingerprint(briefId: string): string {
   return stableHash(rows);
 }
 
-export function refreshCockpitSourceFingerprint(briefId: string): string {
-  const model = buildJournalCockpitReadModel({
+function buildCurrentCockpitReadModel(briefId: string) {
+  return buildJournalCockpitReadModel({
     briefId,
     candidates: listReviewCandidates(briefId),
     invalidation: {
@@ -114,6 +114,14 @@ export function refreshCockpitSourceFingerprint(briefId: string): string {
       sourceFingerprint: sourceFingerprint(briefId),
     },
   });
+}
+
+export function computeCockpitSourceFingerprint(briefId: string): string {
+  return buildCurrentCockpitReadModel(briefId).source_fingerprint;
+}
+
+export function refreshCockpitSourceFingerprint(briefId: string): string {
+  const model = buildCurrentCockpitReadModel(briefId);
   saveJournalCockpitReadModel(model);
   return model.source_fingerprint;
 }

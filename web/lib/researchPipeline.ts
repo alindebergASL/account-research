@@ -12,6 +12,7 @@ import {
   SOURCE_SCOUT_MODEL,
   JSON_REPAIR_MODEL,
 } from "./models";
+import { assertProviderCallsEnabled } from "./providerAccess";
 
 export type ResearchMode = "quick" | "standard" | "deep";
 
@@ -68,15 +69,27 @@ type ModeConfig = {
   breadthTarget: string;
 };
 
+export const RESEARCH_BUDGETS = {
+  scoutOutputTokens: 4_000,
+  repairOutputTokens: 12_000,
+  maxProviderOutputBytes: 512 * 1024,
+} as const;
+
+function assertResearchProviderOutputBounded(value: unknown): void {
+  if (Buffer.byteLength(JSON.stringify(value ?? null), "utf8") > RESEARCH_BUDGETS.maxProviderOutputBytes) {
+    throw new PipelineError("Model output exceeded the allowed size");
+  }
+}
+
 const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
   quick: {
     runScout: false,
     scoutCap: 0,
     research: {
       model: RESEARCH_QUICK_MODEL,
-      maxOutputTokens: 16_000,
+      maxOutputTokens: 8_000,
       thinking: { type: "disabled" },
-      maxContinuations: 2,
+      maxContinuations: 1,
       useWebFetch: false,
     },
     breadthTarget:
@@ -87,9 +100,9 @@ const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
     scoutCap: 12,
     research: {
       model: RESEARCH_HEAVY_MODEL,
-      maxOutputTokens: 32_000,
+      maxOutputTokens: 16_000,
       thinking: { type: "adaptive" },
-      maxContinuations: 5,
+      maxContinuations: 2,
       useWebFetch: true,
     },
     breadthTarget:
@@ -100,10 +113,10 @@ const MODE_CONFIG: Record<ResearchMode, ModeConfig> = {
     scoutCap: 25,
     research: {
       model: RESEARCH_HEAVY_MODEL,
-      maxOutputTokens: 64_000,
+      maxOutputTokens: 24_000,
       thinking: { type: "adaptive" },
       effort: "xhigh",
-      maxContinuations: 8,
+      maxContinuations: 3,
       useWebFetch: true,
     },
     breadthTarget:
@@ -157,7 +170,7 @@ async function findSources(
     for (let i = 0; i <= SOURCE_DISCOVERY_MAX_CONTINUATIONS; i++) {
       const response = await client.messages.create({
         model: SOURCE_SCOUT_MODEL,
-        max_tokens: 8000,
+        max_tokens: RESEARCH_BUDGETS.scoutOutputTokens,
         // Cache the frozen scout prompt (tools + system) across jobs; the
         // top-level breakpoint caches the message tail across continuations.
         cache_control: { type: "ephemeral" } as any,
@@ -177,6 +190,7 @@ async function findSources(
         ],
         messages,
       });
+      assertResearchProviderOutputBounded(response.content);
       stages.push({
         name: i === 0 ? "source_scout" : `source_scout_continue_${i}`,
         model: SOURCE_SCOUT_MODEL,
@@ -268,6 +282,7 @@ async function runResearchLoop(
       messages,
     });
     const final = await stream.finalMessage();
+    assertResearchProviderOutputBounded(final.content);
     stages.push({
       name: i === 0 ? stageBaseName : `${stageBaseName}_continue_${i}`,
       model: cfg.model,
@@ -297,7 +312,7 @@ async function repairJson(
   try {
     const response = await client.messages.create({
       model: JSON_REPAIR_MODEL,
-      max_tokens: 16000,
+      max_tokens: RESEARCH_BUDGETS.repairOutputTokens,
       // Cache the frozen SYSTEM_PROMPT (with its large schema) as the prefix so
       // a second repair in the same job reuses it. No top-level breakpoint here:
       // the partial-output user turn is unique per call, so caching it would pay
@@ -318,6 +333,7 @@ async function repairJson(
         },
       ],
     });
+    assertResearchProviderOutputBounded(response.content);
     stages.push({
       name: "repair",
       model: JSON_REPAIR_MODEL,
@@ -346,12 +362,7 @@ function friendlyMessage(err: any): string {
   if (err instanceof Anthropic.AuthenticationError) {
     return "Server is misconfigured (invalid Anthropic API key).";
   }
-  // Strip anything that looks like a header/key/secret block, then truncate.
-  const cleaned = raw
-    .replace(/x-api-key[^\s]*/gi, "x-api-key=[redacted]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-[redacted]");
-  return cleaned.slice(0, 4096);
+  return "Research provider request failed";
 }
 
 function buildIntakeText(intake: Intake, mode: ResearchMode): string {
@@ -515,6 +526,7 @@ export async function runResearchPipeline(
   if (!intake.account || !intake.account.trim()) {
     throw new PipelineError("Missing 'account' name");
   }
+  assertProviderCallsEnabled();
   if (testResearchRunner) return testResearchRunner(intake, ctx);
 
   // Dispatcher: route through Hermes runtime when the per-feature flag
@@ -592,7 +604,7 @@ async function runDirectAnthropicResearch(
   }
 
   const cfg = MODE_CONFIG[mode];
-  const client = new Anthropic();
+  const client = new Anthropic({ timeout: 90_000, maxRetries: 1 });
   const stages: StageUsage[] = [];
   const intakeText = buildIntakeText(intake, mode);
   const today = new Date().toISOString().slice(0, 10);
@@ -633,7 +645,11 @@ async function runDirectAnthropicResearch(
         .find((b: any) => b.type === "text") as
         | { type: "text"; text: string }
         | undefined;
-      return tb?.text ?? null;
+      const value = tb?.text ?? null;
+      if (value && Buffer.byteLength(value, "utf8") > RESEARCH_BUDGETS.maxProviderOutputBytes) {
+        throw new PipelineError("Model output exceeded the allowed size");
+      }
+      return value;
     }
 
     let text = getText(final);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { softDeleteDecision, updateDecision } from "@/lib/journalDecisions";
 
@@ -22,7 +23,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   let user;
   try { user = await userFor(req, params.id); } catch (error) { return errorResponse(error); }
   let body: any;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  try { body = await parseBoundedJson(req); } catch (error) { return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Invalid decision patch" }, { status: 400 });
   for (const field of ["source_candidate_id", "source_entry_id", "evidence_snapshot", "created_by", "supersedes_id", "superseded_by_id"]) {
     if (Object.prototype.hasOwnProperty.call(body, field)) return NextResponse.json({ error: `${field} is immutable` }, { status: 400 });

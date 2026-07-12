@@ -38,9 +38,13 @@ import {
   journalCatchUpExcludedDocumentKey,
   journalCatchUpScopedDocumentKey,
   loadJournalCatchUpCache,
+  computeCockpitSourceFingerprint,
   refreshCockpitSourceFingerprint,
   saveJournalCatchUpCache,
 } from "@/lib/journalCatchUpCache";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
+import { providerConcurrencyErrorResponse, reserveProviderConcurrency } from "@/lib/providerConcurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -168,9 +172,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     journal_catch_up_window?: unknown;
   };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const text = typeof body.body === "string" ? body.body.trim() : "";
   if (!text) {
@@ -274,7 +278,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ entries: [userEntry] });
   }
 
-  const catchUpCacheFingerprint = catchUpWindow ? refreshCockpitSourceFingerprint(params.id) : null;
+  const catchUpCacheFingerprint = catchUpWindow ? computeCockpitSourceFingerprint(params.id) : null;
   const catchUpCacheExcludedKey = catchUpWindow
     ? journalCatchUpExcludedDocumentKey(excludedDocumentIds)
     : "";
@@ -294,6 +298,19 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       })
     : null;
 
+  let releaseProviderReservation: (() => void) | null = null;
+  if (!catchUpCacheHit) {
+    try {
+      assertProviderCallsEnabled();
+      releaseProviderReservation = reserveProviderConcurrency(`brief:${params.id}`);
+    } catch (error) {
+      return providerAccessErrorResponse(error) ?? providerConcurrencyErrorResponse(error)
+        ?? NextResponse.json({ error: "AI provider access is temporarily unavailable" }, { status: 503 });
+    }
+  }
+
+  try {
+  if (catchUpWindow) refreshCockpitSourceFingerprint(params.id);
   const userEntryId = insertJournalEntry({
     briefId: params.id,
     userId: user.id,
@@ -332,13 +349,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   // AI participation path. A model failure must NOT lose the user's entry: we
   // return the persisted user entry plus a friendly ai_error instead of 500.
-  if (!process.env.ANTHROPIC_API_KEY && process.env.NODE_ENV === "production") {
-    return NextResponse.json({
-      entries: [userEntry],
-      ai_error: "Server is missing ANTHROPIC_API_KEY",
-    });
-  }
-
   const briefRow = db()
     .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
     .get(params.id) as Pick<BriefRow, "brief_json"> | undefined;
@@ -445,9 +455,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     }
     return NextResponse.json({ entries: [userEntry, aiEntry], ai_cache_hit: false });
   } catch (err) {
+    const limited = providerAccessErrorResponse(err) ?? providerConcurrencyErrorResponse(err);
+    if (limited) return limited;
     return NextResponse.json({
       entries: [userEntry],
       ai_error: friendlyAnthropicError(err, "Journal assistant"),
     });
+  }
+  } finally {
+    releaseProviderReservation?.();
   }
 }

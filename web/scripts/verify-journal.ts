@@ -20,6 +20,7 @@ if (!process.env.BRIEF_DB_PATH) {
 if (!process.env.ADMIN_EMAIL) process.env.ADMIN_EMAIL = "verify-journal@example.com";
 if (!process.env.ADMIN_PASSWORD) process.env.ADMIN_PASSWORD = "VerifyTempPass123!";
 delete process.env.ANTHROPIC_API_KEY;
+process.env.PROVIDER_CALLS_ENABLED = "1"; // Deterministic injected client; no provider/network.
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { db, initDb } = require("../lib/db") as typeof import("../lib/db");

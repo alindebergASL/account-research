@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
-import { enqueueMonitorJob } from "@/lib/monitorScheduler";
+import { enqueueMonitorJobOrThrow } from "@/lib/monitorScheduler";
+import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
+import { researchQueueErrorResponse } from "@/lib/researchQueueLimits";
 
 export const runtime = "nodejs";
 
@@ -44,6 +46,19 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
-  const queuedJobId = enqueueMonitorJob(params.id, user.id);
+  try {
+    assertProviderCallsEnabled();
+  } catch (error) {
+    return providerAccessErrorResponse(error)!;
+  }
+
+  let queuedJobId: string | null;
+  try {
+    queuedJobId = enqueueMonitorJobOrThrow(params.id, user.id);
+  } catch (error) {
+    const response = researchQueueErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   return NextResponse.json({ ok: true, queued_job_id: queuedJobId });
 }

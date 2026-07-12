@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, type ResearchJobRow } from "@/lib/db";
 import { HttpError, canStartResearch, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
+import { enqueueResearchJob, researchQueueErrorResponse } from "@/lib/researchQueueLimits";
 
 export const runtime = "nodejs";
 
@@ -44,25 +45,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
-  const newJobId = newId();
-  db()
-    .prepare(
-      `INSERT INTO research_jobs
-        (id, user_id, account_name, account_segment, region, goal,
-         intake_json, mode, status, created_at, retry_of_job_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
-    )
-    .run(
-      newJobId,
-      row.user_id,
-      row.account_name,
-      row.account_segment,
-      row.region,
-      row.goal,
-      row.intake_json,
-      row.mode,
-      Date.now(),
-      row.id,
-    );
+  let newJobId: string;
+  try {
+    newJobId = enqueueResearchJob({
+      id: newId(), userId: row.user_id, accountName: row.account_name,
+      accountSegment: row.account_segment, region: row.region, goal: row.goal,
+      intakeJson: row.intake_json, mode: row.mode, intent: "research", retryOfJobId: row.id,
+    });
+  } catch (error) {
+    const response = researchQueueErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   return NextResponse.json({ jobId: newJobId, status: "queued" }, { status: 202 });
 }

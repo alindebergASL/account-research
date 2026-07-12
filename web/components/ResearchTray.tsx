@@ -52,6 +52,7 @@ export default function ResearchTray() {
     {},
   );
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [requestError, setRequestError] = useState<string | null>(null);
   // Track previous statuses so we can fire a toast on transition.
   const prevStatusesRef = useRef<Map<string, JobView["status"]>>(new Map());
   const initializedRef = useRef(false);
@@ -68,6 +69,9 @@ export default function ResearchTray() {
         if (r.ok) {
           const data: Snapshot = await r.json();
           if (alive) handleSnapshot(data);
+          if (alive) setRequestError(null);
+        } else if (alive) {
+          setRequestError(statusMessage(r.status));
         }
       } catch {
         /* network blips ignored */
@@ -141,7 +145,12 @@ export default function ResearchTray() {
   async function cancelJob(jobId: string) {
     setBusy((b) => ({ ...b, [jobId]: "cancel" }));
     try {
-      await fetch(`/api/research-jobs/${jobId}`, { method: "DELETE" });
+      const response = await fetch(`/api/research-jobs/${jobId}`, { method: "DELETE" });
+      if (!response.ok) {
+        setRequestError(statusMessage(response.status));
+        return;
+      }
+      setRequestError(null);
       await refetch();
     } finally {
       setBusy((b) => ({ ...b, [jobId]: undefined }));
@@ -150,7 +159,12 @@ export default function ResearchTray() {
   async function retryJob(jobId: string) {
     setBusy((b) => ({ ...b, [jobId]: "retry" }));
     try {
-      await fetch(`/api/research-jobs/${jobId}/retry`, { method: "POST" });
+      const response = await fetch(`/api/research-jobs/${jobId}/retry`, { method: "POST" });
+      if (!response.ok) {
+        setRequestError(statusMessage(response.status));
+        return;
+      }
+      setRequestError(null);
       await refetch();
     } finally {
       setBusy((b) => ({ ...b, [jobId]: undefined }));
@@ -158,7 +172,12 @@ export default function ResearchTray() {
   }
   async function refetch() {
     const r = await fetch("/api/research-jobs", { cache: "no-store" });
-    if (r.ok) handleSnapshot(await r.json());
+    if (r.ok) {
+      handleSnapshot(await r.json());
+      setRequestError(null);
+    } else {
+      setRequestError(statusMessage(r.status));
+    }
   }
 
   const activeCount = snapshot?.active.length ?? 0;
@@ -187,7 +206,7 @@ export default function ResearchTray() {
         {open && (
           <div
             role="menu"
-            className="absolute right-0 mt-2 w-[360px] bg-white border border-[var(--line)] rounded-xl shadow-xl overflow-hidden z-30"
+            className="absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-[360px] bg-white border border-[var(--line)] rounded-xl shadow-xl overflow-hidden z-30"
           >
             <div className="px-4 py-2.5 border-b border-[var(--line)] flex items-center justify-between">
               <div className="text-[11px] uppercase tracking-wider text-muted">
@@ -203,6 +222,11 @@ export default function ResearchTray() {
               </button>
             </div>
             <div className="max-h-[420px] overflow-y-auto">
+              {requestError && (
+                <div role="alert" className="px-4 py-2.5 text-xs text-red-700 bg-red-50 border-b border-red-100">
+                  {requestError}
+                </div>
+              )}
               {!hasContent && (
                 <div className="px-4 py-6 text-sm text-muted text-center">
                   No research yet. Queue one from the home page.
@@ -248,6 +272,13 @@ export default function ResearchTray() {
       />
     </>
   );
+}
+
+function statusMessage(status: number): string {
+  if (status === 413) return "That request is too large. Reduce its text and try again.";
+  if (status === 429) return "Research is at capacity. Wait for an active job to finish, then retry.";
+  if (status === 503) return "Research providers are currently disabled. Try again after an operator enables them.";
+  return "Research jobs could not be updated. Please try again.";
 }
 
 function Section({

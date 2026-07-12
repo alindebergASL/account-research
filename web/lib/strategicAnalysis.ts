@@ -22,12 +22,15 @@ import {
   type AdminModelContext,
 } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
+import { assertProviderCallsEnabled } from "./providerAccess";
 
 // Brief JSON is hard-truncated to this many chars before being placed in the
 // system prompt. Strategic analysis gets a larger window than the comments
 // assist surface because it reasons over the whole brief.
 export const BRIEF_INPUT_CHAR_CAP = 12_000;
 export const MAX_OUTPUT_TOKENS = 2_000;
+export const MAX_STRATEGIC_PROMPT_BYTES = 8 * 1024;
+export const MAX_STRATEGIC_OUTPUT_BYTES = 24 * 1024;
 
 export const STRATEGIC_SYSTEM_PROMPT = `You are a strategic analysis assistant for an internal admin reviewing a sales research brief.
 
@@ -107,10 +110,12 @@ export async function runStrategicAnalysis(
 ): Promise<StrategicResult> {
   // Load-bearing gate: must run before any client construction or I/O.
   assertAdminModelAllowed(ADMIN_STRATEGIC_MODEL, ctx);
+  assertProviderCallsEnabled();
 
   const { system, user } = buildStrategicMessages(input);
+  if (Buffer.byteLength(user, "utf8") > MAX_STRATEGIC_PROMPT_BYTES) throw new Error("Strategic prompt is too large");
   const c: StrategicClient =
-    client ?? _testClient ?? (new Anthropic() as unknown as StrategicClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as StrategicClient);
   const response = await c.messages.create({
     model: ADMIN_STRATEGIC_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -123,5 +128,6 @@ export async function runStrategicAnalysis(
       .map((b) => b.text || "")
       .join("\n")
       .trim() || "(no analysis)";
+  if (Buffer.byteLength(text, "utf8") > MAX_STRATEGIC_OUTPUT_BYTES) throw new Error("Strategic analysis output is too large");
   return { text, model: ADMIN_STRATEGIC_MODEL };
 }

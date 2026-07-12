@@ -29,6 +29,7 @@ process.env.SMTP_USER = "u";
 process.env.SMTP_PASS = "p";
 process.env.MAIL_FROM = "noreply@example.com";
 delete process.env.ANTHROPIC_API_KEY;
+process.env.PROVIDER_CALLS_ENABLED = "1"; // Deterministic injected client; no provider/network.
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { db, initDb } = require("../lib/db") as typeof import("../lib/db");

@@ -19,8 +19,9 @@ import { buildReadOnlyCanvasFromBrief } from "../canvas/fromBrief";
 import {
   getHermesRuntimeUrlChecked,
   hermesRuntimeMode,
-  hermesServiceToken,
+  requireHermesServiceToken,
 } from "./config";
+import { assertProviderCallsEnabled } from "../providerAccess";
 import { redactSensitiveString } from "./sanitize";
 import type {
   HermesCanvasSynthesisRequest,
@@ -30,10 +31,12 @@ import type {
   HermesResearchRequest,
   HermesResearchResponse,
 } from "./types";
+import { parseBoundedJson } from "../httpBodyLimits";
 
 const RESEARCH_TIMEOUT_MS = 60_000;
 const CHAT_TIMEOUT_MS = 30_000;
 const CANVAS_TIMEOUT_MS = 60_000;
+const MAX_RUNTIME_RESPONSE_BYTES = 1024 * 1024;
 
 let testChatRunner: ((req: HermesChatRequest) => Promise<HermesChatResponse>) | null = null;
 
@@ -73,12 +76,12 @@ async function postJson<T>(path: string, body: unknown, timeoutMs: number): Prom
   // typed, fixed-string error — the env value is NOT interpolated.
   const base = getHermesRuntimeUrlChecked();
   const url = `${base}${path}`;
-  const token = hermesServiceToken();
+  const token = requireHermesServiceToken();
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json",
   };
-  if (token) headers.authorization = `Bearer ${token}`;
+  headers.authorization = `Bearer ${token}`;
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
@@ -97,7 +100,7 @@ async function postJson<T>(path: string, body: unknown, timeoutMs: number): Prom
         res.status,
       );
     }
-    const data = (await res.json()) as T;
+    const data = await parseBoundedJson<T>(res, MAX_RUNTIME_RESPONSE_BYTES);
     return data;
   } catch (e: any) {
     if (e instanceof HermesRuntimeError) throw e;
@@ -219,6 +222,7 @@ function fakeCanvas(req: HermesCanvasSynthesisRequest): HermesCanvasSynthesisRes
 export async function runHermesResearch(
   req: HermesResearchRequest,
 ): Promise<HermesResearchResponse> {
+  assertProviderCallsEnabled();
   const mode = hermesRuntimeMode();
   if (mode === "fake") return fakeResearch(req);
   if (mode === "hermes")
@@ -229,6 +233,7 @@ export async function runHermesResearch(
 export async function runHermesChat(
   req: HermesChatRequest,
 ): Promise<HermesChatResponse> {
+  assertProviderCallsEnabled();
   if (testChatRunner) return testChatRunner(req);
   const mode = hermesRuntimeMode();
   if (mode === "fake") return fakeChat(req);
@@ -240,6 +245,7 @@ export async function runHermesChat(
 export async function runHermesCanvasSynthesis(
   req: HermesCanvasSynthesisRequest,
 ): Promise<HermesCanvasSynthesisResponse> {
+  assertProviderCallsEnabled();
   const mode = hermesRuntimeMode();
   if (mode === "fake") return fakeCanvas(req);
   if (mode === "hermes")

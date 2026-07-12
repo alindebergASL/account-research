@@ -28,6 +28,9 @@ import {
   patchesFromWholeBrief,
   prepareBriefUpdateCandidates,
 } from "@/lib/briefUpdateReviewBoundary";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
+import { providerConcurrencyErrorResponse, withProviderConcurrency } from "@/lib/providerConcurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -42,10 +45,16 @@ export function __setTestBriefChatClient(client: BriefChatClient | null) {
 }
 
 function chatClient(): BriefChatClient {
-  return testChatClient ?? new Anthropic();
+  assertProviderCallsEnabled();
+  return testChatClient ?? new Anthropic({ timeout: 90_000, maxRetries: 1 });
 }
 
 const MAX_CHAT_TEXT_BYTES = 12 * 1024;
+const MAX_CHAT_PROVIDER_CONTENT_BYTES = 256 * 1024;
+export const CHAT_HISTORY_CONTEXT_ROWS = 40;
+export const CHAT_HISTORY_RETAINED_ROWS = 200;
+export const CHAT_HISTORY_CONTEXT_BYTES = 96 * 1024;
+export const CHAT_SYSTEM_CONTEXT_BYTES = 192 * 1024;
 
 function boundedChatText(value: unknown, label: string): string {
   if (typeof value !== "string") throw new Error(`${label} is invalid`);
@@ -54,6 +63,12 @@ function boundedChatText(value: unknown, label: string): string {
     throw new Error(`${label} is invalid or too large`);
   }
   return trimmed;
+}
+
+function assertChatProviderContentBounded(value: unknown): void {
+  if (Buffer.byteLength(JSON.stringify(value ?? null), "utf8") > MAX_CHAT_PROVIDER_CONTENT_BYTES) {
+    throw new Error("Chat output is too large");
+  }
 }
 
 const updateBriefTool = {
@@ -94,11 +109,40 @@ function loadBrief(briefId: string): { brief: BriefT; briefJson: string } | null
 }
 
 function loadHistory(briefId: string): BriefChatRow[] {
-  return db()
+  const newest = db()
     .prepare(
-      `SELECT * FROM brief_chats WHERE brief_id = ? ORDER BY created_at ASC LIMIT 100`,
+      `SELECT * FROM (
+         SELECT *, rowid AS _rowid FROM brief_chats WHERE brief_id = ?
+         ORDER BY created_at DESC, rowid DESC LIMIT ?
+       ) ORDER BY created_at ASC, _rowid ASC`,
     )
-    .all(briefId) as BriefChatRow[];
+    .all(briefId, CHAT_HISTORY_CONTEXT_ROWS) as BriefChatRow[];
+  let bytes = 0;
+  const kept: BriefChatRow[] = [];
+  for (let index = newest.length - 1; index >= 0; index -= 1) {
+    const row = newest[index];
+    const rowBytes = Buffer.byteLength(row.content, "utf8");
+    if (bytes + rowBytes > CHAT_HISTORY_CONTEXT_BYTES) break;
+    bytes += rowBytes;
+    kept.push(row);
+  }
+  return kept.reverse();
+}
+
+function assertChatContextBounded(value: string): void {
+  if (Buffer.byteLength(value, "utf8") > CHAT_SYSTEM_CONTEXT_BYTES) {
+    throw new Error("Chat context is too large");
+  }
+}
+
+function pruneChatHistory(briefId: string): void {
+  db().prepare(
+    `DELETE FROM brief_chats
+      WHERE brief_id = ? AND id NOT IN (
+        SELECT id FROM brief_chats WHERE brief_id = ?
+        ORDER BY created_at DESC, rowid DESC LIMIT ?
+      )`,
+  ).run(briefId, briefId, CHAT_HISTORY_RETAINED_ROWS);
 }
 
 function appendChat(
@@ -107,6 +151,7 @@ function appendChat(
   role: "user" | "assistant",
   content: string,
   patches?: Patch[],
+  createdAt = Date.now(),
 ) {
   db()
     .prepare(
@@ -120,7 +165,7 @@ function appendChat(
       role,
       content,
       patches && patches.length > 0 ? JSON.stringify(patches) : null,
-      Date.now(),
+      createdAt,
     );
 }
 
@@ -198,8 +243,12 @@ function commitChatOutcome(args: {
       });
     }
 
-    appendChat(args.briefId, args.userId, "user", boundedChatText(args.userMessage, "message"));
-    appendChat(args.briefId, args.userId, "assistant", boundedChatText(args.assistantReply, "reply"));
+    const outcomeAt = Date.now();
+    appendChat(args.briefId, args.userId, "user", boundedChatText(args.userMessage, "message"), undefined, outcomeAt);
+    appendChat(args.briefId, args.userId, "assistant", boundedChatText(args.assistantReply, "reply"), undefined, outcomeAt + 1);
+    // Retention pruning is part of the same durable outcome transaction: a
+    // failed candidate/audit write cannot leave partially updated history.
+    pruneChatHistory(args.briefId);
     if (args.write && candidateIds.length > 0) {
       createBriefEventStrict({
         brief_id: args.briefId,
@@ -250,15 +299,21 @@ async function handleReadOnlyChat({
   const system =
     buildBriefChatSystemPrompt({ brief, documents, canWrite: false }) +
     READ_ONLY_VIEWER_ADDENDUM;
+  try {
+    assertChatContextBounded(system);
+  } catch {
+    return NextResponse.json({ error: "Chat context is too large" }, { status: 400 });
+  }
   const messages = buildMessages(history, userMessage);
   try {
-    const response = await client.messages.create({
+    const response = await withProviderConcurrency(`brief:${briefId}`, () => client.messages.create({
       model: BRIEF_CHAT_MODEL,
       max_tokens: 4000,
       cache_control: { type: "ephemeral" } as any,
       system,
       messages,
-    });
+    }));
+    assertChatProviderContentBounded(response.content);
     const finalText =
       response.content
         .filter((b: any) => b.type === "text")
@@ -286,6 +341,8 @@ async function handleReadOnlyChat({
   } catch (err: any) {
     const denied = authError(err);
     if (denied) return denied;
+    const limited = providerConcurrencyErrorResponse(err) ?? providerAccessErrorResponse(err);
+    if (limited) return limited;
     return NextResponse.json(
       { error: friendlyAnthropicError(err, "Chat") },
       { status: 500 },
@@ -354,6 +411,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     throw e;
   }
 
+  if (user.role === "viewer") {
+    return NextResponse.json({ error: "Read-only users cannot use AI chat" }, { status: 403 });
+  }
+
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -363,9 +424,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   let body: { message?: string };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    body = await parseBoundedJson<{ message?: string }>(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   let userMessage: string;
   try {
@@ -374,6 +435,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: "Empty or oversized message" }, { status: 400 });
   }
   const chatPath = selectChatPath();
+  try {
+    assertProviderCallsEnabled();
+  } catch (error) {
+    return providerAccessErrorResponse(error) ?? NextResponse.json({ error: "AI provider access is temporarily unavailable" }, { status: 503 });
+  }
   if (chatPath === "direct" && !testChatClient && !process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: "Server is missing ANTHROPIC_API_KEY" },
@@ -400,17 +466,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         ? `${userMessage}\n\n${buildBriefChatDocumentContext({ documents, canWrite: writer })}`
         : userMessage;
     try {
+      assertChatContextBounded(messageWithDocuments);
+    } catch {
+      return NextResponse.json({ error: "Chat context is too large" }, { status: 400 });
+    }
+    try {
       if (!currentChatUser(user.id, params.id, writer)) {
         return NextResponse.json({ error: "Not authorized" }, { status: 403 });
       }
-      const result = await runChatViaHermes({
+      const result = await withProviderConcurrency(`brief:${params.id}`, () => runChatViaHermes({
         brief_id: params.id,
         user_id: user.id,
         brief,
         history: history.map((h) => ({ role: h.role, content: h.content })),
         message: messageWithDocuments,
         can_write: writer,
-      });
+      }));
 
       const proposedPatches = writer && result.brief
         ? patchesFromWholeBrief(brief, result.brief)
@@ -441,6 +512,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     } catch (err: any) {
       const denied = authError(err);
       if (denied) return denied;
+      const limited = providerConcurrencyErrorResponse(err) ?? providerAccessErrorResponse(err);
+      if (limited) return limited;
       const message = err instanceof BriefUpdateProposalError
         ? "Chat proposal could not be queued for review"
         : friendlyAnthropicError(err, "Chat");
@@ -471,6 +544,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     documents,
     canWrite: true,
   });
+  try {
+    assertChatContextBounded(system);
+  } catch {
+    return NextResponse.json({ error: "Chat context is too large" }, { status: 400 });
+  }
 
   let messages = buildMessages(history, userMessage);
   let workingBrief = brief;
@@ -481,7 +559,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   try {
     for (let i = 0; i < 6; i++) {
-      const response: Anthropic.Messages.Message = await client.messages.create({
+      const response: Anthropic.Messages.Message = await withProviderConcurrency(`brief:${params.id}`, () => client.messages.create({
         model: BRIEF_CHAT_MODEL,
         max_tokens: 8000,
         thinking: { type: "adaptive" },
@@ -493,7 +571,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           updateBriefTool as any,
         ],
         messages,
-      });
+      }));
+      assertChatProviderContentBounded(response.content);
       containerId = response.container?.id ?? containerId;
 
       const toolUses = response.content.filter(
@@ -580,6 +659,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   } catch (err: any) {
     const auth = authError(err);
     if (auth) return auth;
+    const limited = providerConcurrencyErrorResponse(err) ?? providerAccessErrorResponse(err);
+    if (limited) return limited;
     const msg = err instanceof BriefUpdateProposalError
       ? "Chat proposal could not be queued for review"
       : friendlyAnthropicError(err, "Chat");

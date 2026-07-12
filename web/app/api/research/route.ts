@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { HttpError, canStartResearch, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
+import { parseBoundedJson, jsonBodyErrorResponse } from "@/lib/httpBodyLimits";
+import { enqueueResearchJob, researchQueueErrorResponse } from "@/lib/researchQueueLimits";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,22 @@ type IntakeBody = {
   audience?: "internal" | "shareable";
   mode?: "quick" | "standard" | "deep";
 };
+
+const INTAKE_LIMITS = {
+  account: 200,
+  segment: 200,
+  region: 200,
+  goal: 2_000,
+  notes: 8_000,
+} as const;
+
+function optionalBounded(value: unknown, max: number): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") throw new Error("invalid field");
+  const trimmed = value.trim();
+  if (Buffer.byteLength(trimmed, "utf8") > max) throw new Error("oversized field");
+  return trimmed || undefined;
+}
 
 // POST /api/research — enqueue a research job. Returns 202 immediately.
 // The worker process drains the queue. Status/result is fetched via
@@ -37,9 +54,9 @@ export async function POST(req: NextRequest) {
 
   let body: IntakeBody;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    body = await parseBoundedJson<IntakeBody>(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (!body.account || typeof body.account !== "string" || !body.account.trim()) {
     return NextResponse.json({ error: "Missing 'account' name" }, { status: 400 });
@@ -48,35 +65,33 @@ export async function POST(req: NextRequest) {
     body.mode === "quick" || body.mode === "deep" ? body.mode : "standard";
   const audience = body.audience === "shareable" ? "shareable" : "internal";
 
-  const intake = {
-    account: body.account.trim(),
-    segment: body.segment?.trim() || undefined,
-    region: body.region?.trim() || undefined,
-    goal: body.goal?.trim() || undefined,
-    notes: body.notes || undefined,
-    audience,
-    mode,
-  };
-
-  const jobId = newId();
-  db()
-    .prepare(
-      `INSERT INTO research_jobs
-        (id, user_id, account_name, account_segment, region, goal,
-         intake_json, mode, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
-    )
-    .run(
-      jobId,
-      user.id,
-      intake.account,
-      intake.segment ?? null,
-      intake.region ?? null,
-      intake.goal ?? null,
-      JSON.stringify(intake),
+  let intake;
+  try {
+    intake = {
+      account: optionalBounded(body.account, INTAKE_LIMITS.account)!,
+      segment: optionalBounded(body.segment, INTAKE_LIMITS.segment),
+      region: optionalBounded(body.region, INTAKE_LIMITS.region),
+      goal: optionalBounded(body.goal, INTAKE_LIMITS.goal),
+      notes: optionalBounded(body.notes, INTAKE_LIMITS.notes),
+      audience,
       mode,
-      Date.now(),
-    );
+    };
+  } catch {
+    return NextResponse.json({ error: "Research intake field is too large or invalid" }, { status: 400 });
+  }
+
+  let jobId: string;
+  try {
+    jobId = enqueueResearchJob({
+      id: newId(), userId: user.id, accountName: intake.account,
+      accountSegment: intake.segment, region: intake.region, goal: intake.goal,
+      intakeJson: JSON.stringify(intake), mode, intent: "research",
+    });
+  } catch (error) {
+    const response = researchQueueErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
 
   return NextResponse.json(
     { jobId, status: "queued" },
