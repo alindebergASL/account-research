@@ -74,7 +74,6 @@ export default function PublicShareView(
       <BriefCanvas
         brief={state.brief}
         mode="public"
-        publicToken={params.token}
         canWrite={false}
         isOwner={false}
       />
