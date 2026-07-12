@@ -143,9 +143,9 @@ export class HttpError extends Error {
 
 export function requireUser(
   req: NextRequest,
-  opts?: { allowMustChange?: boolean },
+  opts?: { allowMustChange?: boolean; refreshSession?: boolean },
 ): PublicUser {
-  const s = getSession(req);
+  const s = opts?.refreshSession === false ? getSessionWithoutRefresh(req) : getSession(req);
   if (!s) throw new HttpError(401, { error: "Authentication required" });
   if (s.user.must_change_password && !opts?.allowMustChange) {
     throw new HttpError(403, {
@@ -154,6 +154,17 @@ export function requireUser(
     });
   }
   return s.user;
+}
+
+// Read-only authentication for endpoints whose contract forbids every write,
+// including the normal sliding session-expiry refresh performed by getSession.
+function getSessionWithoutRefresh(req: NextRequest): SessionInfo | null {
+  const id = req.cookies.get(SESSION_COOKIE)?.value;
+  if (!id) return null;
+  const session = db().prepare(`SELECT * FROM sessions WHERE id = ?`).get(id) as SessionRow | undefined;
+  if (!session || session.expires_at < Date.now()) return null;
+  const user = findUserById(session.user_id);
+  return user ? { user: publicUser(user), session } : null;
 }
 
 export function requireAdmin(req: NextRequest): PublicUser {

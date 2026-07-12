@@ -116,6 +116,8 @@ import {
 import { Badge, type BadgeTone, Card, EmptyState, SectionHeader } from "./journal/ui";
 import JournalTasks from "./journal/JournalTasks";
 import JournalDecisions from "./journal/JournalDecisions";
+import JournalRadar from "./journal/JournalRadar";
+import type { JournalRadarDestination } from "@/lib/journalRadar";
 
 function renderCitationChips(
   entry: Entry,
@@ -322,6 +324,38 @@ export default function JournalSection({
   function goToComposer() {
     navigateJournalWorkspace("timeline");
     window.setTimeout(() => composeRef.current?.focus(), 0);
+  }
+
+  async function navigateFromRadar(destination: JournalRadarDestination) {
+    // Radar can reflect server-side changes made after this page loaded. Refresh
+    // the owning client state before navigating so the destination is real,
+    // while preserving any unsent composer draft on the current page.
+    if (destination.workspace === "timeline" || destination.workspace === "sources") {
+      await load();
+    } else if (destination.workspace === "review") {
+      await loadReviewCandidates();
+    }
+    const beforeNavigationUrl = window.location.href;
+    navigateJournalWorkspace(destination.workspace, {
+      reviewTab: destination.review_tab,
+    });
+    if (destination.hash) {
+      // Keep one Back-button step per new destination. Workspace navigation
+      // already pushes when the query changes; same-workspace anchors need
+      // their own push. Repeated clicks only rerun the resolver.
+      const workspaceUrl = window.location.href;
+      const targetUrl = new URL(workspaceUrl);
+      targetUrl.hash = destination.hash;
+      const targetHref = targetUrl.toString();
+      if (targetHref !== beforeNavigationUrl) {
+        if (workspaceUrl === beforeNavigationUrl) {
+          window.history.pushState(null, "", targetHref);
+        } else {
+          window.history.replaceState(null, "", targetHref);
+        }
+      }
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
   }
   // Side-peek: source preview and citation context open in a right-side panel
   // over the current view rather than inline, keeping the feed calm.
@@ -2526,6 +2560,7 @@ export default function JournalSection({
 
       {!activeFullView && centerTab === "timeline" && (
         <div className="mb-6 space-y-4">
+          <JournalRadar briefId={briefId} onNavigate={navigateFromRadar} />
           {/* Current brief baseline — the main object on the page */}
           <div className="rounded-[20px] border border-[var(--line)] bg-[var(--surface)] p-6">
             <div className="flex items-start gap-4">

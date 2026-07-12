@@ -916,7 +916,42 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "031_journal_radar_checkpoints",
+    // Explicit, per-user review checkpoints for the deterministic Journal
+    // Change Radar. The frozen manifest is intentionally separate from both
+    // brief_json and the advisory cockpit/catch-up read models.
+    up: (c) =>
+      c.exec(`
+        CREATE TABLE IF NOT EXISTS journal_radar_checkpoints (
+          brief_id               TEXT NOT NULL,
+          user_id                TEXT NOT NULL,
+          manifest_schema_version INTEGER NOT NULL CHECK (manifest_schema_version > 0),
+          manifest_json          TEXT NOT NULL,
+          manifest_hash          TEXT NOT NULL CHECK (length(manifest_hash) = 64),
+          reviewed_at            INTEGER NOT NULL CHECK (reviewed_at >= 0),
+          created_at             INTEGER NOT NULL CHECK (created_at >= 0),
+          updated_at             INTEGER NOT NULL CHECK (updated_at >= 0),
+          PRIMARY KEY (brief_id, user_id),
+          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_radar_checkpoints_user_reviewed
+          ON journal_radar_checkpoints(user_id, reviewed_at DESC);
+      `),
+  },
 ];
+
+export type JournalRadarCheckpointRow = {
+  brief_id: string;
+  user_id: string;
+  manifest_schema_version: number;
+  manifest_json: string;
+  manifest_hash: string;
+  reviewed_at: number;
+  created_at: number;
+  updated_at: number;
+};
 
 export type BriefCommentRow = {
   id: string;
