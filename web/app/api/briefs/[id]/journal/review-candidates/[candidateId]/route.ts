@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import {
   parseReviewCandidateStatus,
   updateReviewCandidateStatus,
@@ -29,6 +29,9 @@ export async function PATCH(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canWriteBrief(user, params.id)) {
+    return NextResponse.json({ error: "Brief write access required" }, { status: 403 });
   }
 
   let body: { status?: unknown };

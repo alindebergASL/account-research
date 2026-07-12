@@ -221,6 +221,7 @@ export function canReadBrief(user: PublicUser, briefId: string): boolean {
 // True only for the brief owner or an admin. Used to gate destructive /
 // share-management actions that editors should NOT have access to.
 export function canManageBrief(user: PublicUser, briefId: string): boolean {
+  if (user.role === "viewer") return false;
   const owner = getBriefOwner(briefId);
   if (!owner) return false;
   if (owner === user.id) return true;
@@ -228,9 +229,20 @@ export function canManageBrief(user: PublicUser, briefId: string): boolean {
 }
 
 export function canWriteBrief(user: PublicUser, briefId: string): boolean {
+  if (user.role === "viewer") return false;
   const owner = getBriefOwner(briefId);
   if (!owner) return false;
   if (owner === user.id) return true;
   if (user.role === "admin") return true;
   return getShareRole(briefId, user.id) === "editor";
+}
+
+// Ordinary collaboration is deliberately broader than Brief writes: active
+// members with reader access may contribute notes, comments, basic tasks,
+// organization metadata, review candidates, and their personal Radar
+// checkpoint. The global viewer role is an unconditional read-only ceiling.
+export function canCollaborateBrief(user: PublicUser, briefId: string): boolean {
+  const active = findUserById(user.id);
+  if (!active || active.role === "viewer") return false;
+  return canReadBrief(publicUser(active), briefId);
 }

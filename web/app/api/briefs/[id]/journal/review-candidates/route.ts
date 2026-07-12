@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
 import {
   insertReviewCandidate,
   listReviewCandidates,
@@ -58,6 +58,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   let body: unknown;

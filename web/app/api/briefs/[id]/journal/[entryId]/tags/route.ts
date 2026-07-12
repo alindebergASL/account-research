@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
 import {
   addEntryTag,
   parseJournalEntryTag,
@@ -13,16 +13,19 @@ function authError(e: unknown) {
   return null;
 }
 
-function requireReader(req: NextRequest, briefId: string) {
+function requireCollaborator(req: NextRequest, briefId: string) {
   const user = requireUser(req);
   if (!canReadBrief(user, briefId)) {
     return { user: null, deny: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  }
+  if (!canCollaborateBrief(user, briefId)) {
+    return { user: null, deny: NextResponse.json({ error: "Not authorized" }, { status: 403 }) };
   }
   return { user, deny: null as NextResponse | null };
 }
 
 // POST { tag } adds a curated tag to the entry; DELETE { tag } removes it. Both
-// return the entry's current tag list. Gated on canReadBrief (collaborative).
+// return the entry's current tag list. Gated on ordinary collaboration access.
 export async function POST(
   req: NextRequest,
   props: { params: Promise<{ id: string; entryId: string }> }
@@ -30,7 +33,7 @@ export async function POST(
   const params = await props.params;
   let gate;
   try {
-    gate = requireReader(req, params.id);
+    gate = requireCollaborator(req, params.id);
   } catch (e) {
     const r = authError(e);
     if (r) return r;
@@ -66,7 +69,7 @@ export async function DELETE(
   const params = await props.params;
   let gate;
   try {
-    gate = requireReader(req, params.id);
+    gate = requireCollaborator(req, params.id);
   } catch (e) {
     const r = authError(e);
     if (r) return r;

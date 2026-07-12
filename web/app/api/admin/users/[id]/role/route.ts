@@ -40,8 +40,23 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
-  db()
-    .prepare(`UPDATE users SET role = ? WHERE id = ?`)
-    .run(role, params.id);
+  const now = Date.now();
+  const connection = db();
+  connection.transaction(() => {
+    connection.prepare(`UPDATE users SET role = ? WHERE id = ?`).run(role, params.id);
+    if (role !== "viewer") return;
+    connection.prepare(
+      `UPDATE brief_shares SET role = 'reader'
+       WHERE user_id = ? AND role = 'editor'`,
+    ).run(params.id);
+    connection.prepare(
+      `UPDATE briefs SET monitor_enabled = 0
+       WHERE user_id = ? AND monitor_enabled <> 0`,
+    ).run(params.id);
+    connection.prepare(
+      `UPDATE research_jobs SET status = 'cancelled', finished_at = ?
+       WHERE user_id = ? AND status IN ('queued', 'running')`,
+    ).run(now, params.id);
+  }).immediate();
   return NextResponse.json({ ok: true });
 }

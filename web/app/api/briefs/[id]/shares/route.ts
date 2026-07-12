@@ -89,6 +89,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       { status: 404 },
     );
   }
+  if (role === "editor" && target.role === "viewer") {
+    return NextResponse.json(
+      { error: "Viewer accounts can only receive reader access" },
+      { status: 403 },
+    );
+  }
 
   // Don't share with yourself or the owner.
   const owner = db()

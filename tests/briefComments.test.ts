@@ -633,9 +633,8 @@ test("notify: sendMail throws -> POST still returns the comment", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Public share-view comments (read-only). Token is the auth; the share
-// surface must never accept POST/PATCH/DELETE and must never leak
-// user_id or email in the comment DTO.
+// Public comments are disabled. Every token receives the same fixed 404 and
+// no comment body or author identity is loaded into the response.
 // ---------------------------------------------------------------------------
 
 const shareCommentsRoute = require("../web/app/api/share/[token]/comments/route") as typeof import("../web/app/api/share/[token]/comments/route");
@@ -694,88 +693,12 @@ seedShareLink({
   revokedAt: Date.now() - 1000,
 });
 
-test("share-view: GET with valid token matches authenticated GET (body, ai_assisted, display_name)", async () => {
-  const authedRes = await commentsRoute.GET(
-    makeReq({ sessionId: ownerSession }),
-    { params: { id: "brief-1" } },
-  );
-  const authedList = (await jsonOf(authedRes)).comments as any[];
-
-  const publicRes = await shareCommentsRoute.GET(makePublicReq(), {
-    params: { token: "tok-live" },
-  });
-  assert.equal(publicRes.status, 200);
-  const publicList = (await jsonOf(publicRes)).comments as any[];
-
-  assert.equal(publicList.length, authedList.length);
-  for (let i = 0; i < authedList.length; i++) {
-    const a = authedList[i];
-    const p = publicList[i];
-    assert.equal(p.id, a.id);
-    assert.equal(p.parent_id, a.parent_id);
-    assert.equal(p.body, a.body);
-    assert.equal(p.ai_assisted, a.ai_assisted);
-    assert.equal(p.created_at, a.created_at);
-    if (p.deleted_at !== null) {
-      assert.equal(p.author_display_name, null);
-    } else {
-      assert.equal(p.author_display_name, a.author.display_name);
-    }
+test("share-view: every token gets the same fixed 404 without comment exposure", async () => {
+  for (const token of ["tok-live", "does-not-exist", "tok-expired", "tok-revoked"]) {
+    const res = await shareCommentsRoute.GET(makePublicReq(), { params: { token } });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await jsonOf(res), { error: "Not found" });
   }
-});
-
-test("share-view: soft-deleted comments are blanked but thread structure preserved", async () => {
-  const parentRes = await commentsRoute.POST(
-    makeReq({ sessionId: ownerSession, body: { body: "Public-view parent" } }),
-    { params: { id: "brief-1" } },
-  );
-  const parent = (await jsonOf(parentRes)).comment;
-  const childRes = await commentsRoute.POST(
-    makeReq({
-      sessionId: readerSession,
-      body: { body: "Public-view child", parent_id: parent.id },
-    }),
-    { params: { id: "brief-1" } },
-  );
-  const child = (await jsonOf(childRes)).comment;
-  await commentRoute.DELETE(makeReq({ sessionId: ownerSession }), {
-    params: { id: "brief-1", commentId: parent.id },
-  });
-
-  const publicRes = await shareCommentsRoute.GET(makePublicReq(), {
-    params: { token: "tok-live" },
-  });
-  const list = (await jsonOf(publicRes)).comments as any[];
-  const p = list.find((c) => c.id === parent.id);
-  const ch = list.find((c) => c.id === child.id);
-  assert.ok(p);
-  assert.equal(p.body, null);
-  assert.ok(p.deleted_at !== null);
-  assert.equal(p.author_display_name, null);
-  assert.ok(ch);
-  assert.equal(ch.body, "Public-view child");
-  assert.equal(ch.parent_id, parent.id);
-});
-
-test("share-view: invalid token -> 404", async () => {
-  const res = await shareCommentsRoute.GET(makePublicReq(), {
-    params: { token: "does-not-exist" },
-  });
-  assert.equal(res.status, 404);
-});
-
-test("share-view: expired token -> 404", async () => {
-  const res = await shareCommentsRoute.GET(makePublicReq(), {
-    params: { token: "tok-expired" },
-  });
-  assert.equal(res.status, 404);
-});
-
-test("share-view: revoked token -> 404", async () => {
-  const res = await shareCommentsRoute.GET(makePublicReq(), {
-    params: { token: "tok-revoked" },
-  });
-  assert.equal(res.status, 404);
 });
 
 test("share-view: route module exports GET only (no POST/PATCH/DELETE handlers)", () => {
@@ -789,11 +712,12 @@ test("share-view: route module exports GET only (no POST/PATCH/DELETE handlers)"
   assert.equal((shareCommentsRoute as any).PUT, undefined);
 });
 
-test("share-view: response does NOT include user_id / email / nested author identity", async () => {
+test("share-view: response includes no internal body or author identity", async () => {
   const res = await shareCommentsRoute.GET(makePublicReq(), {
     params: { token: "tok-live" },
   });
   const raw = JSON.stringify(await jsonOf(res));
+  assert.equal(raw.includes("Hello world"), false, "comment body leaked");
   assert.equal(raw.includes("\"user_id\""), false, "user_id leaked");
   assert.equal(raw.includes("\"user_email\""), false, "user_email leaked");
   assert.equal(raw.includes("\"email\""), false, "email field leaked");

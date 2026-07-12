@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { db, type BriefChatRow, type BriefRow } from "@/lib/db";
 import {
   HttpError,
+  canCollaborateBrief,
   canReadBrief,
   canWriteBrief,
   requireUser,
@@ -232,6 +233,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const r = authError(e);
     if (r) return r;
     throw e;
+  }
+
+  if (!canReadBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   let body: { message?: string };

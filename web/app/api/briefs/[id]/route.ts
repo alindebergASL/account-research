@@ -152,11 +152,26 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   }
   parsedJson.audience = audience;
 
-  db()
-    .prepare(
-      `UPDATE briefs SET audience = ?, brief_json = ? WHERE id = ?`,
-    )
-    .run(audience, JSON.stringify(parsedJson), params.id);
+  const connection = db();
+  const updateAudience = connection.transaction(() => {
+    connection
+      .prepare(`UPDATE briefs SET audience = ?, brief_json = ? WHERE id = ?`)
+      .run(audience, JSON.stringify(parsedJson), params.id);
+
+    if (audience === "internal") {
+      const now = Date.now();
+      connection
+        .prepare(
+          `UPDATE brief_share_links
+           SET revoked_at = ?
+           WHERE brief_id = ?
+             AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)`,
+        )
+        .run(now, params.id, now);
+    }
+  });
+  updateAudience.immediate();
 
   return NextResponse.json({ ok: true, audience });
 }

@@ -1033,6 +1033,10 @@ export default function JournalSection({
   }
 
   async function uploadDocument({ summarizeAfterUpload = false } = {}) {
+    if (!canWrite) {
+      setError("Brief writer access is required to upload evidence.");
+      return;
+    }
     if (!selectedFile || uploading) return;
     const uploadedFileName = selectedFile.name;
     setUploading(true);
@@ -1594,7 +1598,8 @@ export default function JournalSection({
           <select
             aria-label="Review candidate status"
             value={candidate.status}
-            disabled={reviewLoading}
+            disabled={reviewLoading || !canWrite}
+            title={!canWrite ? "Brief writer access is required to change candidate status" : undefined}
             onChange={(ev) => updateCandidateStatus(candidate.id, ev.target.value as ReviewCandidateStatus)}
             className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-xs text-[var(--text-secondary)]"
           >
@@ -1603,6 +1608,11 @@ export default function JournalSection({
             ))}
           </select>
         </div>
+        {!canWrite && (
+          <p className="text-xs text-muted">
+            Brief writer access is required to accept, dismiss, or otherwise change candidate status.
+          </p>
+        )}
         {candidate.current_baseline && (
           <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-muted)] p-3 text-xs text-[var(--text-secondary)]">
             <span className="font-semibold text-ink">Current baseline:</span> {candidate.current_baseline}
@@ -1647,7 +1657,8 @@ export default function JournalSection({
             <button
               type="button"
               onClick={() => void openBriefToApply(candidate)}
-              disabled={reviewLoading}
+              disabled={reviewLoading || !canWrite}
+              title={!canWrite ? "Brief writer access is required to send a candidate to brief chat" : undefined}
               className="rounded-md border border-[var(--border-subtle)] bg-[var(--success-bg)] px-2 py-1 text-xs font-medium text-[var(--success-text)] hover:opacity-90"
             >
               Open brief to apply
@@ -3739,10 +3750,12 @@ export default function JournalSection({
               type="button"
               aria-pressed={showUpload}
               onClick={() => setShowUpload((v) => !v)}
+              disabled={!canWrite}
+              title={!canWrite ? "Brief writer access is required to upload evidence" : undefined}
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
                 showUpload
                   ? "bg-[var(--surface-muted)] text-ink"
-                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
               }`}
             >
               <Paperclip className="size-3.5" /> Upload
@@ -3755,6 +3768,9 @@ export default function JournalSection({
               <Sparkles className="size-3.5" /> Draft
             </button>
           </div>
+          {!canWrite && (
+            <p className="text-xs text-muted">Brief writer access is required to upload evidence.</p>
+          )}
           <button
             type="button"
             onClick={submit}

@@ -42,6 +42,16 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
+  const brief = db()
+    .prepare(`SELECT audience FROM briefs WHERE id = ?`)
+    .get(params.id) as { audience: string } | undefined;
+  if (!brief) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (brief.audience !== "shareable") {
+    return audienceIneligibleResponse();
+  }
+
   const rows = db()
     .prepare(
       `SELECT id, token, created_at, expires_at, last_accessed_at, access_count
@@ -83,16 +93,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!brief) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (brief.audience === "internal") {
-    return NextResponse.json(
-      {
-        error:
-          "Public links are disabled for internal briefs. Switch the brief to 'customer-shareable' first.",
-        code: "audience_internal",
-      },
-      { status: 409 },
-    );
-  }
+  if (brief.audience !== "shareable") return audienceIneligibleResponse();
 
   let body: { ttl?: string };
   try {
@@ -136,3 +137,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   });
 }
 
+function audienceIneligibleResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "Public links are disabled for internal briefs. Switch the brief to 'customer-shareable' first.",
+      code: "audience_internal",
+    },
+    { status: 409 },
+  );
+}

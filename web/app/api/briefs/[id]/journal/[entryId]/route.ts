@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, type JournalEntryRow } from "@/lib/db";
 import {
   HttpError,
+  canCollaborateBrief,
   canManageBrief,
   canReadBrief,
   requireUser,
@@ -47,6 +48,9 @@ export async function PATCH(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const row = loadEntry(params.id, params.entryId);
   if (!row) {
@@ -122,6 +126,9 @@ export async function DELETE(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const row = loadEntry(params.id, params.entryId);
   if (!row) {

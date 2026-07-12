@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
+import { HttpError, canCollaborateBrief, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { isActiveBriefMember } from "@/lib/briefAccess";
 import { insertTask, listTasksForBrief } from "@/lib/journalTasks";
 
@@ -40,6 +40,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   let body: Record<string, unknown>;

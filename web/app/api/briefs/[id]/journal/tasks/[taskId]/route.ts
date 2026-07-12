@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
+import { HttpError, canCollaborateBrief, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { isActiveBriefMember } from "@/lib/briefAccess";
 import { moveTask, softDeleteTask, updateTask } from "@/lib/journalTasks";
 
@@ -30,6 +30,9 @@ export async function PATCH(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   let body: any;
@@ -108,6 +111,9 @@ export async function DELETE(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   try {
     const removed = softDeleteTask(params.id, params.taskId);

@@ -65,6 +65,18 @@ export async function POST(
         JSON.stringify(brief),
         params.id,
       );
+    if (brief.audience === "internal") {
+      const now = Date.now();
+      db()
+        .prepare(
+          `UPDATE brief_share_links
+           SET revoked_at = ?
+           WHERE brief_id = ?
+             AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)`,
+        )
+        .run(now, params.id, now);
+    }
   });
   tx();
 

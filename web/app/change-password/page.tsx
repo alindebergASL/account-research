@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { safeApplicationPath } from "../../lib/safeApplicationPath";
 
 export default function ChangePasswordPage() {
   return (
@@ -21,7 +22,7 @@ type Me = {
 function ChangePassword() {
   const router = useRouter();
   const search = useSearchParams();
-  const from = search.get("from") || "/";
+  const from = safeApplicationPath(search.get("from"));
   const [me, setMe] = useState<Me>(null);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");

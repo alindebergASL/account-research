@@ -26,6 +26,7 @@ type LinkRow = {
   expires_at: number | null;
   revoked_at: number | null;
   account_name: string;
+  audience: string;
 };
 
 export async function POST(
@@ -45,6 +46,25 @@ export async function POST(
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
+  const link = db()
+    .prepare(
+      `SELECT l.id, l.brief_id, l.token, l.expires_at, l.revoked_at,
+              b.account_name, b.audience
+       FROM brief_share_links l
+       JOIN briefs b ON b.id = l.brief_id
+       WHERE l.id = ? AND l.brief_id = ?`,
+    )
+    .get(params.linkId, params.id) as LinkRow | undefined;
+  if (!link || !isShareLinkLive(link)) {
+    return NextResponse.json({ error: "Link not found" }, { status: 404 });
+  }
+  if (link.audience !== "shareable") {
+    return NextResponse.json(
+      { error: "Public links are disabled for internal briefs", code: "audience_internal" },
+      { status: 409 },
+    );
+  }
+
   let body: { recipient?: string };
   try {
     body = await req.json();
@@ -57,19 +77,6 @@ export async function POST(
       { error: "Valid recipient email required", code: "bad_email" },
       { status: 400 },
     );
-  }
-
-  const link = db()
-    .prepare(
-      `SELECT l.id, l.brief_id, l.token, l.expires_at, l.revoked_at,
-              b.account_name
-       FROM brief_share_links l
-       JOIN briefs b ON b.id = l.brief_id
-       WHERE l.id = ? AND l.brief_id = ?`,
-    )
-    .get(params.linkId, params.id) as LinkRow | undefined;
-  if (!link || !isShareLinkLive(link)) {
-    return NextResponse.json({ error: "Link not found" }, { status: 404 });
   }
 
   const limit = checkShareEmailLimit(user.id);

@@ -3,7 +3,6 @@
 import { useEffect, useState, use } from "react";
 import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
-import PublicCommentsSection from "./PublicCommentsSection";
 
 type State =
   | { kind: "loading" }
@@ -79,7 +78,6 @@ export default function PublicShareView(
         canWrite={false}
         isOwner={false}
       />
-      <PublicCommentsSection token={params.token} />
       {state.expires_at !== null && (
         <div className="max-w-7xl mx-auto px-6 pb-10 text-center text-xs text-muted">
           Shared via AccountBriefBuilder · this link {formatExpiryFooter(state.expires_at)}

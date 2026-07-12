@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { insertJournalEntry, rowToJournalDto, type JournalListRow } from "@/lib/journal";
 import { listTagsForEntries } from "@/lib/journalEntryTags";
 import { db } from "@/lib/db";
@@ -56,6 +56,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canWriteBrief(user, params.id)) {
+    return NextResponse.json({ error: "Brief write access required" }, { status: 403 });
   }
 
   const parsedContentLength = parseContentLength(req.headers.get("content-length"));
