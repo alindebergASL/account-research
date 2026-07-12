@@ -97,11 +97,46 @@ test("JournalSection source encodes timeline-only composition and navigable glob
   assert.doesNotMatch(source, /const active = !activeFullView && centerTab === id;/);
   assert.match(
     source,
-    /if \(centerTab !== "timeline" \|\| activeFullView !== null\) \{[\s\S]*setCenterTab\("timeline"\);[\s\S]*setSearchOpen\(true\);[\s\S]*return;/,
+    /if \(centerTab !== "timeline" \|\| activeFullView !== null\) \{[\s\S]*navigateJournalWorkspace\("timeline"\);[\s\S]*setSearchOpen\(true\);[\s\S]*return;/,
   );
-  assert.match(source, /onClick=\{\(\) => setActiveFullView\("sources"\)\}/);
-  assert.match(source, /onClick=\{\(\) => setActiveFullView\("review"\)\}/);
+  assert.match(source, /onClick=\{\(\) => navigateJournalWorkspace\("sources"\)\}/);
+  assert.match(source, /selectReviewInboxTabForMatches\(reviewCandidates, searchReviewCandidateIds\)/);
+  assert.match(source, /setReviewTypeFilter\("all"\);[\s\S]*selectReviewInboxTabForMatches/);
   assert.match(source, /!activeFullView && centerTab === "timeline" \? \(/);
   assert.match(source, /activeFullView === "tasks"[\s\S]*\? "To-dos"/);
   assert.match(source, />Automated checks</);
+  assert.match(source, /window\.addEventListener\("popstate", syncJournalLocation\)/);
+  assert.match(source, /window\.addEventListener\("hashchange", syncJournalLocation\)/);
+  assert.match(source, /window\.history\[options\.replace \? "replaceState" : "pushState"\]/);
+  assert.doesNotMatch(source, /navigateJournalWorkspace[\s\S]{0,500}setJournalSearchQuery/);
+});
+
+test("Brief page restores and pushes URL-addressable top-level views", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/page.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /parseJournalWorkspaceLocation/);
+  assert.match(source, /window\.addEventListener\("popstate", syncLocation\)/);
+  assert.match(source, /window\.addEventListener\("hashchange", syncLocation\)/);
+  assert.match(source, /window\.history\.replaceState/);
+  assert.match(source, /window\.history\.pushState/);
+  assert.match(source, /hashForExplicitNavigation/);
+  assert.match(source, /canvasCapabilityKnown \? canvasPreview : undefined/);
+  assert.match(source, /journalSearchQuery=\{journalSearchQuery\}/);
+  assert.match(source, /onViewBriefBaseline=\{\(\) => navigateView\("brief"\)\}/);
+});
+
+test("Review handoff waits for the explicit status update before navigating to Brief", () => {
+  const source = readFileSync(
+    path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /async function openBriefToApply\(candidate\?: ReviewCandidate\) \{[\s\S]*await updateCandidateStatus\(candidate\.id, "sent_to_brief_chat"\)[\s\S]*onViewBriefBaseline\?\.\(\);/,
+  );
+  assert.match(source, /matchingCandidatesInOtherReviewTab/);
 });
