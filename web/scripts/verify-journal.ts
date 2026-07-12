@@ -39,6 +39,12 @@ const {
 const { promoteReviewCandidate } = require("../lib/journalPromotion") as typeof import("../lib/journalPromotion");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { insertDecision, getDecision } = require("../lib/journalDecisions") as typeof import("../lib/journalDecisions");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { buildJournalRadarManifest } = require("../lib/journalRadarManifest") as typeof import("../lib/journalRadarManifest");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { compareJournalRadarManifests, totalJournalRadarChanges } = require("../lib/journalRadar") as typeof import("../lib/journalRadar");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { readJournalRadarCheckpoint, saveJournalRadarCheckpoint } = require("../lib/journalRadarCheckpoints") as typeof import("../lib/journalRadarCheckpoints");
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
@@ -87,6 +93,27 @@ async function main() {
   assert(aiDto.author?.id === "" && aiDto.author?.email === "", "assistant entry leaks no user id/email");
   assert(aiDto.reply_to === userEntryId, "assistant reply_to links the user entry");
   assert(delDto.body === null && delDto.author === null, "deleted entry blanks body + author");
+
+  // Plan 4 load-bearing contract: deterministic, explicit per-user radar
+  // checkpoint. Building/reading does not write; a checkpoint is saved only
+  // through the explicit CAS helper, and subsequent structural edits compare
+  // against the frozen manifest without touching brief_json.
+  const radarBefore = buildJournalRadarManifest(briefId);
+  const radarRepeat = buildJournalRadarManifest(briefId);
+  assert(radarBefore.canonicalJson === radarRepeat.canonicalJson, "radar canonical JSON is stable");
+  assert(radarBefore.hash === radarRepeat.hash, "radar hash is stable");
+  const noCheckpoint = compareJournalRadarManifests({ checkpoint: null, current: radarBefore.manifest, reviewedAt: null });
+  assert(noCheckpoint.state === "no_checkpoint", "missing radar checkpoint is explicit");
+  assert(totalJournalRadarChanges(noCheckpoint.buckets) === 0, "missing checkpoint fabricates no diff");
+  const briefJsonBeforeRadar = (db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as { brief_json: string }).brief_json;
+  saveJournalRadarCheckpoint({ briefId, userId: adminId, expectedHash: radarBefore.hash, expectedSchemaVersion: radarBefore.manifest.schema_version, now: now + 4 });
+  const checkpoint = readJournalRadarCheckpoint(briefId, adminId);
+  assert(checkpoint.state === "valid", "explicit radar checkpoint round-trips");
+  db().prepare("UPDATE journal_entries SET body = ?, edited_at = ? WHERE id = ?").run("Renewal date still unknown.", now + 5, userEntryId);
+  const radarAfter = buildJournalRadarManifest(briefId);
+  const radarDiff = compareJournalRadarManifests({ checkpoint: checkpoint.manifest, current: radarAfter.manifest, reviewedAt: checkpoint.reviewed_at });
+  assert(radarDiff.buckets.edited_entries.count === 1, "radar detects an edited Journal entry");
+  assert((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as { brief_json: string }).brief_json === briefJsonBeforeRadar, "radar leaves brief_json byte-for-byte unchanged");
 
   // Prompt construction.
   const { system, user } = buildJournalMessages({
