@@ -1,4 +1,5 @@
 import test from "node:test";
+process.env.PROVIDER_CALLS_ENABLED = "1"; // Explicitly enable only deterministic fake clients in this suite.
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -90,6 +91,13 @@ function insertMonitorJob(briefId: string, userId: string, accountName: string, 
     )
     .run(id, userId, accountName, "Public sector", null, null, JSON.stringify({ account: accountName }), status, Date.now(), briefId);
   return db().prepare(`SELECT * FROM research_jobs WHERE id = ?`).get(id);
+}
+
+function proposedValues(briefId: string, target: string): any[] {
+  const rows = db().prepare(
+    "SELECT proposed_text FROM journal_review_candidates WHERE brief_id = ? AND target = ? ORDER BY created_at",
+  ).all(briefId, target) as Array<{ proposed_text: string }>;
+  return rows.map((row) => JSON.parse(row.proposed_text).value);
 }
 
 test("disabled monitor job is skipped without model call, brief mutation, journal, or email side effects", async () => {
@@ -309,7 +317,8 @@ test("monitor skips internal strategy field patches while applying allowed publi
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
   assert.equal(after.buying_path, brief.buying_path);
-  assert.equal(after.recent_signals.some((s: any) => s.text === "Allowed public update"), true);
+  assert.equal(after.recent_signals.some((s: any) => s.text === "Allowed public update"), false);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => s.text === "Allowed public update"), true);
 });
 
 test("monitor treats already-known source URLs as no-op duplicate updates", async () => {
@@ -432,8 +441,9 @@ test("monitor does not collapse distinct article IDs carried in URL query parame
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.sources.some((s: any) => s.url.includes("id=101")), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.sources.some((s: any) => s.url.includes("id=101")), false);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => s.url.includes("id=101")), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor does not treat same-person different leadership event as duplicate", async () => {
@@ -468,8 +478,9 @@ test("monitor does not treat same-person different leadership event as duplicate
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.some((s: any) => /resigned as CIO/.test(s.text)), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.recent_signals.some((s: any) => /resigned as CIO/.test(s.text)), false);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => /resigned as CIO/.test(s.text)), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor applies non-signal append patches even when text overlaps existing signal context", async () => {
@@ -504,8 +515,9 @@ test("monitor applies non-signal append patches even when text overlaps existing
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.top_initiatives.some((i: any) => i.title === "CIO digital modernization initiative"), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.top_initiatives.some((i: any) => i.title === "CIO digital modernization initiative"), false);
+  assert.equal(proposedValues(briefId, "top_initiatives").some((i: any) => i.title === "CIO digital modernization initiative"), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor drops supporting source patches when their only finding was duplicate text", async () => {
@@ -580,9 +592,11 @@ test("monitor preserves source-before-signal ordering for genuinely new findings
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.sources.some((s: any) => /jane-doe-appointed-cio/.test(s.url)), true);
-  assert.equal(after.recent_signals.some((s: any) => /appointed CIO/.test(s.text)), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.sources.some((s: any) => /jane-doe-appointed-cio/.test(s.url)), false);
+  assert.equal(after.recent_signals.some((s: any) => /appointed CIO/.test(s.text)), false);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => /jane-doe-appointed-cio/.test(s.url)), true);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => /appointed CIO/.test(s.text)), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor drops source-before-signal batches when the later signal is duplicate", async () => {
@@ -660,8 +674,9 @@ test("monitor applies new signal that cites an existing canonical source page", 
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.some((s: any) => /modernization budget/.test(s.text)), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.recent_signals.some((s: any) => /modernization budget/.test(s.text)), false);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => /modernization budget/.test(s.text)), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor applies only one copy of duplicate new signals within the same batch", async () => {
@@ -693,8 +708,9 @@ test("monitor applies only one copy of duplicate new signals within the same bat
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.filter((s: any) => /Jane Doe/.test(s.text)).length, 1);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.recent_signals.filter((s: any) => /Jane Doe/.test(s.text)).length, 0);
+  assert.equal(proposedValues(briefId, "recent_signals").filter((s: any) => /Jane Doe/.test(s.text)).length, 1);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor preserves signal-before-source ordering for genuinely new findings", async () => {
@@ -726,9 +742,11 @@ test("monitor preserves signal-before-source ordering for genuinely new findings
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.some((s: any) => /modernization budget/.test(s.text)), true);
-  assert.equal(after.sources.some((s: any) => /new-budget/.test(s.url)), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.recent_signals.some((s: any) => /modernization budget/.test(s.text)), false);
+  assert.equal(after.sources.some((s: any) => /new-budget/.test(s.url)), false);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => /modernization budget/.test(s.text)), true);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => /new-budget/.test(s.url)), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor preserves source when accepted finding is followed by a duplicate copy", async () => {
@@ -761,9 +779,11 @@ test("monitor preserves source when accepted finding is followed by a duplicate 
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.filter((s: any) => /Jane Doe/.test(s.text)).length, 1);
-  assert.equal(after.sources.some((s: any) => /jane-doe-cio/.test(s.url)), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.recent_signals.filter((s: any) => /Jane Doe/.test(s.text)).length, 0);
+  assert.equal(after.sources.some((s: any) => /jane-doe-cio/.test(s.url)), false);
+  assert.equal(proposedValues(briefId, "recent_signals").filter((s: any) => /Jane Doe/.test(s.text)).length, 1);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => /jane-doe-cio/.test(s.url)), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor drops source-before-duplicate when duplicate follows an accepted same-batch finding", async () => {
@@ -797,10 +817,13 @@ test("monitor drops source-before-duplicate when duplicate follows an accepted s
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.filter((s: any) => /Jane Doe/.test(s.text)).length, 1);
-  assert.equal(after.sources.some((s: any) => /original-cio/.test(s.url)), true);
+  assert.equal(after.recent_signals.filter((s: any) => /Jane Doe/.test(s.text)).length, 0);
+  assert.equal(after.sources.some((s: any) => /original-cio/.test(s.url)), false);
   assert.equal(after.sources.some((s: any) => /duplicate-cio/.test(s.url)), false);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(proposedValues(briefId, "recent_signals").filter((s: any) => /Jane Doe/.test(s.text)).length, 1);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => /original-cio/.test(s.url)), true);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => /duplicate-cio/.test(s.url)), false);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
 test("monitor drops duplicate supporting source when duplicate signal omits URL", async () => {
@@ -878,11 +901,12 @@ test("monitor applies distinct signals that cite the same canonical source URL",
   __setTestMonitorClient(null);
 
   const after = JSON.parse((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json);
-  assert.equal(after.recent_signals.some((s: any) => /e-filing modernization contract/.test(s.text)), true);
-  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 1);
+  assert.equal(after.recent_signals.some((s: any) => /e-filing modernization contract/.test(s.text)), false);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => /e-filing modernization contract/.test(s.text)), true);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
 });
 
-test("monitor update writes a visible journal note and pre-update brief version", async () => {
+test("monitor update queues visible review candidates without journal, version, or Brief writes", async () => {
   const owner = ownerId();
   const briefId = insertBrief(owner, makeBrief("Visible Monitor Update"), true);
   __setTestMonitorClient({
@@ -911,25 +935,15 @@ test("monitor update writes a visible journal note and pre-update brief version"
   await executeMonitorJob(job);
   __setTestMonitorClient(null);
 
-  const journal = db()
-    .prepare("SELECT author_type, body FROM journal_entries WHERE brief_id = ?")
-    .get(briefId) as any;
-  assert.equal(journal.author_type, "assistant");
-  assert.match(journal.body, /Daily monitor update/);
-  assert.match(journal.body, /recent signals/i);
-  assert.match(journal.body, /sources/i);
-  assert.match(journal.body, /Applied changes: 2/);
-  assert.match(journal.body, /Previous brief snapshot: v1/);
-  assert.match(journal.body, /A new e-filing modernization RFP was published/);
-
-  const version = db()
-    .prepare("SELECT version_no, reason, triggered_by, refresh_job_id, brief_json FROM brief_versions WHERE brief_id = ?")
-    .get(briefId) as any;
-  assert.equal(version.version_no, 1);
-  assert.equal(version.reason, "pre-monitor");
-  assert.equal(version.triggered_by, owner);
-  assert.equal(version.refresh_job_id, job.id);
-  assert.equal(version.brief_json, before);
+  assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id = ?").get(briefId) as any).brief_json, before);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE brief_id = ?").get(briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM brief_versions WHERE brief_id = ?").get(briefId) as any).n, 0);
+  assert.equal(proposedValues(briefId, "recent_signals").some((s: any) => /e-filing modernization RFP/.test(s.text)), true);
+  assert.equal(proposedValues(briefId, "sources").some((s: any) => /efiling-rfp/.test(s.url)), true);
+  const run = db().prepare("SELECT outcome, patches_applied, pre_version_id FROM monitor_runs WHERE job_id = ?").get(job.id) as any;
+  assert.equal(run.outcome, "candidate_queued");
+  assert.equal(run.patches_applied, 0);
+  assert.equal(run.pre_version_id, null);
 });
 
 test("malformed monitor patch warning allowlists field names and does not log model-controlled field text", async () => {

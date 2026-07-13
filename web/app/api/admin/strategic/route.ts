@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { HttpError, requireAdmin } from "@/lib/auth";
 import { AdminModelGateError } from "@/lib/models";
 import { runStrategicAnalysis } from "@/lib/strategicAnalysis";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { providerAccessErrorResponse } from "@/lib/providerAccess";
+import { providerConcurrencyErrorResponse, withProviderConcurrency } from "@/lib/providerConcurrency";
 
 export const runtime = "nodejs";
 
@@ -34,9 +37,9 @@ export async function POST(req: NextRequest) {
     acknowledgeDataPosture?: unknown;
   };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const briefId = typeof body.briefId === "string" ? body.briefId : "";
@@ -70,9 +73,11 @@ export async function POST(req: NextRequest) {
   };
 
   try {
-    const result = await runStrategicAnalysis({ brief_json: briefJson, prompt }, ctx);
+    const result = await withProviderConcurrency(`user:${user.id}`, () => runStrategicAnalysis({ brief_json: briefJson, prompt }, ctx));
     return NextResponse.json({ text: result.text, model: result.model });
   } catch (e) {
+    const limited = providerAccessErrorResponse(e) ?? providerConcurrencyErrorResponse(e);
+    if (limited) return limited;
     if (e instanceof AdminModelGateError) {
       // Gate refusal — surface the aggregated reasons. 403: the caller is not
       // permitted to route to this model under the supplied context.

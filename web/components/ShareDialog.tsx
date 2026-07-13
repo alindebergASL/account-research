@@ -52,6 +52,7 @@ export default function ShareDialog({
   const [audience, setAudience] = useState<Audience>(briefAudience);
   const [audienceBusy, setAudienceBusy] = useState(false);
   const [links, setLinks] = useState<ShareLink[] | null>(null);
+  const [publicError, setPublicError] = useState<string | null>(null);
   const [ttl, setTtl] = useState<ShareLinkTtl>("7d");
   const [creatingLink, setCreatingLink] = useState(false);
   const [revokingLink, setRevokingLink] = useState<string | null>(null);
@@ -70,11 +71,14 @@ export default function ShareDialog({
       if (r.ok) {
         const d = await r.json();
         setShares(d.shares || []);
+        setError(null);
       } else {
         setShares([]);
+        setError(shareControlError(r.status));
       }
     } catch {
       setShares([]);
+      setError(shareControlError(503));
     }
   }, [briefId]);
 
@@ -86,11 +90,14 @@ export default function ShareDialog({
       if (r.ok) {
         const d = await r.json();
         setLinks(d.links || []);
+        setPublicError(null);
       } else {
         setLinks([]);
+        setPublicError(shareControlError(r.status));
       }
     } catch {
       setLinks([]);
+      setPublicError(shareControlError(503));
     }
   }, [briefId]);
 
@@ -118,13 +125,14 @@ export default function ShareDialog({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: email.trim(), role }),
       });
-      const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setError(d?.error || `Could not share (${r.status})`);
+        setError(shareControlError(r.status));
         return;
       }
       setEmail("");
       await load();
+    } catch {
+      setError(shareControlError(503));
     } finally {
       setSubmitting(false);
     }
@@ -142,7 +150,12 @@ export default function ShareDialog({
         setShares((prev) =>
           prev ? prev.filter((s) => s.user_id !== userId) : prev,
         );
+        setError(null);
+      } else {
+        setError(shareControlError(r.status));
       }
+    } catch {
+      setError(shareControlError(503));
     } finally {
       setRemoving(null);
     }
@@ -165,9 +178,13 @@ export default function ShareDialog({
       });
       if (!r.ok) {
         setShares(prev);
+        setError(shareControlError(r.status));
+      } else {
+        setError(null);
       }
     } catch {
       setShares(prev);
+      setError(shareControlError(503));
     } finally {
       setUpdatingRole(null);
     }
@@ -176,6 +193,7 @@ export default function ShareDialog({
   async function flipAudience() {
     if (audienceBusy) return;
     setAudienceBusy(true);
+    setPublicError(null);
     try {
       const next: Audience = audience === "internal" ? "shareable" : "internal";
       const r = await fetch(`/api/briefs/${briefId}`, {
@@ -185,7 +203,11 @@ export default function ShareDialog({
       });
       if (r.ok) {
         setAudience(next);
+      } else {
+        setPublicError(shareControlError(r.status));
       }
+    } catch {
+      setPublicError(shareControlError(503));
     } finally {
       setAudienceBusy(false);
     }
@@ -194,6 +216,7 @@ export default function ShareDialog({
   async function createLink() {
     if (creatingLink) return;
     setCreatingLink(true);
+    setPublicError(null);
     try {
       const r = await fetch(`/api/briefs/${briefId}/share-links`, {
         method: "POST",
@@ -204,7 +227,11 @@ export default function ShareDialog({
       if (r.ok && d.link) {
         setJustCreatedToken(d.link.token);
         setLinks((prev) => (prev ? [d.link, ...prev] : [d.link]));
+      } else {
+        setPublicError(shareControlError(r.status));
       }
+    } catch {
+      setPublicError(shareControlError(503));
     } finally {
       setCreatingLink(false);
     }
@@ -213,6 +240,7 @@ export default function ShareDialog({
   async function revokeLink(id: string) {
     if (revokingLink) return;
     setRevokingLink(id);
+    setPublicError(null);
     try {
       const r = await fetch(
         `/api/briefs/${briefId}/share-links/${id}`,
@@ -223,7 +251,11 @@ export default function ShareDialog({
         if (justCreatedToken && links?.find((l) => l.id === id)?.token === justCreatedToken) {
           setJustCreatedToken(null);
         }
+      } else {
+        setPublicError(shareControlError(r.status));
       }
+    } catch {
+      setPublicError(shareControlError(503));
     } finally {
       setRevokingLink(null);
     }
@@ -264,7 +296,7 @@ export default function ShareDialog({
       if (!r.ok) {
         setLinkEmailErrors((prev) => ({
           ...prev,
-          [link.id]: emailErrorMessage(r.status, d?.code, d?.error),
+          [link.id]: emailErrorMessage(r.status),
         }));
         return;
       }
@@ -290,6 +322,11 @@ export default function ShareDialog({
       setLinkEmailSuccess((prev) => ({
         ...prev,
         [link.id]: `Sent to ${sent.recipient} just now`,
+      }));
+    } catch {
+      setLinkEmailErrors((prev) => ({
+        ...prev,
+        [link.id]: "Public-link email is temporarily unavailable. Copy the link and share it another way.",
       }));
     } finally {
       setSendingLinkEmail(null);
@@ -330,6 +367,12 @@ export default function ShareDialog({
                 Public link
               </div>
             </div>
+
+            {publicError && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {publicError}
+              </div>
+            )}
 
             {audience === "internal" ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900 flex items-start gap-2">
@@ -662,20 +705,24 @@ export default function ShareDialog({
   );
 }
 
-function emailErrorMessage(status: number, code?: string, fallback?: string): string {
-  if (status === 429 || code === "rate_limited") {
+function emailErrorMessage(status: number): string {
+  if (status === 429) {
     return "You’ve reached the share-link email limit. Try again later.";
   }
-  if (status === 503 || code === "email_not_configured") {
-    return "Email is not configured. Ask an admin to enable SMTP.";
-  }
-  if (status === 502 || code === "email_send_failed") {
-    return "SMTP send failed. Try again or ask an admin to check email settings.";
-  }
-  if (status === 400 || code === "bad_email") {
+  if (status === 400) {
     return "Enter a valid email address.";
   }
-  return fallback || `Could not email link (${status})`;
+  return "Public-link email is temporarily unavailable. Copy the link and share it another way.";
+}
+
+function shareControlError(status: number): string {
+  if (status === 401 || status === 403 || status === 404) {
+    return "You don’t have permission to change sharing.";
+  }
+  if (status === 429) {
+    return "Sharing is busy right now. Try again shortly.";
+  }
+  return "Sharing is temporarily unavailable. Try again later.";
 }
 
 function formatExpiry(ts: number | null): string {

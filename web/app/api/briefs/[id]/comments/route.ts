@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
 import { newId } from "@/lib/password";
 import { notifyCommentCreated } from "@/lib/commentNotifications";
 import { createCommentNotification } from "@/lib/notifications";
@@ -59,12 +60,15 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     // non-readers rather than leaking "you don't have permission".
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
 
   let body: { body?: unknown; parent_id?: unknown; ai_assisted?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const text = typeof body.body === "string" ? body.body.trim() : "";
   if (!text) {

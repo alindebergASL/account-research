@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
 import { HttpError, findUserByEmail, requireAdmin } from "@/lib/auth";
 import {
@@ -67,9 +68,9 @@ export async function POST(req: NextRequest) {
     role?: "admin" | "member" | "viewer";
   };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const email = (body.email ?? "").trim().toLowerCase();

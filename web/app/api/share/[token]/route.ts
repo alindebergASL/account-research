@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, type BriefRow, type ShareLinkRow } from "@/lib/db";
+import { db } from "@/lib/db";
 import { Brief } from "@/lib/schema";
-import { sanitizeBriefForPublic, isShareLinkLive } from "@/lib/publicBrief";
+import { sanitizeBriefForPublic } from "@/lib/publicBrief";
+import {
+  getPublicShareAccess,
+  publicNotFoundResponse,
+} from "@/lib/publicShareAccess";
 
 export const runtime = "nodejs";
 
@@ -10,22 +14,10 @@ export const runtime = "nodejs";
 // reason (no leakage about whether a token ever existed).
 export async function GET(_req: NextRequest, props: { params: Promise<{ token: string }> }) {
   const params = await props.params;
-  const link = db()
-    .prepare(`SELECT * FROM brief_share_links WHERE token = ?`)
-    .get(params.token) as ShareLinkRow | undefined;
+  const link = getPublicShareAccess(params.token);
+  if (!link) return publicNotFoundResponse();
 
-  if (!link || !isShareLinkLive(link)) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const briefRow = db()
-    .prepare(`SELECT * FROM briefs WHERE id = ?`)
-    .get(link.brief_id) as BriefRow | undefined;
-  if (!briefRow) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const parsed = Brief.safeParse(JSON.parse(briefRow.brief_json));
+  const parsed = Brief.safeParse(JSON.parse(link.brief_json));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Stored brief failed validation" },

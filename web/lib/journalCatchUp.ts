@@ -198,7 +198,7 @@ export function buildJournalCatchUpPrompt(input: {
     ...sources.map((source, index) => `- D${index + 1}: ${compact(source.filename, 96)} — ${compact(source.content_preview || source.entryBody)}`),
     omitted,
     "",
-    reviewed.length > 0 ? "Accepted/applied review candidates:" : "Accepted/applied review candidates: none in this window",
+    reviewed.length > 0 ? "Manually reviewed incorporation candidates:" : "Manually reviewed incorporation candidates: none in this window",
     ...reviewed.map(candidateLine),
     "",
     pending.length > 0 ? "Pending review candidates:" : "Pending review candidates: none in this window",

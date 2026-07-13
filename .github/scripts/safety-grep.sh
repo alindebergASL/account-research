@@ -21,15 +21,20 @@
 set -uo pipefail
 
 BASE_SHA="${1:-}"
-HEAD_SHA="${2:-HEAD}"
+HEAD_SHA="${2:-}"
 
 if [[ -z "$BASE_SHA" ]]; then
   echo "safety-grep: missing BASE_SHA argument" >&2
   exit 2
 fi
 
+if [[ -z "$HEAD_SHA" ]]; then
+  echo "safety-grep: missing HEAD_SHA argument" >&2
+  exit 2
+fi
+
 # Same pattern set documented in the A.7 PR runbooks.
-PATTERN='fetch\(|anthropic|openai|resend|NEXT_PUBLIC|feature flag|app/s|api/share|UPDATE briefs|INSERT INTO briefs|write.brief_json|brief_json.UPDATE|password|secret|api_key|private_key|ANTHROPIC_API_KEY|OPENAI_API_KEY'
+PATTERN='fetch[(]|anthropic|openai|resend|NEXT_PUBLIC|feature flag|app/s|api/share|UPDATE briefs|INSERT INTO briefs|write.brief_json|brief_json.UPDATE|password|secret|api_key|private_key|ANTHROPIC_API_KEY|OPENAI_API_KEY'
 
 SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
@@ -43,7 +48,10 @@ SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 # Pull the diff between base and head (three-dot: changes on head since
 # merge-base with base).
-DIFF="$(git diff "$BASE_SHA"..."$HEAD_SHA" 2>/dev/null || true)"
+if ! DIFF="$(git diff "$BASE_SHA"..."$HEAD_SHA")"; then
+  echo "safety-grep: failed closed: unable to produce diff for base '$BASE_SHA' and head '$HEAD_SHA'." >&2
+  exit 2
+fi
 if [[ -z "$DIFF" ]]; then
   echo "_No diff between base and head._" >> "$SUMMARY_FILE"
   echo "safety-grep: empty diff; nothing to scan."
@@ -53,7 +61,7 @@ fi
 # Extract only added lines (those starting with '+', excluding the '+++' file
 # header lines), keeping track of the current file path so we can classify
 # each hit by location.
-RAW_HITS="$(
+if ! RAW_HITS="$(
   awk -v pat="$PATTERN" '
     /^diff --git / {
       # parse "diff --git a/<path> b/<path>"
@@ -78,7 +86,10 @@ RAW_HITS="$(
       }
     }
   ' <<< "$DIFF"
-)"
+)"; then
+  echo "safety-grep: failed closed: awk extraction failed." >&2
+  exit 2
+fi
 
 if [[ -z "$RAW_HITS" ]]; then
   echo "_No safety-pattern hits in added lines._" >> "$SUMMARY_FILE"

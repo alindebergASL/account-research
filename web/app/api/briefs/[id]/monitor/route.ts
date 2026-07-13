@@ -3,11 +3,14 @@ import { db } from "@/lib/db";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import {
   cancelActiveMonitorJobsForBrief,
-  enqueueMonitorJob,
+  enqueueMonitorJobOrThrow,
   isMonitorCadence,
   nextScheduledCheckAt,
 } from "@/lib/monitorScheduler";
 import { listMonitorRuns } from "@/lib/monitorRuns";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
+import { researchQueueErrorResponse } from "@/lib/researchQueueLimits";
 
 export const runtime = "nodejs";
 
@@ -81,9 +84,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   let body: { enabled?: unknown; cadence?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (typeof body.enabled !== "boolean") {
     return NextResponse.json(
@@ -111,6 +114,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   const wasEnabled = row.monitor_enabled === 1;
   const enabled = body.enabled;
+  if (enabled && !wasEnabled) {
+    try {
+      assertProviderCallsEnabled();
+    } catch (error) {
+      return providerAccessErrorResponse(error)!;
+    }
+  }
   db()
     .prepare(`UPDATE briefs SET monitor_enabled = ? WHERE id = ?`)
     .run(enabled ? 1 : 0, params.id);
@@ -126,7 +136,15 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   // First enable → run a check immediately (deduped if one is already queued).
   let queuedJobId: string | null = null;
   if (enabled && !wasEnabled) {
-    queuedJobId = enqueueMonitorJob(params.id, user.id);
+    try {
+      queuedJobId = enqueueMonitorJobOrThrow(params.id, user.id);
+    } catch (error) {
+      db().prepare(`UPDATE briefs SET monitor_enabled = ?, monitor_cadence = ? WHERE id = ?`)
+        .run(wasEnabled ? 1 : 0, row.monitor_cadence, params.id);
+      const response = researchQueueErrorResponse(error);
+      if (response) return response;
+      throw error;
+    }
   } else if (!enabled) {
     cancelActiveMonitorJobsForBrief(params.id);
   }

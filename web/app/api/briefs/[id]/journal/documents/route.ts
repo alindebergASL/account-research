@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { insertJournalEntry, rowToJournalDto, type JournalListRow } from "@/lib/journal";
 import { listTagsForEntries } from "@/lib/journalEntryTags";
 import { db } from "@/lib/db";
@@ -12,7 +12,14 @@ import {
   MAX_DOCUMENT_BYTES,
   MAX_UPLOAD_BODY_BYTES,
 } from "@/lib/journalDocuments";
-import { writeOriginalBytes } from "@/lib/journalDocumentStorage";
+import {
+  __runTestAfterPersistHook,
+  __runTestBeforeDocumentInsertHook,
+  __runTestBeforeUploadTransactionHook,
+  persistOriginalBytes,
+  removeOriginalBytesIfUnreferenced,
+  type StoredOriginalBytes,
+} from "@/lib/journalDocumentStorage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -57,6 +64,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!canWriteBrief(user, params.id)) {
+    return NextResponse.json({ error: "Brief write access required" }, { status: 403 });
+  }
 
   const parsedContentLength = parseContentLength(req.headers.get("content-length"));
   if (parsedContentLength === null) {
@@ -98,22 +108,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   let extracted;
-  let storagePath: string | null = null;
+  let bytes: Uint8Array;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    bytes = new Uint8Array(await file.arrayBuffer());
     extracted = await extractJournalDocument({
       filename: file.name || "document.txt",
       mimeType: file.type || "application/octet-stream",
       bytes,
     });
-    // Persist the original bytes (content-addressed) so the file can be viewed
-    // or downloaded later. Best-effort: if storage fails, fall back to the
-    // text-only document rather than failing the whole upload.
-    try {
-      storagePath = writeOriginalBytes(extracted.contentHash, bytes);
-    } catch {
-      storagePath = null;
-    }
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "Document extraction failed" },
@@ -123,25 +125,54 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   const body = note || `Uploaded document: ${extracted.filename}`;
   let persisted: { entryId: string; documentId: string };
+  let originalStorageFailed = false;
   try {
-    persisted = db().transaction(() => {
-      const entryId = insertJournalEntry({
-        briefId: params.id,
-        userId: user.id,
-        authorType: "user",
-        body,
-        replyTo: null,
-      });
-      const documentId = insertJournalDocument({
-        briefId: params.id,
-        journalEntryId: entryId,
-        userId: user.id,
-        document: extracted,
-        storagePath,
-      });
-      return { entryId, documentId };
-    })();
+    const persistUpload = db().transaction(() => {
+      let stored: StoredOriginalBytes;
+      try {
+        stored = persistOriginalBytes(extracted.contentHash, bytes);
+        __runTestAfterPersistHook();
+      } catch (error) {
+        originalStorageFailed = true;
+        throw error;
+      }
+
+      try {
+        const entryId = insertJournalEntry({
+          briefId: params.id,
+          userId: user.id,
+          authorType: "user",
+          body,
+          replyTo: null,
+        });
+        __runTestBeforeDocumentInsertHook();
+        const documentId = insertJournalDocument({
+          briefId: params.id,
+          journalEntryId: entryId,
+          userId: user.id,
+          document: extracted,
+          storagePath: stored.storagePath,
+        });
+        return { entryId, documentId };
+      } catch (error) {
+        if (stored.created) {
+          try {
+            removeOriginalBytesIfUnreferenced({ storagePath: stored.storagePath, connection: db() });
+          } catch {
+            // Cleanup is best effort. Keep the immediate transaction open
+            // until the original DB error is rethrown, and never leak raw
+            // storage or SQLite diagnostics through the route response.
+          }
+        }
+        throw error;
+      }
+    });
+    __runTestBeforeUploadTransactionHook();
+    persisted = persistUpload.immediate();
   } catch {
+    if (originalStorageFailed) {
+      return NextResponse.json({ error: "Original document storage failed" }, { status: 500 });
+    }
     return NextResponse.json({ error: "Document upload failed" }, { status: 500 });
   }
   const documentRow = loadJournalDocument(params.id, persisted.documentId)!;

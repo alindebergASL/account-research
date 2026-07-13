@@ -11,6 +11,7 @@
 
 import { JOURNAL_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
+import { assertProviderCallsEnabled } from "./providerAccess";
 import {
   formatDocumentContextForPrompt,
   type JournalDocumentRow,
@@ -24,6 +25,8 @@ import {
 export const BRIEF_INPUT_CHAR_CAP = 4000;
 export const JOURNAL_CONTEXT_MAX = 12;
 export const MAX_OUTPUT_TOKENS = 800;
+export const MAX_JOURNAL_PROMPT_BYTES = 96 * 1024;
+export const MAX_JOURNAL_OUTPUT_BYTES = 16 * 1024;
 export { SOURCE_LEGEND_MARKER };
 
 export type JournalContextEntry = {
@@ -235,10 +238,14 @@ export function __setTestJournalClient(c: JournalClient | null) {
 export async function runJournalReply(
   input: JournalReplyInput,
   client?: JournalClient,
+  beforeProviderCall?: () => void,
 ): Promise<JournalReplyResult> {
+  assertProviderCallsEnabled();
   const { system, user } = buildJournalMessages(input);
+  if (Buffer.byteLength(system, "utf8") > MAX_JOURNAL_PROMPT_BYTES) throw new Error("Journal context is too large");
   const c: JournalClient =
-    client ?? _testClient ?? (new Anthropic() as unknown as JournalClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 0 }) as unknown as JournalClient);
+  beforeProviderCall?.();
   const response = await c.messages.create({
     model: JOURNAL_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -251,5 +258,6 @@ export async function runJournalReply(
       .map((b) => b.text || "")
       .join("\n")
       .trim() || "(no reply)";
+  if (Buffer.byteLength(text, "utf8") > MAX_JOURNAL_OUTPUT_BYTES) throw new Error("Journal assistant output is too large");
   return { text };
 }

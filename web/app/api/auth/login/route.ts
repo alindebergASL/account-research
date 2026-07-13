@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import {
   createSession,
   findUserByEmailIncludingDisabled,
@@ -60,9 +61,9 @@ function clearAttempt(email: string) {
 export async function POST(req: NextRequest) {
   let body: { email?: string; password?: string };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";

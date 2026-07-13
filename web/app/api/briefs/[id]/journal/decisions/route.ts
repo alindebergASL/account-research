@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { insertDecision, listDecisions } from "@/lib/journalDecisions";
 
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
   if (!canWriteBrief(user, id)) return NextResponse.json({ error: "Brief write access required" }, { status: 403 });
   let body: any;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  try { body = await parseBoundedJson(req); } catch (error) { return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
   for (const field of ["source_candidate_id", "source_entry_id", "evidence_snapshot", "created_by", "lifecycle", "superseded_by_id"]) {
     if (Object.prototype.hasOwnProperty.call(body, field)) return NextResponse.json({ error: `${field} is server-managed` }, { status: 400 });

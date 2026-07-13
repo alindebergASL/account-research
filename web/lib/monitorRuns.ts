@@ -1,13 +1,13 @@
 // Monitor run history. Every monitor scan — including no-op runs that change
 // nothing — records one row here so the UI can show "checked yesterday, nothing
-// new" as faithfully as "applied 3 changes". This is the durable audit/history
-// behind the user-facing Monitoring panel; brief_events + the Journal keep their
-// own narrower records of *applied* updates.
+// new" as faithfully as "queued a review candidate". This is the durable
+// history behind the user-facing Monitoring panel; candidate cards supply the
+// corresponding Radar visibility.
 
 import { db } from "./db";
 import { newId } from "./password";
 
-export type MonitorRunOutcome = "no_updates" | "updated" | "failed";
+export type MonitorRunOutcome = "no_updates" | "candidate_queued" | "updated" | "failed";
 export type MonitorRunTier = "triage_only" | "deep";
 
 export type MonitorRunDto = {

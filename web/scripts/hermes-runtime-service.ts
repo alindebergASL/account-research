@@ -6,9 +6,13 @@
 // fake/no-spend responses so the lab can prove app -> runtime -> Canvas
 // plumbing without provider credentials or production authority.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 import { buildReadOnlyCanvasFromBrief } from "../lib/canvas/fromBrief";
+import {
+  assertRuntimeServiceAuthConfigured,
+  runtimeServiceAuthConfigFromEnv,
+  runtimeServiceAuthorized,
+} from "../lib/hermes/runtimeServiceAuth";
 
 loadEnvConfig(process.cwd());
 import type {
@@ -46,23 +50,14 @@ function fakeMode(): boolean {
 }
 
 function serviceToken(): string | null {
-  const token = process.env.HERMES_SERVICE_TOKEN;
+  const token = process.env.HERMES_SERVICE_TOKEN?.trim();
   return token && token.length > 0 ? token : null;
 }
 
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
-}
-
 function authorized(req: IncomingMessage): boolean {
-  const token = serviceToken();
-  if (!token) return true;
   const header = req.headers.authorization || "";
   const value = Array.isArray(header) ? header[0] || "" : header;
-  if (!value.startsWith("Bearer ")) return false;
-  return safeEqual(value.slice("Bearer ".length), token);
+  return runtimeServiceAuthorized(runtimeServiceAuthConfigFromEnv(), value || undefined);
 }
 
 function sendJson(res: ServerResponse, status: number, body: JsonRecord): void {
@@ -237,11 +232,13 @@ if (!LOOPBACK_HOSTS.has(host)) {
   throw new Error("Hermes runtime service refuses to bind non-loopback host");
 }
 const port = bindPort();
+assertRuntimeServiceAuthConfigured(runtimeServiceAuthConfigFromEnv());
 
 const server = createServer(async (req, res) => {
   const path = routePath(req);
   if (path === "/health") {
     if (req.method !== "GET") return methodNotAllowed(res);
+    if (!authorized(req)) return unauthorizedResponse(res);
     return sendJson(res, 200, {
       ok: true,
       service: SERVICE_NAME,

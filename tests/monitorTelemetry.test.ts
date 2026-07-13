@@ -4,6 +4,7 @@
 // before a mid-scan throw survives — so failed runs are no longer a blind spot.
 
 import test from "node:test";
+process.env.PROVIDER_CALLS_ENABLED = "1"; // Explicitly enable only deterministic fake clients in this suite.
 import assert from "node:assert/strict";
 
 const mod = require("../web/lib/monitor") as typeof import("../web/lib/monitor");

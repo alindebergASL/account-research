@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
 import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
 import { appBaseUrl, isEmailConfigured, sendShareLinkEmail } from "@/lib/email";
@@ -26,6 +27,7 @@ type LinkRow = {
   expires_at: number | null;
   revoked_at: number | null;
   account_name: string;
+  audience: string;
 };
 
 export async function POST(
@@ -45,24 +47,10 @@ export async function POST(
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
-  let body: { recipient?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const recipient = (body.recipient ?? "").trim().toLowerCase();
-  if (!EMAIL_RE.test(recipient)) {
-    return NextResponse.json(
-      { error: "Valid recipient email required", code: "bad_email" },
-      { status: 400 },
-    );
-  }
-
   const link = db()
     .prepare(
       `SELECT l.id, l.brief_id, l.token, l.expires_at, l.revoked_at,
-              b.account_name
+              b.account_name, b.audience
        FROM brief_share_links l
        JOIN briefs b ON b.id = l.brief_id
        WHERE l.id = ? AND l.brief_id = ?`,
@@ -70,6 +58,26 @@ export async function POST(
     .get(params.linkId, params.id) as LinkRow | undefined;
   if (!link || !isShareLinkLive(link)) {
     return NextResponse.json({ error: "Link not found" }, { status: 404 });
+  }
+  if (link.audience !== "shareable") {
+    return NextResponse.json(
+      { error: "Public links are disabled for internal briefs", code: "audience_internal" },
+      { status: 409 },
+    );
+  }
+
+  let body: { recipient?: string };
+  try {
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const recipient = (body.recipient ?? "").trim().toLowerCase();
+  if (!EMAIL_RE.test(recipient)) {
+    return NextResponse.json(
+      { error: "Valid recipient email required", code: "bad_email" },
+      { status: 400 },
+    );
   }
 
   const limit = checkShareEmailLimit(user.id);

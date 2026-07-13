@@ -4,7 +4,8 @@
 //   1. HERMES_CHAT_ENABLED=1 + HERMES_RUNTIME_FAKE=1 routes chat through
 //      Hermes, creates a fake chat job, persists ordered events, and
 //      returns a deterministic reply.
-//   2. Read-only chat cannot mutate brief or Canvas state.
+//   2. Chat does not persist existing-Brief Canvas output or return a Canvas
+//      version; read-only chat also cannot mutate the brief.
 //   3. Disabled runtime in non-fake mode records a failed chat job with a
 //      sanitized error and throws HermesChatAdapterError.
 import fs from "node:fs";
@@ -21,6 +22,9 @@ if (!process.env.ADMIN_PASSWORD) process.env.ADMIN_PASSWORD = "VerifyTempPass123
 
 process.env.HERMES_RUNTIME_FAKE = "1";
 process.env.HERMES_CHAT_ENABLED = "1";
+// This verifier uses only the deterministic in-process fake runtime: no
+// network or provider call is possible, so explicitly opt into the gate.
+process.env.PROVIDER_CALLS_ENABLED = "1";
 delete process.env.HERMES_RUNTIME_ENABLED;
 delete process.env.ANTHROPIC_API_KEY;
 
@@ -123,15 +127,19 @@ async function main() {
   assert(result.reply.includes("[fake] Hermes chat received"), "fake chat reply returned");
   assert(result.patches_applied.length === 0, "fake chat returns no patches");
   assert(result.patch_errors.length === 0, "fake chat returns no patch errors");
-  assert(result.canvas_version === 1, `fake writable chat saves canvas version 1, got ${result.canvas_version}`);
+  assert(!("canvas_version" in result), "fake writable chat returns no canvas version");
   const savedCanvas = conn
     .prepare(`SELECT version, source, canvas_json FROM canvas_states WHERE brief_id = ?`)
     .get(briefId) as { version: number; source: string; canvas_json: string } | undefined;
-  assert(savedCanvas?.version === 1, "fake writable chat persisted canvas state version 1");
-  assert(savedCanvas.source === "fake", "fake writable chat persisted fake canvas source");
-  const parsedCanvas = JSON.parse(savedCanvas.canvas_json);
-  assert(parsedCanvas.account_name === sampleBrief.account_name, "fake canvas targets the active brief");
-  assert(Array.isArray(parsedCanvas.widgets) && parsedCanvas.widgets.length > 0, "fake canvas has renderable widgets");
+  assert(savedCanvas === undefined, "fake writable chat persisted no canvas state");
+  assert(
+    (conn.prepare(`SELECT COUNT(*) AS c FROM canvas_proposals WHERE brief_id = ?`).get(briefId) as { c: number }).c === 0,
+    "fake writable chat persisted no canvas proposal",
+  );
+  assert(
+    (conn.prepare(`SELECT COUNT(*) AS c FROM canvas_capability_proposals WHERE brief_id = ?`).get(briefId) as { c: number }).c === 0,
+    "fake writable chat persisted no canvas capability proposal",
+  );
 
   const afterJobs = (conn.prepare(`SELECT COUNT(*) AS c FROM hermes_jobs WHERE kind = 'chat'`).get() as { c: number }).c;
   assert(afterJobs === beforeJobs + 1, "one fake chat job created");

@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { safeApplicationPath } from "../../lib/safeApplicationPath";
 
 export default function LoginPage() {
   return (
@@ -15,7 +16,7 @@ export default function LoginPage() {
 function Login() {
   const router = useRouter();
   const search = useSearchParams();
-  const from = search.get("from") || "/";
+  const from = safeApplicationPath(search.get("from"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);

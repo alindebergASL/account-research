@@ -3,7 +3,6 @@
 import { useEffect, useState, use } from "react";
 import { Brief } from "@/lib/schema";
 import BriefCanvas from "@/components/BriefCanvas";
-import PublicCommentsSection from "./PublicCommentsSection";
 
 type State =
   | { kind: "loading" }
@@ -62,8 +61,7 @@ export default function PublicShareView(
         <div className="text-center max-w-sm">
           <h1 className="font-display text-2xl mb-2">Link unavailable</h1>
           <p className="text-sm text-muted">
-            This shared brief is no longer available. The link may have
-            expired or been revoked. Ask whoever sent it for a new one.
+            This shared brief is unavailable. Ask whoever sent it for a new link.
           </p>
         </div>
       </main>
@@ -75,11 +73,9 @@ export default function PublicShareView(
       <BriefCanvas
         brief={state.brief}
         mode="public"
-        publicToken={params.token}
         canWrite={false}
         isOwner={false}
       />
-      <PublicCommentsSection token={params.token} />
       {state.expires_at !== null && (
         <div className="max-w-7xl mx-auto px-6 pb-10 text-center text-xs text-muted">
           Shared via AccountBriefBuilder · this link {formatExpiryFooter(state.expires_at)}

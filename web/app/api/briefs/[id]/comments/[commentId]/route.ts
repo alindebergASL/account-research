@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db, type BriefCommentRow } from "@/lib/db";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,9 @@ export async function PATCH(
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
   const row = loadComment(params.id, params.commentId);
   if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -61,9 +65,9 @@ export async function PATCH(
 
   let body: { body?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const text = typeof body.body === "string" ? body.body.trim() : "";
   if (!text) {
@@ -101,6 +105,9 @@ export async function DELETE(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const row = loadComment(params.id, params.commentId);
   if (!row) {

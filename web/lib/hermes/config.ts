@@ -82,6 +82,19 @@ export function hermesServiceToken(): string | null {
   return v && v.length > 0 ? v : null;
 }
 
+export class HermesServiceTokenError extends Error {
+  constructor() {
+    super("HERMES_SERVICE_TOKEN is required when Hermes runtime mode is enabled");
+    this.name = "HermesServiceTokenError";
+  }
+}
+
+export function requireHermesServiceToken(): string {
+  const token = hermesServiceToken();
+  if (!token) throw new HermesServiceTokenError();
+  return token;
+}
+
 export function hermesResearchEnabled(): boolean {
   return process.env.HERMES_RESEARCH_ENABLED === "1";
 }

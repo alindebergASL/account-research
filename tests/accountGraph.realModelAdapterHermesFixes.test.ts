@@ -10,6 +10,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+process.env.PROVIDER_CALLS_ENABLED = "1"; // Explicitly enable only deterministic fake clients in this suite.
 import {
   existsSync,
   mkdtempSync,

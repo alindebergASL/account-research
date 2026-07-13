@@ -31,6 +31,7 @@ import type {
   ModelAdapter,
   PerCallCostRecord,
 } from "../types";
+import { assertProviderCallsEnabled } from "../../../providerAccess";
 import { ExcerptProposalSchema, ClaimProposalSchema, ObjectProposalSchema } from "../types";
 import { callAndValidate, ProviderResponseInvalidError } from "../providerResponseValidation";
 export { ProviderResponseInvalidError } from "../providerResponseValidation";
@@ -204,6 +205,7 @@ export class RealAnthropicAdapter implements ModelAdapter {
    * — this is the ONLY place in the codebase that loads `@anthropic-ai/sdk`.
    */
   static async init(opts: RealAnthropicAdapterInit): Promise<RealAnthropicAdapter> {
+    assertProviderCallsEnabled();
     const pricing = opts.pricing !== undefined ? opts.pricing : lookupModelPricing(opts.model);
     let client: ProviderClient;
     if (opts.providerClient) {
@@ -213,8 +215,8 @@ export class RealAnthropicAdapter implements ModelAdapter {
       // dependency graph. Fixture mode, fake-adapter mode, and the
       // local-corpus orchestrator never reach this line.
       const sdk = await import("@anthropic-ai/sdk");
-      const Anthropic = (sdk as unknown as { default: new (cfg: { apiKey: string }) => unknown }).default;
-      const inner = new Anthropic({ apiKey: opts.apiKey }) as {
+      const Anthropic = (sdk as unknown as { default: new (cfg: { apiKey: string; timeout?: number; maxRetries?: number }) => unknown }).default;
+      const inner = new Anthropic({ apiKey: opts.apiKey, timeout: 90_000, maxRetries: 1 }) as {
         messages: {
           create: (req: Record<string, unknown>) => Promise<{
             content?: Array<{ type: string; text?: string }>;

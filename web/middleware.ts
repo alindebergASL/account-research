@@ -20,7 +20,7 @@ const PUBLIC_PATHS = [
 // each route validates the session against the DB. The goal here is just to keep
 // unauthenticated browsers from seeing app pages and to give APIs a clean 401.
 export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
+  const { pathname, search } = req.nextUrl;
 
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
     return NextResponse.next();
@@ -39,6 +39,6 @@ export function middleware(req: NextRequest) {
   const proto = req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "") || "https";
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl.host;
   const url = new URL(`${proto}://${host}/login`);
-  url.searchParams.set("from", pathname);
+  url.searchParams.set("from", `${pathname}${search}`);
   return NextResponse.redirect(url);
 }

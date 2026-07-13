@@ -15,10 +15,13 @@
 
 import { COMMENT_MODEL } from "./models";
 import Anthropic from "@anthropic-ai/sdk";
+import { assertProviderCallsEnabled } from "./providerAccess";
 
 export const BRIEF_INPUT_CHAR_CAP = 4000;
 export const THREAD_CONTEXT_COMMENTS_MAX = 12;
 export const MAX_OUTPUT_TOKENS = 600;
+export const MAX_ASSIST_PROMPT_BYTES = 64 * 1024;
+export const MAX_ASSIST_OUTPUT_BYTES = 12 * 1024;
 
 export type AssistMode =
   | "draft_reply"
@@ -173,9 +176,11 @@ export async function runAssist(
   input: AssistInput,
   client?: AssistClient,
 ): Promise<AssistResult> {
+  assertProviderCallsEnabled();
   const { system, user } = buildAssistMessages(input);
+  if (Buffer.byteLength(system, "utf8") > MAX_ASSIST_PROMPT_BYTES) throw new Error("AI assist context is too large");
   const c: AssistClient =
-    client ?? _testClient ?? (new Anthropic() as unknown as AssistClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as AssistClient);
   const response = await c.messages.create({
     model: COMMENT_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -188,5 +193,6 @@ export async function runAssist(
       .map((b) => b.text || "")
       .join("\n")
       .trim() || "(no suggestion)";
+  if (Buffer.byteLength(text, "utf8") > MAX_ASSIST_OUTPUT_BYTES) throw new Error("AI assist output is too large");
   return { text, mode: input.mode, ai_assisted_marker: true };
 }

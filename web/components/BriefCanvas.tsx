@@ -27,8 +27,6 @@ import {
   ShieldCheck,
   PieChart,
   BarChart2,
-  Download,
-  Loader2,
 } from "lucide-react";
 import type {
   Brief,
@@ -87,7 +85,6 @@ export default function BriefCanvas({
   canManage = true,
   monitorEnabled = false,
   mode = "private",
-  publicToken,
   lastRefreshedAt = null,
   versionsCount = 0,
 }: {
@@ -103,7 +100,6 @@ export default function BriefCanvas({
   // share token: no header chrome, no chat, no share/edit affordances,
   // and the strategy tile (next_action) is hidden.
   mode?: "private" | "public";
-  publicToken?: string;
   lastRefreshedAt?: number | null;
   versionsCount?: number;
 }) {
@@ -444,7 +440,7 @@ export default function BriefCanvas({
         </Tile>
       </div>
 
-      <DownloadBar brief={brief} publicToken={publicToken} />
+      <ExportUnavailableNotice />
 
       {/* Drill modals */}
       <DrillModal
@@ -751,7 +747,7 @@ function Header({
                 className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition-colors px-3 py-1.5 rounded-lg hover:bg-white border border-transparent hover:border-[var(--line)]"
               >
                 <RefreshCw className="size-4" />
-                <span className="hidden sm:inline">Refresh</span>
+                <span className="hidden sm:inline">Check for updates</span>
               </button>
               <button
                 type="button"
@@ -815,7 +811,7 @@ function Header({
         {lastRefreshedAt && (
           <>
             <span>·</span>
-            <span>Refreshed {relativeTimeShort(lastRefreshedAt)}</span>
+            <span>Research checked {relativeTimeShort(lastRefreshedAt)}</span>
           </>
         )}
       </div>
@@ -1359,92 +1355,13 @@ function isMissing(s: string) {
   return v === "" || v.startsWith("not found");
 }
 
-/* ---------- Download bar ---------- */
+/* ---------- Export availability ---------- */
 
-function DownloadBar({
-  brief,
-  publicToken,
-}: {
-  brief: Brief;
-  publicToken?: string;
-}) {
-  const [busy, setBusy] = useState<"pdf" | "docx" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function download(format: "pdf" | "docx") {
-    if (busy) return;
-    setBusy(format);
-    setError(null);
-    try {
-      const res = publicToken
-        ? await fetch(
-            `/api/share/${encodeURIComponent(publicToken)}/export?format=${format}`,
-          )
-        : await fetch("/api/export", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ brief, format }),
-          });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(
-          data?.error || `Export failed (${res.status})`,
-        );
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const disp = res.headers.get("content-disposition") || "";
-      const m = /filename="([^"]+)"/.exec(disp);
-      a.href = url;
-      a.download = m?.[1] || `brief.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      setError(e?.message ?? "Export failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
+function ExportUnavailableNotice() {
   return (
-    <div className="mt-6 flex flex-col items-center gap-3">
-      <div className="flex flex-wrap items-center justify-center gap-3">
-        <button
-          type="button"
-          onClick={() => download("pdf")}
-          disabled={busy !== null}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-ink text-white text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {busy === "pdf" ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Download className="size-4" />
-          )}
-          Download PDF
-        </button>
-        <button
-          type="button"
-          onClick={() => download("docx")}
-          disabled={busy !== null}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-ink border border-[var(--line)] text-sm font-medium hover:border-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {busy === "docx" ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Download className="size-4" />
-          )}
-          Download DOCX
-        </button>
-      </div>
-      {error && (
-        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 max-w-md text-center">
-          {error}
-        </p>
-      )}
-    </div>
+    <p className="mt-6 text-center text-xs text-muted">
+      Brief export is currently unavailable.
+    </p>
   );
 }
 

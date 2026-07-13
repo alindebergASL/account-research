@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import {
   parseReviewCandidateStatus,
   updateReviewCandidateStatus,
@@ -30,12 +31,15 @@ export async function PATCH(
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!canWriteBrief(user, params.id)) {
+    return NextResponse.json({ error: "Brief write access required" }, { status: 403 });
+  }
 
   let body: { status?: unknown };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   let status;

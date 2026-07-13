@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { db } from "@/lib/db";
-import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
+import { HttpError, canManageBrief, findUserById, requireUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -49,9 +50,9 @@ export async function PATCH(
 
   let body: { role?: string };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   // Accept legacy 'viewer' from clients defensively (translate to 'reader').
   const role =
@@ -64,13 +65,21 @@ export async function PATCH(
       { status: 400 },
     );
   }
-  const result = db()
-    .prepare(
-      `UPDATE brief_shares SET role = ? WHERE brief_id = ? AND user_id = ?`,
-    )
-    .run(role, params.id, params.userId);
-  if (result.changes === 0) {
+  const outcome = db().transaction(() => {
+    const target = findUserById(params.userId);
+    if (!target) return null;
+    const effectiveRole = role === "editor" && target.role === "viewer"
+      ? "reader"
+      : role;
+    const result = db()
+      .prepare(
+        `UPDATE brief_shares SET role = ? WHERE brief_id = ? AND user_id = ?`,
+      )
+      .run(effectiveRole, params.id, params.userId);
+    return result.changes === 0 ? null : effectiveRole;
+  }).immediate();
+  if (!outcome) {
     return NextResponse.json({ error: "Share not found" }, { status: 404 });
   }
-  return NextResponse.json({ ok: true, role });
+  return NextResponse.json({ ok: true, role: outcome });
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { HttpError, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { HttpError, canCollaborateBrief, canReadBrief, canWriteBrief, requireUser } from "@/lib/auth";
 import { isActiveBriefMember } from "@/lib/briefAccess";
 import { moveTask, softDeleteTask, updateTask } from "@/lib/journalTasks";
 
@@ -31,12 +32,15 @@ export async function PATCH(
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
 
   let body: any;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (body == null || typeof body !== "object") {
     return NextResponse.json({ error: "Invalid task patch" }, { status: 400 });
@@ -108,6 +112,9 @@ export async function DELETE(
   }
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   try {
     const removed = softDeleteTask(params.id, params.taskId);

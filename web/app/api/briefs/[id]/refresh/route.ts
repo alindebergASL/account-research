@@ -3,6 +3,8 @@ import { db, type BriefRow, type ResearchJobRow } from "@/lib/db";
 import { HttpError, canManageBrief, requireUser } from "@/lib/auth";
 import { Brief } from "@/lib/schema";
 import { newId } from "@/lib/password";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { enqueueResearchJob, researchQueueErrorResponse } from "@/lib/researchQueueLimits";
 
 export const runtime = "nodejs";
 
@@ -52,22 +54,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
-  const active = db()
-    .prepare(
-      `SELECT id FROM research_jobs
-       WHERE intent = 'refresh'
-         AND target_brief_id = ?
-         AND status IN ('queued','running')
-       LIMIT 1`,
-    )
-    .get(params.id) as { id: string } | undefined;
-  if (active) {
-    return NextResponse.json(
-      { error: "Refresh already queued or running", jobId: active.id },
-      { status: 429 },
-    );
-  }
-
   const row = db().prepare(`SELECT * FROM briefs WHERE id = ?`).get(params.id) as BriefRow | undefined;
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -78,9 +64,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   let body: Body = {};
   try {
-    body = await req.json();
-  } catch {
-    body = {};
+    body = await parseBoundedJson<Body>(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const previousJob = db()
@@ -98,6 +84,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       : previousJob?.mode ?? "standard";
 
   const brief = parsed.data;
+  if (body.notes !== undefined && (typeof body.notes !== "string" || Buffer.byteLength(body.notes, "utf8") > 8_000)) {
+    return NextResponse.json({ error: "Refresh note is too large or invalid" }, { status: 400 });
+  }
   const intake = {
     account: brief.account_name,
     segment: brief.segment || undefined,
@@ -106,26 +95,18 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     mode,
   };
 
-  const jobId = newId();
-  db()
-    .prepare(
-      `INSERT INTO research_jobs
-        (id, user_id, account_name, account_segment, region, goal,
-         intake_json, mode, status, created_at, intent, target_brief_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 'refresh', ?)`,
-    )
-    .run(
-      jobId,
-      user.id,
-      brief.account_name,
-      brief.segment,
-      null,
-      body.notes?.trim() || null,
-      JSON.stringify(intake),
-      mode,
-      Date.now(),
-      params.id,
-    );
+  let jobId: string;
+  try {
+    jobId = enqueueResearchJob({
+      id: newId(), userId: user.id, accountName: brief.account_name,
+      accountSegment: brief.segment, goal: body.notes?.trim() || null,
+      intakeJson: JSON.stringify(intake), mode, intent: "refresh", targetBriefId: params.id,
+    });
+  } catch (error) {
+    const response = researchQueueErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
 
   return NextResponse.json({ jobId, status: "queued", intent: "refresh" }, { status: 202 });
 }

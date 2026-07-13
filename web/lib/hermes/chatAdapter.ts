@@ -2,15 +2,14 @@
 //
 // Routes brief chat through the Hermes runtime client behind
 // HERMES_CHAT_ENABLED=1 while preserving the existing Anthropic route as
-// fallback. This adapter owns Hermes job/event persistence and durable
-// Canvas state writes returned by the runtime. It never makes direct model
-// calls; fake mode is deterministic and no-spend via client.ts.
+// fallback. This adapter owns Hermes job/event persistence. Existing-Brief
+// Canvas output is intentionally ignored until it can pass route-level
+// post-provider authorization. It never makes direct model calls; fake mode
+// is deterministic and no-spend via client.ts.
 
-import { saveCanvasState } from "../canvas/state";
-import { ingestCanvasResponse } from "./canvasGenerativeGateway";
 import { applyPatches, type BriefPatch } from "../briefPatches";
 import { Brief, type Brief as BriefT } from "../schema";
-import { hermesCanvasProposalsEnabled, hermesChatEnabled, hermesRuntimeFake } from "./config";
+import { hermesChatEnabled, hermesRuntimeFake } from "./config";
 import {
   HermesRuntimeDisabledError,
   HermesRuntimeError,
@@ -28,6 +27,7 @@ import type {
   HermesChatResponse,
   HermesRuntimeEventInput,
 } from "./types";
+import { assertProviderCallsEnabled } from "../providerAccess";
 
 export type ChatProviderResult = {
   reply: string;
@@ -134,6 +134,7 @@ function validateWritableResponse(
 export async function runChatViaHermes(
   ctx: HermesChatAdapterContext,
 ): Promise<ChatProviderResult> {
+  assertProviderCallsEnabled();
   const fake = hermesRuntimeFake();
   const jobId = createHermesJob({
     kind: "chat",
@@ -169,6 +170,13 @@ export async function runChatViaHermes(
 
   try {
     const resp = await runHermesChat(req);
+    if (
+      Buffer.byteLength(resp.reply ?? "", "utf8") > 12 * 1024 ||
+      Buffer.byteLength(JSON.stringify(resp.patch_errors ?? []), "utf8") > 24 * 1024 ||
+      Buffer.byteLength(JSON.stringify(resp.patches_applied ?? []), "utf8") > 64 * 1024
+    ) {
+      throw new Error("Hermes chat output exceeded the allowed size");
+    }
     appendRuntimeEvents(jobId, ctx.brief_id, ctx.user_id, resp.events);
 
     const result: ChatProviderResult = {
@@ -183,35 +191,6 @@ export async function runChatViaHermes(
       result.patch_errors = writable.errors;
       if (writable.brief) result.brief = writable.brief;
 
-      if (hermesCanvasProposalsEnabled()) {
-        ingestCanvasResponse(
-          {
-            briefId: ctx.brief_id,
-            userId: ctx.user_id,
-            jobId,
-            proposedBy: "hermes",
-            canWrite: ctx.can_write,
-            requestId: jobId,
-          },
-          resp,
-        );
-      } else if (resp.canvas && typeof resp.canvas === "object") {
-        const saved = saveCanvasState({
-          briefId: ctx.brief_id,
-          canvas: resp.canvas,
-          source: fake ? "fake" : "hermes",
-          jobId,
-        });
-        result.canvas_version = saved.version;
-        appendHermesEvent({
-          job_id: jobId,
-          brief_id: ctx.brief_id,
-          actor_user_id: ctx.user_id,
-          kind: "canvas.state.updated",
-          title: "canvas state updated",
-          payload: { version: saved.version, fake },
-        });
-      }
     } else {
       // Read-only sharees/viewers may chat, but Hermes output is constrained
       // to text only at this boundary even if a runtime misbehaves.

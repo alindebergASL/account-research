@@ -1,6 +1,9 @@
 import test from "node:test";
+process.env.PROVIDER_CALLS_ENABLED = "1"; // Explicitly enable only deterministic fake clients in this suite.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -128,6 +131,58 @@ function makeFormReq(opts: { sessionId?: string; form: FormData; contentLength?:
 
 async function jsonOf(res: Response): Promise<any> {
   return await res.json();
+}
+
+async function waitForFile(filePath: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(filePath)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path.basename(filePath)}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function assertFileRemainsAbsent(filePath: string, durationMs: number): Promise<void> {
+  const deadline = Date.now() + durationMs;
+  while (Date.now() < deadline) {
+    assert.equal(
+      existsSync(filePath),
+      false,
+      `${path.basename(filePath)} appeared while the first uploader held the write lock: ${existsSync(filePath) ? readFileSync(filePath, "utf8") : ""}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function spawnUploadRaceWorker(config: Record<string, string>) {
+  const workerPath = path.join(__dirname, "fixtures", "syntheticJournalUploadRaceWorker.ts");
+  const child = spawn(process.execPath, ["--import", "tsx", workerPath, JSON.stringify(config)], {
+    cwd: path.join(__dirname, "../web"),
+    env: {
+      ...process.env,
+      BRIEF_DB_PATH: process.env.BRIEF_DB_PATH,
+      ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+      ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else {
+        const result = existsSync(config.resultPath)
+          ? readFileSync(config.resultPath, "utf8")
+          : "no worker result";
+        reject(new Error(`upload race worker exited code=${code} signal=${signal}\n${stdout}\n${stderr}\n${result}`));
+      }
+    });
+  });
+  void exited.catch(() => {});
+  return { child, exited };
 }
 
 seedUser("owner-doc", "owner-doc@example.com");
@@ -1753,6 +1808,189 @@ test("document upload persistence is atomic when document insert fails", async (
   }
   assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
   assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
+  const hash = require("node:crypto").createHash("sha256").update("atomic text").digest("hex");
+  assert.equal(require("node:fs").existsSync(path.join(tmp, docStorage.storageRelPathForHash(hash))), false);
+});
+
+test("competing upload cannot persist a shared blob until failed upload cleanup rolls back", async () => {
+  const bytes = "deterministic competing-process rollback bytes";
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const storagePath = docStorage.storageRelPathForHash(hash);
+  const absolute = path.join(tmp, storagePath);
+  assert.equal(existsSync(absolute), false);
+  assert.equal(
+    (db().prepare("SELECT COUNT(*) AS n FROM journal_documents WHERE content_hash = ?").get(hash) as any).n,
+    0,
+  );
+
+  const failingReady = path.join(tmp, "race-failing-ready");
+  const failingStarted = path.join(tmp, "race-failing-started");
+  const failingAttempt = path.join(tmp, "race-failing-attempt");
+  const failingRelease = path.join(tmp, "race-failing-release");
+  const failingResult = path.join(tmp, "race-failing-result.json");
+  const successfulReady = path.join(tmp, "race-successful-persisted");
+  const successfulStarted = path.join(tmp, "race-successful-started");
+  const successfulAttempt = path.join(tmp, "race-successful-attempt");
+  const successfulRelease = path.join(tmp, "race-successful-release");
+  const successfulResult = path.join(tmp, "race-successful-result.json");
+  let failing: ReturnType<typeof spawnUploadRaceWorker> | undefined;
+  let successful: ReturnType<typeof spawnUploadRaceWorker> | undefined;
+
+  try {
+    failing = spawnUploadRaceWorker({
+      role: "failing",
+      sessionId: ownerSession,
+      briefId: "brief-doc",
+      bytes,
+      startedPath: failingStarted,
+      attemptPath: failingAttempt,
+      readyPath: failingReady,
+      releasePath: failingRelease,
+      resultPath: failingResult,
+    });
+    await waitForFile(failingReady);
+    assert.deepEqual(JSON.parse(readFileSync(failingReady, "utf8")), {
+      inTransaction: true,
+      databasePath: process.env.BRIEF_DB_PATH,
+    });
+
+    successful = spawnUploadRaceWorker({
+      role: "successful",
+      sessionId: ownerSession,
+      briefId: "brief-doc",
+      bytes,
+      startedPath: successfulStarted,
+      attemptPath: successfulAttempt,
+      readyPath: successfulReady,
+      releasePath: successfulRelease,
+      resultPath: successfulResult,
+    });
+
+    await waitForFile(successfulStarted);
+    writeFileSync(successfulAttempt, "attempt-immediate", { flag: "wx" });
+    await assertFileRemainsAbsent(successfulReady, 500);
+    writeFileSync(failingRelease, "release", { flag: "wx" });
+    await failing.exited;
+    assert.deepEqual(JSON.parse(readFileSync(failingResult, "utf8")), {
+      status: 500,
+      body: { error: "Document upload failed" },
+    });
+
+    await waitForFile(successfulReady);
+    assert.deepEqual(JSON.parse(readFileSync(successfulReady, "utf8")), {
+      inTransaction: true,
+      databasePath: process.env.BRIEF_DB_PATH,
+    });
+    writeFileSync(successfulRelease, "release", { flag: "wx" });
+    await successful.exited;
+    assert.equal(JSON.parse(readFileSync(successfulResult, "utf8")).status, 200);
+  } finally {
+    if (!existsSync(failingRelease)) writeFileSync(failingRelease, "release");
+    if (!existsSync(successfulRelease)) writeFileSync(successfulRelease, "release");
+    await Promise.allSettled([failing?.exited, successful?.exited].filter(Boolean));
+  }
+
+  const committed = db().prepare(
+    `SELECT id, storage_path, content_hash
+       FROM journal_documents
+      WHERE content_hash = ?`,
+  ).all(hash) as Array<{ id: string; storage_path: string; content_hash: string }>;
+  assert.equal(committed.length, 1);
+  assert.equal(committed[0].storage_path, storagePath);
+  assert.equal(committed[0].content_hash, hash);
+  assert.deepEqual(readFileSync(absolute), Buffer.from(bytes));
+  assert.equal(createHash("sha256").update(readFileSync(absolute)).digest("hex"), hash);
+
+  const referenced = db().prepare(
+    "SELECT id, storage_path, content_hash FROM journal_documents WHERE storage_path IS NOT NULL",
+  ).all() as Array<{ id: string; storage_path: string; content_hash: string }>;
+  for (const document of referenced) {
+    const blob = readFileSync(path.join(tmp, document.storage_path));
+    assert.equal(
+      createHash("sha256").update(blob).digest("hex"),
+      document.content_hash,
+      `document ${document.id} references a missing or mismatched blob`,
+    );
+  }
+});
+
+test("document upload storage failure fails closed with zero new rows", async () => {
+  const beforeEntries = (db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n;
+  const beforeDocs = (db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n;
+  docStorage.__setTestWriteOriginalBytesFailure("forced storage failure");
+  try {
+    const form = new FormData();
+    form.set("file", new File(["storage failure bytes"], "failure.md", { type: "text/markdown" }));
+    const res = await documentsRoute.POST(
+      makeFormReq({ sessionId: ownerSession, form }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 500);
+    assert.deepEqual(await jsonOf(res), { error: "Original document storage failed" });
+  } finally {
+    docStorage.__setTestWriteOriginalBytesFailure(null);
+  }
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
+});
+
+test("document upload hides cleanup failures after DB rollback and leaves zero rows", async () => {
+  const beforeEntries = (db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n;
+  const beforeDocs = (db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n;
+  db().exec(`CREATE TEMP TRIGGER fail_cleanup_document_insert BEFORE INSERT ON journal_documents BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END;`);
+  docStorage.__setTestRemoveOriginalBytesFailure("raw cleanup/storage/sqlite diagnostic");
+  try {
+    const form = new FormData();
+    form.set("file", new File(["cleanup throw bytes"], "cleanup.md", { type: "text/markdown" }));
+    const res = await documentsRoute.POST(
+      makeFormReq({ sessionId: ownerSession, form }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 500);
+    assert.deepEqual(await jsonOf(res), { error: "Document upload failed" });
+  } finally {
+    docStorage.__setTestRemoveOriginalBytesFailure(null);
+    db().exec(`DROP TRIGGER IF EXISTS fail_cleanup_document_insert`);
+  }
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
+});
+
+test("a shared content-addressed blob survives a duplicate upload DB failure", async () => {
+  const bytes = "shared rollback bytes";
+  const first = new FormData();
+  first.set("file", new File([bytes], "first.md", { type: "text/markdown" }));
+  const firstRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: first }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(firstRes.status, 200);
+  const hash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  const rel = docStorage.storageRelPathForHash(hash);
+  const absolute = path.join(tmp, rel);
+  assert.equal(require("node:fs").readFileSync(absolute, "utf8"), bytes);
+
+  db().exec(`CREATE TEMP TRIGGER fail_shared_document_insert BEFORE INSERT ON journal_documents BEGIN SELECT RAISE(ABORT, 'forced shared failure'); END;`);
+  try {
+    const duplicate = new FormData();
+    duplicate.set("file", new File([bytes], "second.md", { type: "text/markdown" }));
+    const failed = await documentsRoute.POST(
+      makeFormReq({ sessionId: ownerSession, form: duplicate }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(failed.status, 500);
+  } finally {
+    db().exec("DROP TRIGGER IF EXISTS fail_shared_document_insert");
+  }
+  assert.equal(require("node:fs").readFileSync(absolute, "utf8"), bytes);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_documents WHERE storage_path = ?").get(rel) as any).n, 1);
+});
+
+test("original-byte cleanup rejects path traversal with a fixed error", () => {
+  assert.throws(
+    () => docStorage.removeOriginalBytesIfUnreferenced({ storagePath: "../briefs.sqlite", connection: db() }),
+    (error: Error) => error.message === docStorage.INVALID_BLOB_PATH_ERROR,
+  );
 });
 
 test("JournalSection exposes document upload controls with text, PDF accept, and AI follow-up affordances", () => {
@@ -2196,15 +2434,15 @@ test("citation resolver resolves journal and brief-source legend entries without
   );
 });
 
-test("monitor journal entries neutralize source legend marker-shaped summaries", () => {
+test("monitor candidate outcomes do not create applied-update journal entries", () => {
   const fs = require("node:fs") as typeof import("node:fs");
   const path = require("node:path") as typeof import("node:path");
   const source = fs.readFileSync(
     path.join(__dirname, "../web/lib/researchWorker.ts"),
     "utf8",
   );
-  assert.match(source, /neutralizeSourceLegendMarkers/);
-  assert.match(source, /neutralizeSourceLegendMarkers\(args\.summary\)/);
+  assert.doesNotMatch(source, /insertJournalEntry/);
+  assert.doesNotMatch(source, /Daily monitor update/);
 });
 
 test("journal source legend can be restricted to labels cited in the assistant answer", () => {
@@ -2467,11 +2705,11 @@ test("JournalSection exposes concrete review workflow, timeline filters, source 
   assert.match(journalSource, /New/);
   assert.match(journalSource, /Reviewing/);
   assert.match(journalSource, /Accepted/);
-  assert.match(journalSource, /Sent to brief chat/);
-  assert.match(journalSource, /Applied/);
+  assert.match(journalSource, /Marked for manual incorporation/);
+  assert.match(journalSource, /Manually incorporated/);
   assert.match(journalSource, /Dismissed/);
   assert.match(journalSource, /Copy brief-chat prompt/);
-  assert.match(journalSource, /Open brief to apply/);
+  assert.match(journalSource, /View brief for manual incorporation/);
   assert.match(journalSource, /TimelineFilter/);
   assert.match(journalSource, /All entries/);
   assert.match(journalSource, /Notes/);
@@ -2962,7 +3200,7 @@ test("journal catch-up windows omit old entries excluded sources and unreviewed-
   assert.match(prompt, /What changed in the last 24 hours/);
   assert.match(prompt, /Procurement committee asked/);
   assert.match(prompt, /security-pilot\.pdf/);
-  assert.match(prompt, /Accepted\/applied review candidates/);
+  assert.match(prompt, /Manually reviewed incorporation candidates/);
   assert.match(prompt, /Pending review candidates/);
   assert.doesNotMatch(prompt, /Old renewal note/);
   assert.doesNotMatch(prompt, /excluded-rumor\.pdf/);
@@ -3062,7 +3300,7 @@ test("JournalSection exposes search UI, source-scoped recall, catch-up windows, 
   assert.match(journalSource, /cockpitDisplay\.reviewedCount/);
   assert.match(journalSource, /cockpitDisplay\.pendingCount/);
   assert.match(journalSource, /cockpitDisplay\.dismissedCount/);
-  assert.match(journalSource, /accepted, sent to brief chat, or applied/);
+  assert.match(journalSource, /accepted for manual incorporation, marked for incorporation, or manually incorporated/);
   assert.match(journalSource, /cockpitDisplay\.priorityCards/);
   assert.doesNotMatch(journalSource, /cockpit.*PATCH/i);
 });

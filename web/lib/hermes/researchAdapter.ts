@@ -32,6 +32,7 @@ import type {
   HermesResearchResponse,
   HermesRuntimeEventInput,
 } from "./types";
+import { assertProviderCallsEnabled } from "../providerAccess";
 import type {
   Intake,
   PipelineResult,
@@ -151,6 +152,7 @@ export async function runResearchViaHermes(
   input: Intake,
   ctx: HermesResearchAdapterContext,
 ): Promise<PipelineResult> {
+  assertProviderCallsEnabled();
   const mode = resolveMode(input);
   const fake = hermesRuntimeFake();
 
@@ -183,6 +185,9 @@ export async function runResearchViaHermes(
 
   try {
     const resp = await runHermesResearch(req);
+    if (Buffer.byteLength(JSON.stringify(resp.brief ?? null), "utf8") > 512 * 1024) {
+      throw new Error("Hermes research output exceeded the allowed size");
+    }
 
     // Forward sanitized runtime events (e.g. fake "research.completed").
     appendRuntimeEvents(jobId, ctx.brief_id ?? null, resp.events);

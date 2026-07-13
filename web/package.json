@@ -15,7 +15,10 @@
     "verify:hermes-runtime-service": "tsx scripts/verify-hermes-runtime-service.ts",
     "hermes-runtime": "tsx scripts/hermes-runtime-service.ts",
     "verify:journal": "tsx scripts/verify-journal.ts",
-    "verify:monitor": "tsx scripts/verify-monitor.ts"
+    "verify:monitor": "tsx scripts/verify-monitor.ts",
+    "ops:backup": "node --import tsx scripts/endgameOperations.ts backup",
+    "ops:restore": "node --import tsx scripts/endgameOperations.ts restore",
+    "ops:reconcile-blobs": "node --import tsx scripts/endgameOperations.ts reconcile"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",

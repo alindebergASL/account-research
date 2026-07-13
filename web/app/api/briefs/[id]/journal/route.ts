@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, type BriefRow } from "@/lib/db";
-import { HttpError, canReadBrief, requireUser } from "@/lib/auth";
+import {
+  HttpError,
+  canCollaborateBrief,
+  canReadBrief,
+  findUserById,
+  publicUser,
+  requireUser,
+  type PublicUser,
+} from "@/lib/auth";
 import {
   insertJournalEntry,
   listEntryRowsForBrief,
@@ -38,9 +46,13 @@ import {
   journalCatchUpExcludedDocumentKey,
   journalCatchUpScopedDocumentKey,
   loadJournalCatchUpCache,
+  computeCockpitSourceFingerprint,
   refreshCockpitSourceFingerprint,
   saveJournalCatchUpCache,
 } from "@/lib/journalCatchUpCache";
+import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
+import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
+import { providerConcurrencyErrorResponse, reserveProviderConcurrency } from "@/lib/providerConcurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -75,6 +87,16 @@ function authError(e: unknown) {
   return null;
 }
 
+function requireCurrentJournalUser(userId: string, briefId: string) {
+  const row = findUserById(userId);
+  if (!row) throw new HttpError(403, { error: "Not authorized" });
+  const user = publicUser(row);
+  if (!canReadBrief(user, briefId) || !canCollaborateBrief(user, briefId)) {
+    throw new HttpError(403, { error: "Not authorized" });
+  }
+  return user;
+}
+
 function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
   const row = db()
     .prepare(
@@ -92,7 +114,7 @@ function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  let user;
+  let user: PublicUser;
   try {
     user = requireUser(req);
   } catch (e) {
@@ -141,7 +163,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  let user;
+  let user: PublicUser;
   try {
     user = requireUser(req);
   } catch (e) {
@@ -149,10 +171,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     if (r) return r;
     throw e;
   }
-  // Everyone with access to the brief can post — the journal is shared by all
-  // readers. Hide existence behind 404 for non-readers (mirrors comments).
+  // Active non-viewer participants can post, including member-readers. Hide
+  // existence behind 404 for users without read access (mirrors comments).
   if (!canReadBrief(user, params.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canCollaborateBrief(user, params.id)) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   let body: {
@@ -165,9 +190,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     journal_catch_up_window?: unknown;
   };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await parseBoundedJson(req);
+  } catch (error) {
+    return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  try {
+    user = requireCurrentJournalUser(user.id, params.id);
+  } catch (error) {
+    return authError(error) ?? NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const text = typeof body.body === "string" ? body.body.trim() : "";
   if (!text) {
@@ -246,6 +276,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   if (!askAi) {
+    user = requireCurrentJournalUser(user.id, params.id);
     const userEntryId = insertJournalEntry({
       briefId: params.id,
       userId: user.id,
@@ -271,7 +302,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ entries: [userEntry] });
   }
 
-  const catchUpCacheFingerprint = catchUpWindow ? refreshCockpitSourceFingerprint(params.id) : null;
+  const catchUpCacheFingerprint = catchUpWindow ? computeCockpitSourceFingerprint(params.id) : null;
   const catchUpCacheExcludedKey = catchUpWindow
     ? journalCatchUpExcludedDocumentKey(excludedDocumentIds)
     : "";
@@ -291,7 +322,28 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       })
     : null;
 
-  const userEntryId = insertJournalEntry({
+  let releaseProviderReservation: (() => void) | null = null;
+  if (!catchUpCacheHit) {
+    try {
+      user = requireCurrentJournalUser(user.id, params.id);
+      assertProviderCallsEnabled();
+      releaseProviderReservation = reserveProviderConcurrency(`brief:${params.id}`);
+    } catch (error) {
+      return authError(error) ?? providerAccessErrorResponse(error) ?? providerConcurrencyErrorResponse(error)
+        ?? NextResponse.json({ error: "AI provider access is temporarily unavailable" }, { status: 503 });
+    }
+  }
+
+  try {
+    try {
+      user = requireCurrentJournalUser(user.id, params.id);
+    } catch (error) {
+      const denied = authError(error);
+      if (denied) return denied;
+      throw error;
+    }
+    if (catchUpWindow) refreshCockpitSourceFingerprint(params.id);
+    const userEntryId = insertJournalEntry({
     briefId: params.id,
     userId: user.id,
     authorType: "user",
@@ -329,13 +381,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   // AI participation path. A model failure must NOT lose the user's entry: we
   // return the persisted user entry plus a friendly ai_error instead of 500.
-  if (!process.env.ANTHROPIC_API_KEY && process.env.NODE_ENV === "production") {
-    return NextResponse.json({
-      entries: [userEntry],
-      ai_error: "Server is missing ANTHROPIC_API_KEY",
-    });
-  }
-
   const briefRow = db()
     .prepare(`SELECT brief_json FROM briefs WHERE id = ?`)
     .get(params.id) as Pick<BriefRow, "brief_json"> | undefined;
@@ -409,6 +454,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       brief_json: briefJson,
       entries: contextEntries,
       documents,
+    }, undefined, () => {
+      user = requireCurrentJournalUser(user.id, params.id);
     });
     const safeReplyText = sanitizeJournalAssistantText(result.text);
     const assistantBody = `${safeReplyText}${formatJournalSourceLegend(
@@ -419,32 +466,55 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       },
       safeReplyText,
     )}`;
-    const aiEntryId = insertJournalEntry({
-      briefId: params.id,
-      userId: user.id,
-      authorType: "assistant",
-      body: assistantBody,
-      replyTo: assistantReplyTo,
-    });
-    const aiEntry = loadEntryDto(params.id, aiEntryId);
-    if (catchUpWindow && !replyRoot) {
-      const catchUpSaveFingerprint = refreshCockpitSourceFingerprint(params.id);
-      saveJournalCatchUpCache({
+    const persistAssistantOutcome = db().transaction(() => {
+      const activeUserRow = findUserById(user.id);
+      if (!activeUserRow) {
+        throw new HttpError(403, { error: "Not authorized" });
+      }
+      const activeUser = publicUser(activeUserRow);
+      if (
+        !canReadBrief(activeUser, params.id) ||
+        !canCollaborateBrief(activeUser, params.id)
+      ) {
+        throw new HttpError(403, { error: "Not authorized" });
+      }
+
+      const aiEntryId = insertJournalEntry({
         briefId: params.id,
-        window: catchUpWindow,
-        contextSince: journalContextSince,
-        excludedDocumentKey: catchUpCacheExcludedKey,
-        scopedDocumentKey: catchUpCacheScopedKey,
-        cockpitSourceFingerprint: catchUpSaveFingerprint,
-        summaryText: assistantBody,
-        sourceEntryId: aiEntryId,
+        userId: activeUser.id,
+        authorType: "assistant",
+        body: assistantBody,
+        replyTo: assistantReplyTo,
       });
-    }
+      if (catchUpWindow && !replyRoot) {
+        const catchUpSaveFingerprint = refreshCockpitSourceFingerprint(params.id);
+        saveJournalCatchUpCache({
+          briefId: params.id,
+          window: catchUpWindow,
+          contextSince: journalContextSince,
+          excludedDocumentKey: catchUpCacheExcludedKey,
+          scopedDocumentKey: catchUpCacheScopedKey,
+          cockpitSourceFingerprint: catchUpSaveFingerprint,
+          summaryText: assistantBody,
+          sourceEntryId: aiEntryId,
+        });
+      }
+      return aiEntryId;
+    });
+    const aiEntryId = persistAssistantOutcome();
+    const aiEntry = loadEntryDto(params.id, aiEntryId);
     return NextResponse.json({ entries: [userEntry, aiEntry], ai_cache_hit: false });
   } catch (err) {
+    const denied = authError(err);
+    if (denied) return denied;
+    const limited = providerAccessErrorResponse(err) ?? providerConcurrencyErrorResponse(err);
+    if (limited) return limited;
     return NextResponse.json({
       entries: [userEntry],
       ai_error: friendlyAnthropicError(err, "Journal assistant"),
     });
+  }
+  } finally {
+    releaseProviderReservation?.();
   }
 }
