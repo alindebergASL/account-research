@@ -29,7 +29,7 @@ if [[ -z "$BASE_SHA" ]]; then
 fi
 
 # Same pattern set documented in the A.7 PR runbooks.
-PATTERN='fetch\(|anthropic|openai|resend|NEXT_PUBLIC|feature flag|app/s|api/share|UPDATE briefs|INSERT INTO briefs|write.brief_json|brief_json.UPDATE|password|secret|api_key|private_key|ANTHROPIC_API_KEY|OPENAI_API_KEY'
+PATTERN='fetch[(]|anthropic|openai|resend|NEXT_PUBLIC|feature flag|app/s|api/share|UPDATE briefs|INSERT INTO briefs|write.brief_json|brief_json.UPDATE|password|secret|api_key|private_key|ANTHROPIC_API_KEY|OPENAI_API_KEY'
 
 SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
