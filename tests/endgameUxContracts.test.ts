@@ -85,5 +85,10 @@ test("affected drawers and dialogs stay viewport-safe at 390px", () => {
   assert.match(share, /w-full max-w-md/);
 
   const tray = read("web/components/ResearchTray.tsx");
-  assert.match(tray, /w-\[calc\(100vw-24px\)\] max-w-\[360px\]/);
+  assert.match(tray, /fixed left-3 right-3 top-12/);
+  assert.match(tray, /sm:absolute[^"\n]*sm:right-0[^"\n]*sm:w-\[calc\(100vw-24px\)\][^"\n]*sm:max-w-\[360px\]/);
+  assert.match(tray, /hidden[^"\n]*sm:inline[^>]*>Research</);
+
+  const header = read("web/components/Header.tsx");
+  assert.match(header, /ml-auto flex min-w-0/);
 });

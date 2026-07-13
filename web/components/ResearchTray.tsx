@@ -196,7 +196,7 @@ export default function ResearchTray() {
           aria-label="Research jobs"
         >
           <Sparkles className="size-4" />
-          <span className="text-xs">Research</span>
+          <span className="hidden text-xs sm:inline">Research</span>
           {activeCount > 0 && (
             <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-white text-[10px] font-medium">
               {activeCount}
@@ -206,7 +206,7 @@ export default function ResearchTray() {
         {open && (
           <div
             role="menu"
-            className="absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-[360px] bg-white border border-[var(--line)] rounded-xl shadow-xl overflow-hidden z-30"
+            className="fixed left-3 right-3 top-12 mt-2 bg-white border border-[var(--line)] rounded-xl shadow-xl overflow-hidden z-30 sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:w-[calc(100vw-24px)] sm:max-w-[360px]"
           >
             <div className="px-4 py-2.5 border-b border-[var(--line)] flex items-center justify-between">
               <div className="text-[11px] uppercase tracking-wider text-muted">
