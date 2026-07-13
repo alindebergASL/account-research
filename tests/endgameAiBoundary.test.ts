@@ -319,6 +319,35 @@ test("valid Hermes whole-Brief result becomes field proposals while brief_json s
   assert.equal(JSON.parse(candidate.risk).origin, "hermes_chat");
 });
 
+test("Hermes authority revocation after Canvas and Brief output commits no route outcome", async () => {
+  const seeded = seedActorAndBrief("hermes-revoked-canvas");
+  process.env.HERMES_CHAT_ENABLED = "1";
+  hermesClient.__setTestHermesChatRunner(async () => {
+    db().prepare("UPDATE users SET role='viewer' WHERE id=?").run(seeded.userId);
+    return {
+      reply: "This reply must be denied.",
+      patches_applied: [],
+      patch_errors: [],
+      canvas: { account_name: seeded.brief.account_name, widgets: [] },
+      brief: { ...seeded.brief, next_action: "Must not become a candidate" },
+    } as any;
+  });
+  try {
+    const response = await chat.POST(chatRequest(seeded.sessionId), { params: Promise.resolve({ id: seeded.briefId }) });
+    assert.equal(response.status, 403);
+  } finally {
+    hermesClient.__setTestHermesChatRunner(null);
+    delete process.env.HERMES_CHAT_ENABLED;
+  }
+  assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(seeded.briefId) as any).brief_json, seeded.briefJson);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM canvas_states WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM canvas_proposals WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM canvas_capability_proposals WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_review_candidates WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_chats WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_events WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+});
+
 test("refresh queues field candidates, marks the job done, and creates no Brief version/applied side effects", async () => {
   const seeded = seedActorAndBrief("refresh");
   const job = seedRefreshJob(seeded, "success");

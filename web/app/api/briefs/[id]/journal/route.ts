@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, type BriefRow } from "@/lib/db";
-import { HttpError, canCollaborateBrief, canReadBrief, requireUser } from "@/lib/auth";
+import {
+  HttpError,
+  canCollaborateBrief,
+  canReadBrief,
+  findUserById,
+  publicUser,
+  requireUser,
+} from "@/lib/auth";
 import {
   insertJournalEntry,
   listEntryRowsForBrief,
@@ -432,29 +439,47 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       },
       safeReplyText,
     )}`;
-    const aiEntryId = insertJournalEntry({
-      briefId: params.id,
-      userId: user.id,
-      authorType: "assistant",
-      body: assistantBody,
-      replyTo: assistantReplyTo,
-    });
-    const aiEntry = loadEntryDto(params.id, aiEntryId);
-    if (catchUpWindow && !replyRoot) {
-      const catchUpSaveFingerprint = refreshCockpitSourceFingerprint(params.id);
-      saveJournalCatchUpCache({
+    const persistAssistantOutcome = db().transaction(() => {
+      const activeUserRow = findUserById(user.id);
+      if (!activeUserRow) {
+        throw new HttpError(403, { error: "Not authorized" });
+      }
+      const activeUser = publicUser(activeUserRow);
+      if (
+        !canReadBrief(activeUser, params.id) ||
+        !canCollaborateBrief(activeUser, params.id)
+      ) {
+        throw new HttpError(403, { error: "Not authorized" });
+      }
+
+      const aiEntryId = insertJournalEntry({
         briefId: params.id,
-        window: catchUpWindow,
-        contextSince: journalContextSince,
-        excludedDocumentKey: catchUpCacheExcludedKey,
-        scopedDocumentKey: catchUpCacheScopedKey,
-        cockpitSourceFingerprint: catchUpSaveFingerprint,
-        summaryText: assistantBody,
-        sourceEntryId: aiEntryId,
+        userId: activeUser.id,
+        authorType: "assistant",
+        body: assistantBody,
+        replyTo: assistantReplyTo,
       });
-    }
+      if (catchUpWindow && !replyRoot) {
+        const catchUpSaveFingerprint = refreshCockpitSourceFingerprint(params.id);
+        saveJournalCatchUpCache({
+          briefId: params.id,
+          window: catchUpWindow,
+          contextSince: journalContextSince,
+          excludedDocumentKey: catchUpCacheExcludedKey,
+          scopedDocumentKey: catchUpCacheScopedKey,
+          cockpitSourceFingerprint: catchUpSaveFingerprint,
+          summaryText: assistantBody,
+          sourceEntryId: aiEntryId,
+        });
+      }
+      return aiEntryId;
+    });
+    const aiEntryId = persistAssistantOutcome();
+    const aiEntry = loadEntryDto(params.id, aiEntryId);
     return NextResponse.json({ entries: [userEntry, aiEntry], ai_cache_hit: false });
   } catch (err) {
+    const denied = authError(err);
+    if (denied) return denied;
     const limited = providerAccessErrorResponse(err) ?? providerConcurrencyErrorResponse(err);
     if (limited) return limited;
     return NextResponse.json({

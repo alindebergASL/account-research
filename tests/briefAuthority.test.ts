@@ -32,6 +32,7 @@ const chat = require("../web/app/api/briefs/[id]/chat/route") as typeof import("
 const shares = require("../web/app/api/briefs/[id]/shares/route") as typeof import("../web/app/api/briefs/[id]/shares/route");
 const roleRoute = require("../web/app/api/admin/users/[id]/role/route") as typeof import("../web/app/api/admin/users/[id]/role/route");
 const radarManifest = require("../web/lib/journalRadarManifest") as typeof import("../web/lib/journalRadarManifest");
+const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
 
 initDb();
 
@@ -225,6 +226,106 @@ test("member-reader retains ordinary collaboration but not governed task fields 
   const uploadParsed = { json: 0, form: 0 };
   assert.equal((await documents.POST(request(sessions.reader, {}, uploadParsed), { params: { id: "owned-by-member" } } as any)).status, 403);
   assert.equal(uploadParsed.form, 0);
+});
+
+test("Journal denies an assistant reply when the owner is demoted during provider execution", async () => {
+  const userId = "journal-demoted-owner";
+  const briefId = "journal-demoted-brief";
+  seedUser(userId, "member");
+  seedBrief(briefId, userId);
+  const sessionId = session(userId);
+  journalAi.__setTestJournalClient({ messages: { create: async () => {
+    db().prepare("UPDATE users SET role='viewer' WHERE id=?").run(userId);
+    return { content: [{ type: "text", text: "Must not persist" }] };
+  } } } as any);
+  try {
+    const response = await journal.POST(
+      request(sessionId, { body: "Ask the Journal assistant", ask_ai: true }, { json: 0, form: 0 }),
+      { params: Promise.resolve({ id: briefId }) },
+    );
+    assert.equal(response.status, 403);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=? AND author_type='user'").get(briefId) as any).n, 1);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=? AND author_type='assistant'").get(briefId) as any).n, 0);
+});
+
+test("Journal catch-up denies and persists no assistant/cache when reader share is revoked during provider execution", async () => {
+  const ownerId = "journal-revoked-owner";
+  const readerId = "journal-revoked-reader";
+  const briefId = "journal-revoked-brief";
+  seedUser(ownerId, "member");
+  seedUser(readerId, "member");
+  seedBrief(briefId, ownerId);
+  seedShare(briefId, readerId, "reader", ownerId);
+  const sessionId = session(readerId);
+  journalAi.__setTestJournalClient({ messages: { create: async () => {
+    db().prepare("DELETE FROM brief_shares WHERE brief_id=? AND user_id=?").run(briefId, readerId);
+    return { content: [{ type: "text", text: "Catch-up must not persist" }] };
+  } } } as any);
+  try {
+    const response = await journal.POST(
+      request(sessionId, {
+        body: "Catch me up",
+        ask_ai: true,
+        journal_catch_up_window: "24h",
+      }, { json: 0, form: 0 }),
+      { params: Promise.resolve({ id: briefId }) },
+    );
+    assert.equal(response.status, 403);
+  } finally {
+    journalAi.__setTestJournalClient(null);
+  }
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=? AND author_type='user'").get(briefId) as any).n, 1);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=? AND author_type='assistant'").get(briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_catch_up_cache WHERE brief_id=?").get(briefId) as any).n, 0);
+});
+
+test("Journal catch-up cache failure rolls back assistant and transaction-local cockpit writes", async () => {
+  const userId = "journal-cache-failure-owner";
+  const briefId = "journal-cache-failure-brief";
+  seedUser(userId, "member");
+  seedBrief(briefId, userId);
+  const sessionId = session(userId);
+  db().exec(`
+    CREATE TRIGGER journal_cache_failure_atomicity
+    BEFORE INSERT ON journal_catch_up_cache
+    WHEN NEW.brief_id = '${briefId}'
+    BEGIN
+      SELECT RAISE(ABORT, 'journal cache failure sentinel');
+    END
+  `);
+  journalAi.__setTestJournalClient({ messages: { create: async () => {
+    // Remove the pre-provider read model so only the transaction-local refresh
+    // is under test; the failing cache insert must roll that refresh back.
+    db().prepare("DELETE FROM journal_cockpit_read_models WHERE brief_id=?").run(briefId);
+    return { content: [{ type: "text", text: "Assistant output before cache failure" }] };
+  } } } as any);
+  let responseBody: any;
+  try {
+    const response = await journal.POST(
+      request(sessionId, {
+        body: "Catch me up atomically",
+        ask_ai: true,
+        journal_catch_up_window: "7d",
+      }, { json: 0, form: 0 }),
+      { params: Promise.resolve({ id: briefId }) },
+    );
+    assert.equal(response.status, 200);
+    responseBody = await response.json();
+  } finally {
+    journalAi.__setTestJournalClient(null);
+    db().exec("DROP TRIGGER journal_cache_failure_atomicity");
+  }
+  assert.equal(responseBody.entries.length, 1);
+  assert.equal(responseBody.entries[0].author_type, "user");
+  assert.equal(responseBody.ai_error, "Journal assistant failed — please retry in a moment.");
+  assert.doesNotMatch(JSON.stringify(responseBody), /journal cache failure sentinel/i);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=? AND author_type='user'").get(briefId) as any).n, 1);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=? AND author_type='assistant'").get(briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_catch_up_cache WHERE brief_id=?").get(briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_cockpit_read_models WHERE brief_id=?").get(briefId) as any).n, 0);
 });
 
 test("owner, editor, and admin retain candidate disposition authority", async () => {
