@@ -44,12 +44,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const now = Date.now();
   const connection = db();
   connection.transaction(() => {
+    const previous = connection.prepare(`SELECT role FROM users WHERE id = ?`).get(params.id) as
+      | { role: "admin" | "member" | "viewer" }
+      | undefined;
+    if (previous?.role === "viewer" || role === "viewer") {
+      connection.prepare(
+        `UPDATE brief_shares SET role = 'reader'
+         WHERE user_id = ? AND role = 'editor'`,
+      ).run(params.id);
+    }
     connection.prepare(`UPDATE users SET role = ? WHERE id = ?`).run(role, params.id);
     if (role !== "viewer") return;
-    connection.prepare(
-      `UPDATE brief_shares SET role = 'reader'
-       WHERE user_id = ? AND role = 'editor'`,
-    ).run(params.id);
     connection.prepare(
       `UPDATE briefs SET monitor_enabled = 0
        WHERE user_id = ? AND monitor_enabled <> 0`,

@@ -284,6 +284,49 @@ test("Journal catch-up denies and persists no assistant/cache when reader share 
   assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_catch_up_cache WHERE brief_id=?").get(briefId) as any).n, 0);
 });
 
+test("Journal reauthorizes after a slow bounded parse before any mutation or provider reservation", async () => {
+  const ownerId = "journal-slow-parse-owner";
+  const readerId = "journal-slow-parse-reader";
+  const briefId = "journal-slow-parse-brief";
+  seedUser(ownerId, "member");
+  seedUser(readerId, "member");
+  seedBrief(briefId, ownerId);
+  seedShare(briefId, readerId, "reader", ownerId);
+  const sessionId = session(readerId);
+  let providerCalls = 0;
+  journalAi.__setTestJournalClient({ messages: { create: async () => {
+    providerCalls += 1;
+    return { content: [{ type: "text", text: "Must not be called" }] };
+  } } } as any);
+
+  let markParseStarted!: () => void;
+  const parseStarted = new Promise<void>((resolve) => { markParseStarted = resolve; });
+  let releaseParse!: () => void;
+  const parseRelease = new Promise<void>((resolve) => { releaseParse = resolve; });
+  const req = request(sessionId, {}, { json: 0, form: 0 });
+  req.json = async () => {
+    markParseStarted();
+    await parseRelease;
+    return { body: "Catch me up after the slow parse", ask_ai: true, journal_catch_up_window: "24h" };
+  };
+
+  try {
+    const responsePromise = journal.POST(req, { params: Promise.resolve({ id: briefId }) });
+    await parseStarted;
+    db().prepare("DELETE FROM brief_shares WHERE brief_id=? AND user_id=?").run(briefId, readerId);
+    releaseParse();
+    const response = await responsePromise;
+    assert.equal(response.status, 403);
+  } finally {
+    releaseParse?.();
+    journalAi.__setTestJournalClient(null);
+  }
+  assert.equal(providerCalls, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_entries WHERE brief_id=?").get(briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_catch_up_cache WHERE brief_id=?").get(briefId) as any).n, 0);
+  assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_cockpit_read_models WHERE brief_id=?").get(briefId) as any).n, 0);
+});
+
 test("Journal catch-up cache failure rolls back assistant and transaction-local cockpit writes", async () => {
   const userId = "journal-cache-failure-owner";
   const briefId = "journal-cache-failure-brief";
@@ -436,6 +479,19 @@ test("admin downgrade to viewer atomically normalizes shares, owned monitors, an
     ["downgrade-queued", "cancelled", true],
     ["downgrade-running", "cancelled", true],
   ]);
+});
+
+test("admin promotion of a historical viewer normalizes stale editor shares before membership becomes active", async () => {
+  seedUser("historical-viewer", "viewer");
+  seedShare("owned-by-member", "historical-viewer", "editor");
+
+  const response = await roleRoute.POST(
+    request(sessions.admin, { role: "member" }, { json: 0, form: 0 }),
+    { params: { id: "historical-viewer" } } as any,
+  );
+  assert.equal(response.status, 200);
+  assert.equal((db().prepare("SELECT role FROM users WHERE id='historical-viewer'").get() as any).role, "member");
+  assert.equal((db().prepare("SELECT role FROM brief_shares WHERE user_id='historical-viewer'").get() as any).role, "reader");
 });
 
 test("viewer downgrade rolls the whole immediate transaction back on an injected failure", async () => {

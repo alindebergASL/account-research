@@ -61,7 +61,7 @@ fi
 # Extract only added lines (those starting with '+', excluding the '+++' file
 # header lines), keeping track of the current file path so we can classify
 # each hit by location.
-RAW_HITS="$(
+if ! RAW_HITS="$(
   awk -v pat="$PATTERN" '
     /^diff --git / {
       # parse "diff --git a/<path> b/<path>"
@@ -86,7 +86,10 @@ RAW_HITS="$(
       }
     }
   ' <<< "$DIFF"
-)"
+)"; then
+  echo "safety-grep: failed closed: awk extraction failed." >&2
+  exit 2
+fi
 
 if [[ -z "$RAW_HITS" ]]; then
   echo "_No safety-pattern hits in added lines._" >> "$SUMMARY_FILE"

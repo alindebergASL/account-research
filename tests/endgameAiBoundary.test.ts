@@ -277,6 +277,61 @@ test("authority revoked during direct provider wait produces no durable chat out
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_chats WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
 });
 
+test("direct chat stops after one tool_use response when the actor is demoted before the next provider iteration", async () => {
+  const seeded = seedActorAndBrief("loop-demoted");
+  let providerCalls = 0;
+  chatProvider.__setTestBriefChatClient({ messages: { create: async () => {
+    providerCalls += 1;
+    assert.equal(providerCalls, 1, "authorization must stop a second provider invocation");
+    db().prepare("UPDATE users SET role='viewer' WHERE id=?").run(seeded.userId);
+    return {
+      stop_reason: "tool_use", container: null, usage: {},
+      content: [{ type: "tool_use", name: "update_brief", id: "tool-demote", input: {
+        patches: [{ op: "set", field: "priority_summary", value: "Must remain in memory only" }],
+        summary: "Request another provider iteration",
+      } }],
+    };
+  } } } as any);
+  try {
+    const response = await chat.POST(chatRequest(seeded.sessionId), { params: Promise.resolve({ id: seeded.briefId }) });
+    assert.equal(response.status, 403);
+  } finally { chatProvider.__setTestBriefChatClient(null); }
+  assert.equal(providerCalls, 1);
+  assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(seeded.briefId) as any).brief_json, seeded.briefJson);
+  for (const table of ["journal_review_candidates", "brief_chats", "brief_events", "brief_versions", "canvas_states", "canvas_proposals", "canvas_capability_proposals"]) {
+    assert.equal((db().prepare(`SELECT COUNT(*) n FROM ${table} WHERE brief_id=?`).get(seeded.briefId) as any).n, 0, table);
+  }
+});
+
+test("direct chat stops after one pause_turn response when the writer share is revoked before the next provider iteration", async () => {
+  const owner = seedActorAndBrief("loop-revoked-owner");
+  const userId = "user-loop-revoked-writer";
+  db().prepare(`INSERT INTO users (id,email,password_hash,role,display_name,created_at,must_change_password)
+    VALUES (?,?,'h','member',?, ?,0)`).run(userId, `${userId}@example.com`, userId, Date.now());
+  db().prepare("INSERT INTO brief_shares (brief_id,user_id,granted_by,created_at,role) VALUES (?,?,?,?, 'editor')")
+    .run(owner.briefId, userId, owner.userId, Date.now());
+  const sessionId = auth.createSession(userId).id;
+  let providerCalls = 0;
+  chatProvider.__setTestBriefChatClient({ messages: { create: async () => {
+    providerCalls += 1;
+    assert.equal(providerCalls, 1, "authorization must stop a second provider invocation");
+    db().prepare("DELETE FROM brief_shares WHERE brief_id=? AND user_id=?").run(owner.briefId, userId);
+    return {
+      stop_reason: "pause_turn", container: { id: "container-revoked" }, usage: {},
+      content: [{ type: "text", text: "Provider requested a continuation." }],
+    };
+  } } } as any);
+  try {
+    const response = await chat.POST(chatRequest(sessionId), { params: Promise.resolve({ id: owner.briefId }) });
+    assert.equal(response.status, 403);
+  } finally { chatProvider.__setTestBriefChatClient(null); }
+  assert.equal(providerCalls, 1);
+  assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(owner.briefId) as any).brief_json, owner.briefJson);
+  for (const table of ["journal_review_candidates", "brief_chats", "brief_events", "brief_versions", "canvas_states", "canvas_proposals", "canvas_capability_proposals"]) {
+    assert.equal((db().prepare(`SELECT COUNT(*) n FROM ${table} WHERE brief_id=?`).get(owner.briefId) as any).n, 0, table);
+  }
+});
+
 test("hostile Hermes whole-Brief result is rejected without Brief/candidate/history/audit writes", async () => {
   const seeded = seedActorAndBrief("hermes-hostile");
   process.env.HERMES_CHAT_ENABLED = "1";

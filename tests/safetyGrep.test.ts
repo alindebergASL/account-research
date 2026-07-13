@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -86,6 +86,30 @@ test("safety grep parses fetch calls and blocks them on public-share paths", () 
     assert.equal(result.status, 1);
     assert.doesNotMatch(result.stderr, /invalid regexp|unmatched/i);
     assert.match(result.stderr, /1 blocking hit/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("safety grep fails closed when awk extraction cannot execute", () => {
+  const { repo, base } = createRepo();
+  const shimDir = path.join(repo, "failing-awk-bin");
+  mkdirSync(shimDir);
+  const awkShim = path.join(shimDir, "awk");
+  writeFileSync(awkShim, "#!/bin/sh\nexit 42\n");
+  chmodSync(awkShim, 0o755);
+  writeFileSync(path.join(repo, "README.md"), "base\nprovider secret marker\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "head");
+  try {
+    const result = spawnSync("bash", [safetyScript, base, "HEAD"], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ""}` },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /failed closed: awk extraction failed/i);
+    assert.doesNotMatch(result.stdout, /clean|nothing to scan/i);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

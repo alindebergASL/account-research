@@ -7,6 +7,7 @@ import {
   findUserById,
   publicUser,
   requireUser,
+  type PublicUser,
 } from "@/lib/auth";
 import {
   insertJournalEntry,
@@ -86,6 +87,16 @@ function authError(e: unknown) {
   return null;
 }
 
+function requireCurrentJournalUser(userId: string, briefId: string) {
+  const row = findUserById(userId);
+  if (!row) throw new HttpError(403, { error: "Not authorized" });
+  const user = publicUser(row);
+  if (!canReadBrief(user, briefId) || !canCollaborateBrief(user, briefId)) {
+    throw new HttpError(403, { error: "Not authorized" });
+  }
+  return user;
+}
+
 function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
   const row = db()
     .prepare(
@@ -103,7 +114,7 @@ function loadEntryDto(briefId: string, entryId: string): JournalEntryDto {
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  let user;
+  let user: PublicUser;
   try {
     user = requireUser(req);
   } catch (e) {
@@ -152,7 +163,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  let user;
+  let user: PublicUser;
   try {
     user = requireUser(req);
   } catch (e) {
@@ -182,6 +193,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     body = await parseBoundedJson(req);
   } catch (error) {
     return jsonBodyErrorResponse(error) ?? NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  try {
+    user = requireCurrentJournalUser(user.id, params.id);
+  } catch (error) {
+    return authError(error) ?? NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   const text = typeof body.body === "string" ? body.body.trim() : "";
   if (!text) {
@@ -260,6 +276,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   if (!askAi) {
+    user = requireCurrentJournalUser(user.id, params.id);
     const userEntryId = insertJournalEntry({
       briefId: params.id,
       userId: user.id,
@@ -308,6 +325,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   let releaseProviderReservation: (() => void) | null = null;
   if (!catchUpCacheHit) {
     try {
+      user = requireCurrentJournalUser(user.id, params.id);
       assertProviderCallsEnabled();
       releaseProviderReservation = reserveProviderConcurrency(`brief:${params.id}`);
     } catch (error) {
@@ -317,8 +335,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   try {
-  if (catchUpWindow) refreshCockpitSourceFingerprint(params.id);
-  const userEntryId = insertJournalEntry({
+    user = requireCurrentJournalUser(user.id, params.id);
+    if (catchUpWindow) refreshCockpitSourceFingerprint(params.id);
+    const userEntryId = insertJournalEntry({
     briefId: params.id,
     userId: user.id,
     authorType: "user",
@@ -429,6 +448,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       brief_json: briefJson,
       entries: contextEntries,
       documents,
+    }, undefined, () => {
+      user = requireCurrentJournalUser(user.id, params.id);
     });
     const safeReplyText = sanitizeJournalAssistantText(result.text);
     const assistantBody = `${safeReplyText}${formatJournalSourceLegend(

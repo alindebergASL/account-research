@@ -190,6 +190,12 @@ function currentChatUser(userId: string, briefId: string, write: boolean) {
   return allowed ? user : null;
 }
 
+function requireCurrentChatUser(userId: string, briefId: string, write: boolean) {
+  const user = currentChatUser(userId, briefId, write);
+  if (!user) throw new HttpError(403, { error: "Not authorized" });
+  return user;
+}
+
 function commitChatOutcome(args: {
   briefId: string;
   userId: string;
@@ -298,13 +304,16 @@ async function handleReadOnlyChat({
   }
   const messages = buildMessages(history, userMessage);
   try {
-    const response = await withProviderConcurrency(`brief:${briefId}`, () => client.messages.create({
-      model: BRIEF_CHAT_MODEL,
-      max_tokens: 4000,
-      cache_control: { type: "ephemeral" } as any,
-      system,
-      messages,
-    }));
+    const response = await withProviderConcurrency(`brief:${briefId}`, () => {
+      requireCurrentChatUser(userId, briefId, false);
+      return client.messages.create({
+        model: BRIEF_CHAT_MODEL,
+        max_tokens: 4000,
+        cache_control: { type: "ephemeral" } as any,
+        system,
+        messages,
+      });
+    });
     assertChatProviderContentBounded(response.content);
     const finalText =
       response.content
@@ -466,14 +475,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       if (!currentChatUser(user.id, params.id, writer)) {
         return NextResponse.json({ error: "Not authorized" }, { status: 403 });
       }
-      const result = await withProviderConcurrency(`brief:${params.id}`, () => runChatViaHermes({
-        brief_id: params.id,
-        user_id: user.id,
-        brief,
-        history: history.map((h) => ({ role: h.role, content: h.content })),
-        message: messageWithDocuments,
-        can_write: writer,
-      }));
+      const result = await withProviderConcurrency(`brief:${params.id}`, () => {
+        requireCurrentChatUser(user.id, params.id, writer);
+        return runChatViaHermes({
+          brief_id: params.id,
+          user_id: user.id,
+          brief,
+          history: history.map((h) => ({ role: h.role, content: h.content })),
+          message: messageWithDocuments,
+          can_write: writer,
+        });
+      });
 
       const proposedPatches = writer && result.brief
         ? patchesFromWholeBrief(brief, result.brief)
@@ -551,19 +563,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   try {
     for (let i = 0; i < 6; i++) {
-      const response: Anthropic.Messages.Message = await withProviderConcurrency(`brief:${params.id}`, () => client.messages.create({
-        model: BRIEF_CHAT_MODEL,
-        max_tokens: 8000,
-        thinking: { type: "adaptive" },
-        cache_control: { type: "ephemeral" } as any,
-        ...(containerId ? { container: containerId } : {}),
-        system,
-        tools: [
-          { type: "web_search_20260209" as const, name: "web_search" } as any,
-          updateBriefTool as any,
-        ],
-        messages,
-      }));
+      const response: Anthropic.Messages.Message = await withProviderConcurrency(`brief:${params.id}`, () => {
+        requireCurrentChatUser(user.id, params.id, true);
+        return client.messages.create({
+          model: BRIEF_CHAT_MODEL,
+          max_tokens: 8000,
+          thinking: { type: "adaptive" },
+          cache_control: { type: "ephemeral" } as any,
+          ...(containerId ? { container: containerId } : {}),
+          system,
+          tools: [
+            { type: "web_search_20260209" as const, name: "web_search" } as any,
+            updateBriefTool as any,
+          ],
+          messages,
+        });
+      });
       assertChatProviderContentBounded(response.content);
       containerId = response.container?.id ?? containerId;
 

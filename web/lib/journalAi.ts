@@ -238,12 +238,14 @@ export function __setTestJournalClient(c: JournalClient | null) {
 export async function runJournalReply(
   input: JournalReplyInput,
   client?: JournalClient,
+  beforeProviderCall?: () => void,
 ): Promise<JournalReplyResult> {
   assertProviderCallsEnabled();
   const { system, user } = buildJournalMessages(input);
   if (Buffer.byteLength(system, "utf8") > MAX_JOURNAL_PROMPT_BYTES) throw new Error("Journal context is too large");
   const c: JournalClient =
     client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as JournalClient);
+  beforeProviderCall?.();
   const response = await c.messages.create({
     model: JOURNAL_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
