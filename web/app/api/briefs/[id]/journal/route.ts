@@ -329,13 +329,19 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       assertProviderCallsEnabled();
       releaseProviderReservation = reserveProviderConcurrency(`brief:${params.id}`);
     } catch (error) {
-      return providerAccessErrorResponse(error) ?? providerConcurrencyErrorResponse(error)
+      return authError(error) ?? providerAccessErrorResponse(error) ?? providerConcurrencyErrorResponse(error)
         ?? NextResponse.json({ error: "AI provider access is temporarily unavailable" }, { status: 503 });
     }
   }
 
   try {
-    user = requireCurrentJournalUser(user.id, params.id);
+    try {
+      user = requireCurrentJournalUser(user.id, params.id);
+    } catch (error) {
+      const denied = authError(error);
+      if (denied) return denied;
+      throw error;
+    }
     if (catchUpWindow) refreshCockpitSourceFingerprint(params.id);
     const userEntryId = insertJournalEntry({
     briefId: params.id,

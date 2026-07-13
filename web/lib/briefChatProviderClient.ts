@@ -15,5 +15,8 @@ export function hasTestBriefChatClient(): boolean {
 
 export function briefChatClient(): BriefChatClient {
   assertProviderCallsEnabled();
-  return testChatClient ?? new Anthropic({ timeout: 90_000, maxRetries: 1 });
+  // Route-level authority is checked before each explicit invocation. Keep SDK
+  // retries disabled so it cannot create an opaque second provider invocation
+  // after authority changes.
+  return testChatClient ?? new Anthropic({ timeout: 90_000, maxRetries: 0 });
 }

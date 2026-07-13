@@ -134,6 +134,13 @@ test("chat route keeps test injection outside the Next.js route export surface",
   assert.match(providerClient, /export function __setTestBriefChatClient/);
 });
 
+test("direct chat and Journal SDK clients disable opaque provider retries", () => {
+  const providerClient = read("web/lib/briefChatProviderClient.ts");
+  const journalAi = read("web/lib/journalAi.ts");
+  assert.match(providerClient, /new Anthropic\(\{ timeout: 90_000, maxRetries: 0 \}\)/);
+  assert.match(journalAi, /new Anthropic\(\{ timeout: 45_000, maxRetries: 0 \}\)/);
+});
+
 test("direct chat keeps brief_json byte-identical and atomically queues bounded provenance/history/audit", async () => {
   const seeded = seedActorAndBrief("direct");
   chatProvider.__setTestBriefChatClient(patchChatClient());

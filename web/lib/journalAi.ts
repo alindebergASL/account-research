@@ -244,7 +244,7 @@ export async function runJournalReply(
   const { system, user } = buildJournalMessages(input);
   if (Buffer.byteLength(system, "utf8") > MAX_JOURNAL_PROMPT_BYTES) throw new Error("Journal context is too large");
   const c: JournalClient =
-    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 1 }) as unknown as JournalClient);
+    client ?? _testClient ?? (new Anthropic({ timeout: 45_000, maxRetries: 0 }) as unknown as JournalClient);
   beforeProviderCall?.();
   const response = await c.messages.create({
     model: JOURNAL_MODEL,
