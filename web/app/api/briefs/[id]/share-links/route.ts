@@ -88,14 +88,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
-  const brief = db()
-    .prepare(`SELECT id, audience FROM briefs WHERE id = ?`)
-    .get(params.id) as { id: string; audience: string } | undefined;
-  if (!brief) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-  if (brief.audience !== "shareable") return audienceIneligibleResponse();
-
   let body: { ttl?: string };
   try {
     body = await parseBoundedJson(req);
@@ -117,13 +109,26 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const now = Date.now();
   const expiresAt = ttlToExpiresAt(ttl, now);
 
-  db()
-    .prepare(
-      `INSERT INTO brief_share_links
-        (id, brief_id, token, created_by, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, params.id, token, user.id, now, expiresAt);
+  const outcome = db().transaction(() => {
+    const brief = db()
+      .prepare(`SELECT id, audience FROM briefs WHERE id = ?`)
+      .get(params.id) as { id: string; audience: string } | undefined;
+    if (!brief) return "not_found" as const;
+    if (brief.audience !== "shareable") return "audience_internal" as const;
+
+    db()
+      .prepare(
+        `INSERT INTO brief_share_links
+          (id, brief_id, token, created_by, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, params.id, token, user.id, now, expiresAt);
+    return "created" as const;
+  }).immediate();
+  if (outcome === "not_found") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (outcome === "audience_internal") return audienceIneligibleResponse();
 
   return NextResponse.json({
     link: {

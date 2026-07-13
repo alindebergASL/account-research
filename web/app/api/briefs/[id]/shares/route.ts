@@ -83,49 +83,60 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
   const role = normalizeRole(body.role);
 
-  const target = findUserByEmail(email);
-  if (!target) {
+  const outcome = db().transaction(() => {
+    const target = findUserByEmail(email);
+    if (!target) return { kind: "target_not_found" } as const;
+    if (role === "editor" && target.role === "viewer") {
+      return { kind: "viewer_editor" } as const;
+    }
+
+    // Don't share with yourself or the owner.
+    const owner = db()
+      .prepare(`SELECT user_id FROM briefs WHERE id = ?`)
+      .get(params.id) as { user_id: string } | undefined;
+    if (!owner) return { kind: "brief_not_found" } as const;
+    if (target.id === owner.user_id) return { kind: "owner" } as const;
+
+    // Insert the share if absent; if it already exists, update the role so the
+    // caller's request reflects on the existing row (matches the dialog's
+    // "share at editor" expectation when the user is already a reader).
+    db()
+      .prepare(
+        `INSERT INTO brief_shares (brief_id, user_id, granted_by, created_at, role)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(brief_id, user_id) DO UPDATE SET role = excluded.role`,
+      )
+      .run(params.id, target.id, user.id, Date.now(), role);
+
+    return { kind: "shared", target } as const;
+  }).immediate();
+
+  if (outcome.kind === "target_not_found") {
     return NextResponse.json(
       { error: "No user with that email — ask an admin to create one" },
       { status: 404 },
     );
   }
-  if (role === "editor" && target.role === "viewer") {
+  if (outcome.kind === "viewer_editor") {
     return NextResponse.json(
       { error: "Viewer accounts can only receive reader access" },
       { status: 403 },
     );
   }
-
-  // Don't share with yourself or the owner.
-  const owner = db()
-    .prepare(`SELECT user_id FROM briefs WHERE id = ?`)
-    .get(params.id) as { user_id: string } | undefined;
-  if (!owner) {
+  if (outcome.kind === "brief_not_found") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (target.id === owner.user_id) {
+  if (outcome.kind === "owner") {
     return NextResponse.json(
       { error: "That user already owns this brief" },
       { status: 400 },
     );
   }
 
-  // Insert the share if absent; if it already exists, update the role so the
-  // caller's request reflects on the existing row (matches the dialog's
-  // "share at editor" expectation when the user is already a reader).
-  db()
-    .prepare(
-      `INSERT INTO brief_shares (brief_id, user_id, granted_by, created_at, role)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(brief_id, user_id) DO UPDATE SET role = excluded.role`,
-    )
-    .run(params.id, target.id, user.id, Date.now(), role);
-
   return NextResponse.json({
     share: {
-      user_id: target.id,
-      email: target.email,
+      user_id: outcome.target.id,
+      email: outcome.target.email,
       granted_by_email: user.email,
       role,
     },

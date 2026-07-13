@@ -220,6 +220,42 @@ test("share-link list/create and email refuse an audience-ineligible capability 
   }
 });
 
+test("share-link create rechecks audience after request parsing so a concurrent downgrade cannot leave a latent token", async () => {
+  seedBrief("create-race");
+  let parseCalls = 0;
+  const racingRequest = req(ownerSession);
+  racingRequest.json = async () => {
+    parseCalls += 1;
+    const downgrade = await briefRoute.PATCH(req(ownerSession, { audience: "internal" }), {
+      params: Promise.resolve({ id: "create-race" }),
+    });
+    assert.equal(downgrade.status, 200);
+    return { ttl: "24h" };
+  };
+
+  const response = await linksRoute.POST(racingRequest, {
+    params: Promise.resolve({ id: "create-race" }),
+  });
+  assert.equal(parseCalls, 1);
+  assert.equal(response.status, 409);
+  assert.deepEqual(await payload(response), {
+    error: "Public links are disabled for internal briefs. Switch the brief to 'customer-shareable' first.",
+    code: "audience_internal",
+  });
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM brief_share_links
+    WHERE brief_id = 'create-race' AND revoked_at IS NULL`).get() as any).n, 0);
+
+  const restore = await briefRoute.PATCH(req(ownerSession, { audience: "shareable" }), {
+    params: Promise.resolve({ id: "create-race" }),
+  });
+  assert.equal(restore.status, 200);
+  const list = await linksRoute.GET(req(ownerSession), {
+    params: Promise.resolve({ id: "create-race" }),
+  });
+  assert.equal(list.status, 200);
+  assert.deepEqual((await payload(list)).links, []);
+});
+
 test("the public page does not mount or reference a public comments client", () => {
   const source = readFileSync(path.join(__dirname, "../web/app/s/[token]/page.tsx"), "utf8");
   assert.doesNotMatch(source, /PublicCommentsSection|\/comments/);

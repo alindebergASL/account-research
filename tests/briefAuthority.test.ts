@@ -30,6 +30,7 @@ const checkpoint = require("../web/app/api/briefs/[id]/journal/radar/checkpoint/
 const documents = require("../web/app/api/briefs/[id]/journal/documents/route") as typeof import("../web/app/api/briefs/[id]/journal/documents/route");
 const chat = require("../web/app/api/briefs/[id]/chat/route") as typeof import("../web/app/api/briefs/[id]/chat/route");
 const shares = require("../web/app/api/briefs/[id]/shares/route") as typeof import("../web/app/api/briefs/[id]/shares/route");
+const share = require("../web/app/api/briefs/[id]/shares/[userId]/route") as typeof import("../web/app/api/briefs/[id]/shares/[userId]/route");
 const roleRoute = require("../web/app/api/admin/users/[id]/role/route") as typeof import("../web/app/api/admin/users/[id]/role/route");
 const radarManifest = require("../web/lib/journalRadarManifest") as typeof import("../web/lib/journalRadarManifest");
 const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
@@ -79,6 +80,7 @@ seedUser("owner", "member");
 seedUser("viewer-owner", "viewer");
 seedUser("viewer-editor", "viewer");
 seedUser("viewer-reader", "viewer");
+seedUser("viewer-unshared", "viewer");
 seedUser("reader", "member");
 seedUser("editor", "member");
 seedUser("admin", "admin");
@@ -362,14 +364,50 @@ test("Journal UI disables governed candidate and upload controls for non-writers
   assert.match(source, /Brief writer access is required to upload evidence/);
 });
 
-test("share grant refuses editor authority for a global viewer", async () => {
+test("share POST refuses editor authority for a global viewer on grant and upsert", async () => {
   const before = totalChanges();
-  const response = await shares.POST(request(sessions.owner, {
+  const grantResponse = await shares.POST(request(sessions.owner, {
+    email: "viewer-unshared@example.com", role: "editor",
+  }, { json: 0, form: 0 }), { params: { id: "owned-by-member" } } as any);
+  assert.equal(grantResponse.status, 403);
+  assert.equal(db().prepare("SELECT role FROM brief_shares WHERE brief_id=? AND user_id=?").get("owned-by-member", "viewer-unshared"), undefined);
+
+  const upsertResponse = await shares.POST(request(sessions.owner, {
     email: "viewer-reader@example.com", role: "editor",
   }, { json: 0, form: 0 }), { params: { id: "owned-by-member" } } as any);
-  assert.equal(response.status, 403);
+  assert.equal(upsertResponse.status, 403);
   assert.equal((db().prepare("SELECT role FROM brief_shares WHERE brief_id=? AND user_id=?").get("owned-by-member", "viewer-reader") as any).role, "reader");
   assert.equal(totalChanges(), before);
+});
+
+test("share PATCH normalizes a viewer's stale editor row and promotion cannot resurrect it", async () => {
+  const response = await share.PATCH(request(sessions.owner, {
+    role: "editor",
+  }, { json: 0, form: 0 }), {
+    params: { id: "owned-by-member", userId: "viewer-editor" },
+  } as any);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, role: "reader" });
+  assert.equal((db().prepare("SELECT role FROM brief_shares WHERE brief_id=? AND user_id=?").get("owned-by-member", "viewer-editor") as any).role, "reader");
+
+  db().prepare("UPDATE users SET role='member' WHERE id='viewer-editor'").run();
+  assert.equal((db().prepare("SELECT role FROM brief_shares WHERE brief_id=? AND user_id=?").get("owned-by-member", "viewer-editor") as any).role, "reader");
+});
+
+test("share PATCH fails closed for a disabled target", async () => {
+  db().prepare("UPDATE users SET disabled_at=? WHERE id='viewer-reader'").run(Date.now());
+  try {
+    const response = await share.PATCH(request(sessions.owner, {
+      role: "editor",
+    }, { json: 0, form: 0 }), {
+      params: { id: "owned-by-member", userId: "viewer-reader" },
+    } as any);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "Share not found" });
+    assert.equal((db().prepare("SELECT role FROM brief_shares WHERE brief_id=? AND user_id=?").get("owned-by-member", "viewer-reader") as any).role, "reader");
+  } finally {
+    db().prepare("UPDATE users SET disabled_at=NULL WHERE id='viewer-reader'").run();
+  }
 });
 
 function seedJob(id: string, userId: string, status: "queued" | "running" | "done") {
