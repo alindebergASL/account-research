@@ -4,9 +4,18 @@ import { assertProviderCallsEnabled } from "./providerAccess";
 export type BriefChatClient = Pick<Anthropic, "messages">;
 
 let testChatClient: BriefChatClient | null = null;
+let testBeforeProviderCall: (() => void) | null = null;
 
 export function __setTestBriefChatClient(client: BriefChatClient | null): void {
   testChatClient = client;
+}
+
+export function __setTestBriefChatBeforeProviderCall(callback: (() => void) | null): void {
+  testBeforeProviderCall = callback;
+}
+
+export function runBriefChatBeforeProviderCall(): void {
+  testBeforeProviderCall?.();
 }
 
 export function hasTestBriefChatClient(): boolean {

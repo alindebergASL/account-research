@@ -34,6 +34,7 @@ import { providerConcurrencyErrorResponse, withProviderConcurrency } from "@/lib
 import {
   briefChatClient as chatClient,
   hasTestBriefChatClient,
+  runBriefChatBeforeProviderCall,
 } from "@/lib/briefChatProviderClient";
 
 export const runtime = "nodejs";
@@ -305,6 +306,7 @@ async function handleReadOnlyChat({
   const messages = buildMessages(history, userMessage);
   try {
     const response = await withProviderConcurrency(`brief:${briefId}`, () => {
+      runBriefChatBeforeProviderCall();
       requireCurrentChatUser(userId, briefId, false);
       return client.messages.create({
         model: BRIEF_CHAT_MODEL,
@@ -476,6 +478,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         return NextResponse.json({ error: "Not authorized" }, { status: 403 });
       }
       const result = await withProviderConcurrency(`brief:${params.id}`, () => {
+        runBriefChatBeforeProviderCall();
         requireCurrentChatUser(user.id, params.id, writer);
         return runChatViaHermes({
           brief_id: params.id,
@@ -564,6 +567,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   try {
     for (let i = 0; i < 6; i++) {
       const response: Anthropic.Messages.Message = await withProviderConcurrency(`brief:${params.id}`, () => {
+        runBriefChatBeforeProviderCall();
         requireCurrentChatUser(user.id, params.id, true);
         return client.messages.create({
           model: BRIEF_CHAT_MODEL,

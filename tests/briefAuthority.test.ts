@@ -494,6 +494,40 @@ test("admin promotion of a historical viewer normalizes stale editor shares befo
   assert.equal((db().prepare("SELECT role FROM brief_shares WHERE user_id='historical-viewer'").get() as any).role, "reader");
 });
 
+test("admin role change revalidates the initiating admin after a slow parse before target mutation", async () => {
+  const initiatingAdminId = "slow-role-initiating-admin";
+  const targetId = "slow-role-target";
+  seedUser(initiatingAdminId, "admin");
+  seedUser(targetId, "member");
+  seedShare("owned-by-member", targetId, "editor");
+  const initiatingSession = session(initiatingAdminId);
+
+  let markParseStarted!: () => void;
+  const parseStarted = new Promise<void>((resolve) => { markParseStarted = resolve; });
+  let releaseParse!: () => void;
+  const parseRelease = new Promise<void>((resolve) => { releaseParse = resolve; });
+  const req = request(initiatingSession, {}, { json: 0, form: 0 });
+  req.json = async () => {
+    markParseStarted();
+    await parseRelease;
+    return { role: "viewer" };
+  };
+
+  try {
+    const responsePromise = roleRoute.POST(req, { params: Promise.resolve({ id: targetId }) } as any);
+    await parseStarted;
+    db().prepare("UPDATE users SET role='member' WHERE id=?").run(initiatingAdminId);
+    releaseParse();
+    const response = await responsePromise;
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "Admin only" });
+  } finally {
+    releaseParse?.();
+  }
+  assert.equal((db().prepare("SELECT role FROM users WHERE id=?").get(targetId) as any).role, "member");
+  assert.equal((db().prepare("SELECT role FROM brief_shares WHERE user_id=?").get(targetId) as any).role, "editor");
+});
+
 test("viewer downgrade rolls the whole immediate transaction back on an injected failure", async () => {
   seedUser("rollback", "member");
   seedBrief("rollback-owned", "rollback", 1);

@@ -24,6 +24,7 @@ const { db, initDb } = require("../web/lib/db") as typeof import("../web/lib/db"
 const auth = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const chat = require("../web/app/api/briefs/[id]/chat/route") as typeof import("../web/app/api/briefs/[id]/chat/route");
 const chatProvider = require("../web/lib/briefChatProviderClient") as typeof import("../web/lib/briefChatProviderClient");
+const journalAi = require("../web/lib/journalAi") as typeof import("../web/lib/journalAi");
 const hermesClient = require("../web/lib/hermes/client") as typeof import("../web/lib/hermes/client");
 const worker = require("../web/lib/researchWorker") as typeof import("../web/lib/researchWorker");
 const researchPipeline = require("../web/lib/researchPipeline") as typeof import("../web/lib/researchPipeline");
@@ -141,6 +142,38 @@ test("direct chat and Journal SDK clients disable opaque provider retries", () =
   assert.match(journalAi, /new Anthropic\(\{ timeout: 45_000, maxRetries: 0 \}\)/);
 });
 
+test("Journal invokes its authorization callback immediately before the provider boundary", async () => {
+  const input = { brief_json: sampleBrief("Journal boundary"), entries: [] };
+  const order: string[] = [];
+  await journalAi.runJournalReply(input, { messages: { create: async () => {
+    order.push("provider");
+    return { content: [{ type: "text", text: "Local fake reply" }] };
+  } } }, () => {
+    order.push("authorization");
+  });
+  assert.deepEqual(order, ["authorization", "provider"]);
+
+  let providerCalls = 0;
+  await assert.rejects(
+    () => journalAi.runJournalReply(input, { messages: { create: async () => {
+      providerCalls += 1;
+      return { content: [{ type: "text", text: "Must not be called" }] };
+    } } }, () => {
+      throw new auth.HttpError(403, { error: "Not authorized" });
+    }),
+    /Not authorized/,
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test("Journal route wires fresh Journal authorization into runJournalReply", () => {
+  const route = read("web/app/api/briefs/[id]/journal/route.ts");
+  assert.match(
+    route,
+    /const result = await runJournalReply\(\{[\s\S]*?\}, undefined, \(\) => \{\s*user = requireCurrentJournalUser\(user\.id, params\.id\);\s*\}\);/,
+  );
+});
+
 test("direct chat keeps brief_json byte-identical and atomically queues bounded provenance/history/audit", async () => {
   const seeded = seedActorAndBrief("direct");
   chatProvider.__setTestBriefChatClient(patchChatClient());
@@ -182,6 +215,38 @@ test("reader Q&A receives no write tools or proposals and persists only bounded 
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_chats WHERE brief_id=?").get(seeded.briefId) as any).n, 2);
   assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_review_candidates WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_events WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
+});
+
+test("reader share revoked at the direct-chat provider seam denies before the provider and persists nothing", async () => {
+  const owner = seedActorAndBrief("reader-boundary-owner");
+  const readerId = "reader-boundary-member";
+  db().prepare(`INSERT INTO users (id,email,password_hash,role,display_name,created_at,must_change_password)
+    VALUES (?,?,'h','member',?, ?,0)`).run(readerId, `${readerId}@example.com`, readerId, Date.now());
+  db().prepare("INSERT INTO brief_shares (brief_id,user_id,granted_by,created_at,role) VALUES (?,?,?,?, 'reader')")
+    .run(owner.briefId, readerId, owner.userId, Date.now());
+  const readerSession = auth.createSession(readerId).id;
+  let providerCalls = 0;
+  chatProvider.__setTestBriefChatClient({ messages: { create: async () => {
+    providerCalls += 1;
+    return { stop_reason: "end_turn", content: [{ type: "text", text: "Must not be called" }] };
+  } } } as any);
+  chatProvider.__setTestBriefChatBeforeProviderCall(() => {
+    db().prepare("DELETE FROM brief_shares WHERE brief_id=? AND user_id=?").run(owner.briefId, readerId);
+  });
+  try {
+    const response = await chat.POST(chatRequest(readerSession, "What is the priority?"), {
+      params: Promise.resolve({ id: owner.briefId }),
+    });
+    assert.equal(response.status, 403);
+  } finally {
+    chatProvider.__setTestBriefChatBeforeProviderCall(null);
+    chatProvider.__setTestBriefChatClient(null);
+  }
+  assert.equal(providerCalls, 0);
+  assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(owner.briefId) as any).brief_json, owner.briefJson);
+  for (const table of ["brief_chats", "journal_review_candidates", "brief_events", "brief_versions", "canvas_states", "canvas_proposals", "canvas_capability_proposals"]) {
+    assert.equal((db().prepare(`SELECT COUNT(*) n FROM ${table} WHERE brief_id=?`).get(owner.briefId) as any).n, 0, table);
+  }
 });
 
 test("review boundary rejects excess candidate count without truncating meaning", () => {
