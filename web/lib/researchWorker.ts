@@ -1026,8 +1026,8 @@ export async function startWorker(): Promise<never> {
   // Loop forever. Any throw inside executeResearchJob is caught there;
   // the only way out of this loop is process exit.
   for (;;) {
-    // Daily-monitor scheduler tick. Cheap and self-throttling: enqueues the
-    // 2 AM batch at most once per local day, then short-circuits.
+    // Daily-monitor scheduler tick. Capacity-deferred briefs retry as jobs
+    // drain; a completed 2 AM batch then short-circuits for the local day.
     try {
       const enqueued = maybeRunDailySchedule();
       if (enqueued > 0) {

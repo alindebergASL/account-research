@@ -275,6 +275,7 @@ export async function restoreDataBackup(args: {
   }
   await assertEmptyOrAbsent(target, "restore target directory must be empty");
   const manifest = readAndValidateManifest(backup);
+  await assertNoSecretShapedFilenames(path.join(backup, RAW_DATA_DIR));
   const staging = `${target}.staging-${process.pid}-${Date.now()}`;
   await rm(staging, { recursive: true, force: true });
   try {

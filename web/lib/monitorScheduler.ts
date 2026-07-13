@@ -1,7 +1,8 @@
 // Daily-monitor scheduler. Lives inside the long-running worker process: the
 // worker loop calls maybeRunDailySchedule() each tick. The date check makes it
-// fire the enqueue exactly once per local calendar day, on/after 2 AM, and it
-// survives restarts via the monitor_schedule singleton row.
+// retry on/after 2 AM until every due brief is enqueued or deduped, then stop
+// for the local calendar day. Completion survives restarts via the
+// monitor_schedule singleton row.
 //
 // Enqueued jobs land in the same research_jobs queue the worker already drains
 // one at a time, so monitor checks run sequentially after 2 AM.
@@ -129,34 +130,69 @@ export function cancelActiveMonitorJobsForBrief(briefId: string): number {
 // Backwards-compatible name for callers/tests that only care about queued jobs.
 export const cancelQueuedMonitorJobsForBrief = cancelActiveMonitorJobsForBrief;
 
-// Enqueue a monitor job for every monitor-enabled brief, attributed to the
-// brief owner. Deduped per brief. Returns the number of jobs enqueued.
-export function enqueueAllMonitorJobs(now: number = Date.now()): number {
-  if (!providerCallsEnabled()) return 0;
+type MonitorEnqueuePass = { enqueued: number; capacityDeferred: number };
+
+function enqueueDueMonitorJobs(
+  now: number,
+  attemptWindowStart: number | null = null,
+): MonitorEnqueuePass {
+  if (!providerCallsEnabled()) return { enqueued: 0, capacityDeferred: 0 };
   const briefs = db()
     .prepare(
       `SELECT id, user_id, monitor_cadence, last_monitored_at
-         FROM briefs WHERE monitor_enabled = 1`,
+         FROM briefs
+        WHERE monitor_enabled = 1
+          AND (? IS NULL OR NOT EXISTS (
+            SELECT 1 FROM research_jobs
+             WHERE intent = 'monitor'
+               AND target_brief_id = briefs.id
+               AND created_at >= ?
+          ))
+        ORDER BY CASE WHEN last_monitored_at IS NULL THEN 0 ELSE 1 END,
+                 last_monitored_at ASC,
+                 id ASC`,
     )
-    .all() as Array<{
+    .all(attemptWindowStart, attemptWindowStart) as Array<{
     id: string;
     user_id: string;
     monitor_cadence: string;
     last_monitored_at: number | null;
   }>;
-  let count = 0;
+  let enqueued = 0;
+  let capacityDeferred = 0;
   for (const b of briefs) {
     // Per-brief cadence: only enqueue when the brief is actually due. The 2 AM
     // gate still bounds this to at most one enqueue per brief per day.
     if (now < dueAt(b.last_monitored_at, b.monitor_cadence)) continue;
-    if (enqueueMonitorJob(b.id, b.user_id)) count++;
+    try {
+      if (enqueueMonitorJobOrThrow(b.id, b.user_id)) enqueued++;
+    } catch (error) {
+      if (error instanceof ResearchQueueError && error.status === 409) continue;
+      if (error instanceof ResearchQueueError && error.status === 429) {
+        capacityDeferred++;
+        continue;
+      }
+      throw error;
+    }
   }
-  return count;
+  if (capacityDeferred > 0) {
+    // Fixed, identifier-free signal: never include brief/account/provider/error text.
+    // eslint-disable-next-line no-console
+    console.warn(`[monitor-scheduler] capacity deferred count=${capacityDeferred}`);
+  }
+  return { enqueued, capacityDeferred };
 }
 
-// Called every worker tick. Once per local day, on/after 2 AM, enqueue the
-// daily batch. Cheap and self-throttling — the date comparison short-circuits
-// the rest of the day. Exposed `now` for deterministic testing.
+// Enqueue a monitor job for every monitor-enabled brief, attributed to the
+// brief owner. Deduped per brief. Returns the number of jobs enqueued.
+export function enqueueAllMonitorJobs(now: number = Date.now()): number {
+  const result = enqueueDueMonitorJobs(now);
+  return result.enqueued;
+}
+
+// Called every worker tick. On/after 2 AM, enqueue the daily batch until a pass
+// has no capacity deferrals. The completed date then short-circuits the rest of
+// the day. Exposed `now` for deterministic testing.
 export function maybeRunDailySchedule(now: Date = new Date()): number {
   if (!providerCallsEnabled()) return 0;
   if (now.getHours() < MONITOR_HOUR) return 0;
@@ -167,15 +203,19 @@ export function maybeRunDailySchedule(now: Date = new Date()): number {
     .get(SCHEDULE_ID) as { last_run_date: string | null } | undefined;
   if (row?.last_run_date === today) return 0;
 
-  const count = enqueueAllMonitorJobs(now.getTime());
+  const windowStart = new Date(now);
+  windowStart.setHours(MONITOR_HOUR, 0, 0, 0);
+  const result = enqueueDueMonitorJobs(now.getTime(), windowStart.getTime());
 
-  // Record the run regardless of count so we don't re-scan all day even when
-  // there are zero enabled briefs.
-  db()
-    .prepare(
-      `INSERT INTO monitor_schedule (id, last_run_date) VALUES (?, ?)
-       ON CONFLICT(id) DO UPDATE SET last_run_date = excluded.last_run_date`,
-    )
-    .run(SCHEDULE_ID, today);
-  return count;
+  // Capacity-deferred briefs remain due. Leave today incomplete so the worker's
+  // next tick retries them as active jobs drain. Dedupe-only passes are complete.
+  if (result.capacityDeferred === 0) {
+    db()
+      .prepare(
+        `INSERT INTO monitor_schedule (id, last_run_date) VALUES (?, ?)
+         ON CONFLICT(id) DO UPDATE SET last_run_date = excluded.last_run_date`,
+      )
+      .run(SCHEDULE_ID, today);
+  }
+  return result.enqueued;
 }

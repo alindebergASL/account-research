@@ -77,6 +77,32 @@ test("backup rejects nested secret-shaped durable filenames with a fixed non-sec
   assert.equal(existsSync(path.join(f.root, "backup")), false);
 });
 
+test("restore rejects checksum-valid secret-shaped filenames before materializing the target", async (t) => {
+  const f = fixture();
+  t.after(() => { f.db.close(); return rm(f.root, { recursive: true, force: true }); });
+  const backup = path.join(f.root, "backup");
+  await createDataBackup({ sourceDataDir: f.data, backupDir: backup });
+
+  const secretPath = path.join(backup, "raw-data", ".env");
+  const secretBytes = Buffer.from("external-manifest-value");
+  writeFileSync(secretPath, secretBytes);
+  const manifestPath = path.join(backup, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.files.push({
+    relative_path: "raw-data/.env",
+    bytes: secretBytes.length,
+    sha256: createHash("sha256").update(secretBytes).digest("hex"),
+  });
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const target = path.join(f.root, "rejected-restore");
+  await assert.rejects(
+    restoreDataBackup({ backupDir: backup, targetDataDir: target, sourceDataDir: f.data }),
+    (error: Error) => error.message === "source data contains a prohibited secret-shaped filename",
+  );
+  assert.equal(existsSync(target), false);
+});
+
 test("backup fails before publication for missing and mismatched referenced blobs", async (t) => {
   const f = fixture();
   t.after(() => { f.db.close(); return rm(f.root, { recursive: true, force: true }); });

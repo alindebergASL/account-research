@@ -298,6 +298,91 @@ test("worker and scheduler make zero provider calls or queued inserts while gate
   assert.equal((db().prepare("SELECT COUNT(*) n FROM research_jobs WHERE status='queued'").get() as any).n, queuedBefore);
 });
 
+test("monitor scheduler retries capacity deferrals in stable order and completes with 409 dedupes", () => {
+  process.env.PROVIDER_CALLS_ENABLED = "1";
+  db().prepare("UPDATE briefs SET monitor_enabled=0").run();
+  const userId = "scheduler-cap-user";
+  seedUser(userId);
+  const now = new Date(2026, 6, 14, 3);
+  const nowMs = now.getTime();
+  const briefs = [
+    { id: "scheduler-cap-b", lastMonitoredAt: null },
+    { id: "scheduler-cap-a", lastMonitoredAt: null },
+    { id: "scheduler-cap-d", lastMonitoredAt: nowMs - 10 * 24 * 60 * 60 * 1000 },
+    { id: "scheduler-cap-c", lastMonitoredAt: nowMs - 20 * 24 * 60 * 60 * 1000 },
+    { id: "scheduler-cap-e", lastMonitoredAt: nowMs - 8 * 24 * 60 * 60 * 1000 },
+  ];
+  for (const brief of briefs) {
+    seedBrief(userId, brief.id);
+    db().prepare(
+      "UPDATE briefs SET monitor_enabled=1, monitor_cadence='daily', last_monitored_at=? WHERE id=?",
+    ).run(brief.lastMonitoredAt, brief.id);
+  }
+  db().prepare("DELETE FROM monitor_schedule WHERE id='singleton'").run();
+  const windowStart = new Date(now);
+  windowStart.setHours(2, 0, 0, 0);
+  db().prepare(
+    `INSERT INTO research_jobs
+      (id,user_id,account_name,intake_json,mode,status,created_at,intent,target_brief_id)
+     VALUES ('scheduler-cap-dedupe',?,?, '{}','standard','queued',?,'monitor','scheduler-cap-a')`,
+  ).run(userId, "Scheduler dedupe", windowStart.getTime() - 1);
+
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  let firstCount: number;
+  try {
+    firstCount = scheduler.maybeRunDailySchedule(now);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(firstCount, queue.RESEARCH_QUEUE_LIMITS.activePerUser - 1);
+  assert.deepEqual(
+    (db().prepare(
+      "SELECT target_brief_id FROM research_jobs WHERE user_id=? AND intent='monitor' AND status='queued' ORDER BY target_brief_id",
+    ).all(userId) as Array<{ target_brief_id: string }>).map((row) => row.target_brief_id),
+    ["scheduler-cap-a", "scheduler-cap-b", "scheduler-cap-c"],
+  );
+  assert.equal(
+    (db().prepare("SELECT last_run_date FROM monitor_schedule WHERE id='singleton'").get() as any)?.last_run_date ?? null,
+    null,
+  );
+  assert.deepEqual(warnings, ["[monitor-scheduler] capacity deferred count=2"]);
+
+  db().prepare(
+    `UPDATE research_jobs
+        SET status='failed', finished_at=?, created_at=?
+      WHERE user_id=? AND intent='monitor' AND id <> 'scheduler-cap-dedupe'`,
+  ).run(nowMs, nowMs, userId);
+
+  assert.equal(scheduler.maybeRunDailySchedule(now), 2);
+  assert.equal(
+    (db().prepare("SELECT last_run_date FROM monitor_schedule WHERE id='singleton'").get() as any).last_run_date,
+    "2026-07-14",
+  );
+  assert.equal(
+    (db().prepare("SELECT COUNT(*) n FROM research_jobs WHERE user_id=? AND intent='monitor' AND status='queued'").get(userId) as any).n,
+    queue.RESEARCH_QUEUE_LIMITS.activePerUser,
+  );
+  assert.deepEqual(
+    (db().prepare(
+      "SELECT target_brief_id FROM research_jobs WHERE user_id=? AND intent='monitor' AND status='queued' ORDER BY target_brief_id",
+    ).all(userId) as Array<{ target_brief_id: string }>).map((row) => row.target_brief_id),
+    ["scheduler-cap-a", "scheduler-cap-d", "scheduler-cap-e"],
+  );
+  assert.deepEqual(
+    db().prepare(
+      `SELECT target_brief_id, COUNT(*) AS attempts
+         FROM research_jobs
+        WHERE user_id=? AND intent='monitor'
+        GROUP BY target_brief_id
+       HAVING COUNT(*) > 1`,
+    ).all(userId),
+    [],
+  );
+  assert.equal(scheduler.maybeRunDailySchedule(now), 0);
+});
+
 test("chat uses newest bounded history chronologically and prunes retention after durable outcome", async () => {
   process.env.PROVIDER_CALLS_ENABLED = "1";
   const userId = "history-user";
