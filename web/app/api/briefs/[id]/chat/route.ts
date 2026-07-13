@@ -31,30 +31,22 @@ import {
 import { jsonBodyErrorResponse, parseBoundedJson } from "@/lib/httpBodyLimits";
 import { assertProviderCallsEnabled, providerAccessErrorResponse } from "@/lib/providerAccess";
 import { providerConcurrencyErrorResponse, withProviderConcurrency } from "@/lib/providerConcurrency";
+import {
+  briefChatClient as chatClient,
+  hasTestBriefChatClient,
+} from "@/lib/briefChatProviderClient";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 type Patch = BriefPatch;
 
-type BriefChatClient = Pick<Anthropic, "messages">;
-let testChatClient: BriefChatClient | null = null;
-
-export function __setTestBriefChatClient(client: BriefChatClient | null) {
-  testChatClient = client;
-}
-
-function chatClient(): BriefChatClient {
-  assertProviderCallsEnabled();
-  return testChatClient ?? new Anthropic({ timeout: 90_000, maxRetries: 1 });
-}
-
 const MAX_CHAT_TEXT_BYTES = 12 * 1024;
 const MAX_CHAT_PROVIDER_CONTENT_BYTES = 256 * 1024;
-export const CHAT_HISTORY_CONTEXT_ROWS = 40;
-export const CHAT_HISTORY_RETAINED_ROWS = 200;
-export const CHAT_HISTORY_CONTEXT_BYTES = 96 * 1024;
-export const CHAT_SYSTEM_CONTEXT_BYTES = 192 * 1024;
+const CHAT_HISTORY_CONTEXT_ROWS = 40;
+const CHAT_HISTORY_RETAINED_ROWS = 200;
+const CHAT_HISTORY_CONTEXT_BYTES = 96 * 1024;
+const CHAT_SYSTEM_CONTEXT_BYTES = 192 * 1024;
 
 function boundedChatText(value: unknown, label: string): string {
   if (typeof value !== "string") throw new Error(`${label} is invalid`);
@@ -440,7 +432,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   } catch (error) {
     return providerAccessErrorResponse(error) ?? NextResponse.json({ error: "AI provider access is temporarily unavailable" }, { status: 503 });
   }
-  if (chatPath === "direct" && !testChatClient && !process.env.ANTHROPIC_API_KEY) {
+  if (chatPath === "direct" && !hasTestBriefChatClient() && !process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: "Server is missing ANTHROPIC_API_KEY" },
       { status: 500 },

@@ -23,6 +23,7 @@ const require = createRequire(import.meta.url);
 const { db, initDb } = require("../web/lib/db") as typeof import("../web/lib/db");
 const auth = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const chat = require("../web/app/api/briefs/[id]/chat/route") as typeof import("../web/app/api/briefs/[id]/chat/route");
+const chatProvider = require("../web/lib/briefChatProviderClient") as typeof import("../web/lib/briefChatProviderClient");
 const hermesClient = require("../web/lib/hermes/client") as typeof import("../web/lib/hermes/client");
 const worker = require("../web/lib/researchWorker") as typeof import("../web/lib/researchWorker");
 const researchPipeline = require("../web/lib/researchPipeline") as typeof import("../web/lib/researchPipeline");
@@ -124,15 +125,24 @@ test("AI Brief-write paths use the review boundary", () => {
   assert.match(worker, /briefUpdateReviewBoundary/);
 });
 
+test("chat route keeps test injection outside the Next.js route export surface", () => {
+  const route = read("web/app/api/briefs/[id]/chat/route.ts");
+  const providerClient = read("web/lib/briefChatProviderClient.ts");
+  assert.doesNotMatch(route, /export\s+(?:function|const)\s+__setTest/);
+  assert.doesNotMatch(route, /export\s+const\s+CHAT_/);
+  assert.match(route, /briefChatClient as chatClient/);
+  assert.match(providerClient, /export function __setTestBriefChatClient/);
+});
+
 test("direct chat keeps brief_json byte-identical and atomically queues bounded provenance/history/audit", async () => {
   const seeded = seedActorAndBrief("direct");
-  chat.__setTestBriefChatClient(patchChatClient());
+  chatProvider.__setTestBriefChatClient(patchChatClient());
   try {
     const response = await chat.POST(chatRequest(seeded.sessionId), { params: Promise.resolve({ id: seeded.briefId }) });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).candidates_queued, 1);
   } finally {
-    chat.__setTestBriefChatClient(null);
+    chatProvider.__setTestBriefChatClient(null);
   }
   assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(seeded.briefId) as any).brief_json, seeded.briefJson);
   const candidate = db().prepare("SELECT * FROM journal_review_candidates WHERE brief_id=?").get(seeded.briefId) as any;
@@ -152,14 +162,14 @@ test("reader Q&A receives no write tools or proposals and persists only bounded 
     .run(seeded.briefId, readerId, seeded.userId, Date.now());
   const readerSession = auth.createSession(readerId).id;
   let suppliedTools: unknown = "not-called";
-  chat.__setTestBriefChatClient({ messages: { create: async (args: any) => {
+  chatProvider.__setTestBriefChatClient({ messages: { create: async (args: any) => {
     suppliedTools = args.tools;
     return { stop_reason: "end_turn", content: [{ type: "text", text: "Read-only answer." }] };
   } } } as any);
   try {
     const response = await chat.POST(chatRequest(readerSession, "What is the priority?"), { params: Promise.resolve({ id: seeded.briefId }) });
     assert.equal(response.status, 200);
-  } finally { chat.__setTestBriefChatClient(null); }
+  } finally { chatProvider.__setTestBriefChatClient(null); }
   assert.equal(suppliedTools, undefined);
   assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(seeded.briefId) as any).brief_json, seeded.briefJson);
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_chats WHERE brief_id=?").get(seeded.briefId) as any).n, 2);
@@ -213,25 +223,25 @@ test("whole-Brief array prefix growth prepares only bounded appends and rejects 
 
 test("direct chat stale baseline and audit failure roll back candidates, history, and audit", async () => {
   const stale = seedActorAndBrief("stale");
-  chat.__setTestBriefChatClient(patchChatClient(() => {
+  chatProvider.__setTestBriefChatClient(patchChatClient(() => {
     const edited = { ...stale.brief, snapshot: "Concurrent human edit" };
     db().prepare("UPDATE briefs SET brief_json=? WHERE id=?").run(JSON.stringify(edited), stale.briefId);
   }));
   try {
     const response = await chat.POST(chatRequest(stale.sessionId), { params: Promise.resolve({ id: stale.briefId }) });
     assert.equal(response.status, 409);
-  } finally { chat.__setTestBriefChatClient(null); }
+  } finally { chatProvider.__setTestBriefChatClient(null); }
   assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_review_candidates WHERE brief_id=?").get(stale.briefId) as any).n, 0);
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_chats WHERE brief_id=?").get(stale.briefId) as any).n, 0);
 
   const audit = seedActorAndBrief("audit-fail");
   db().exec(`CREATE TRIGGER endgame_fail_event BEFORE INSERT ON brief_events BEGIN SELECT RAISE(ABORT, 'test audit failure'); END`);
-  chat.__setTestBriefChatClient(patchChatClient());
+  chatProvider.__setTestBriefChatClient(patchChatClient());
   try {
     const response = await chat.POST(chatRequest(audit.sessionId), { params: Promise.resolve({ id: audit.briefId }) });
     assert.equal(response.status, 500);
   } finally {
-    chat.__setTestBriefChatClient(null);
+    chatProvider.__setTestBriefChatClient(null);
     db().exec("DROP TRIGGER endgame_fail_event");
   }
   assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(audit.briefId) as any).brief_json, audit.briefJson);
@@ -241,7 +251,7 @@ test("direct chat stale baseline and audit failure roll back candidates, history
 
 test("writer chat with zero candidates does not emit a candidate-queued audit event", async () => {
   const seeded = seedActorAndBrief("chat-zero-candidates");
-  chat.__setTestBriefChatClient({ messages: { create: async () => ({
+  chatProvider.__setTestBriefChatClient({ messages: { create: async () => ({
     stop_reason: "end_turn", container: null, usage: {},
     content: [{ type: "text", text: "No update candidate was proposed." }],
   }) } } as any);
@@ -249,19 +259,19 @@ test("writer chat with zero candidates does not emit a candidate-queued audit ev
     const response = await chat.POST(chatRequest(seeded.sessionId), { params: Promise.resolve({ id: seeded.briefId }) });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).candidates_queued, 0);
-  } finally { chat.__setTestBriefChatClient(null); }
+  } finally { chatProvider.__setTestBriefChatClient(null); }
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_events WHERE brief_id=? AND event_type='brief_update_candidates_queued'").get(seeded.briefId) as any).n, 0);
 });
 
 test("authority revoked during direct provider wait produces no durable chat outcome", async () => {
   const seeded = seedActorAndBrief("revoked");
-  chat.__setTestBriefChatClient(patchChatClient(() => {
+  chatProvider.__setTestBriefChatClient(patchChatClient(() => {
     db().prepare("UPDATE users SET role='viewer' WHERE id=?").run(seeded.userId);
   }));
   try {
     const response = await chat.POST(chatRequest(seeded.sessionId), { params: Promise.resolve({ id: seeded.briefId }) });
     assert.equal(response.status, 403);
-  } finally { chat.__setTestBriefChatClient(null); }
+  } finally { chatProvider.__setTestBriefChatClient(null); }
   assert.equal((db().prepare("SELECT brief_json FROM briefs WHERE id=?").get(seeded.briefId) as any).brief_json, seeded.briefJson);
   assert.equal((db().prepare("SELECT COUNT(*) n FROM journal_review_candidates WHERE brief_id=?").get(seeded.briefId) as any).n, 0);
   assert.equal((db().prepare("SELECT COUNT(*) n FROM brief_chats WHERE brief_id=?").get(seeded.briefId) as any).n, 0);

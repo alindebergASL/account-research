@@ -22,6 +22,7 @@ const { db, initDb } = require("../web/lib/db") as typeof import("../web/lib/db"
 const auth = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const researchRoute = require("../web/app/api/research/route") as typeof import("../web/app/api/research/route");
 const chatRoute = require("../web/app/api/briefs/[id]/chat/route") as typeof import("../web/app/api/briefs/[id]/chat/route");
+const chatProvider = require("../web/lib/briefChatProviderClient") as typeof import("../web/lib/briefChatProviderClient");
 const hermesClient = require("../web/lib/hermes/client") as typeof import("../web/lib/hermes/client");
 const researchPipeline = require("../web/lib/researchPipeline") as typeof import("../web/lib/researchPipeline");
 const worker = require("../web/lib/researchWorker") as typeof import("../web/lib/researchWorker");
@@ -38,7 +39,7 @@ initDb();
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 test.afterEach(() => {
   delete process.env.PROVIDER_CALLS_ENABLED;
-  chatRoute.__setTestBriefChatClient(null);
+  chatProvider.__setTestBriefChatClient(null);
   researchPipeline.__setTestResearchPipelineRunner(null);
   commentAi.__setTestAssistClient(null);
   journalAi.__setTestJournalClient(null);
@@ -147,7 +148,7 @@ test("provider gate is default-off before job insertion; viewer remains denied; 
   const briefId = "gate-chat-brief";
   seedBrief("limits-member", briefId);
   let chatCalls = 0;
-  chatRoute.__setTestBriefChatClient({ messages: { create: async () => { chatCalls += 1; throw new Error("must not call"); } } } as any);
+  chatProvider.__setTestBriefChatClient({ messages: { create: async () => { chatCalls += 1; throw new Error("must not call"); } } } as any);
   const chatDisabled = await chatRoute.POST(fakeRequest(memberSession, { message: "Question" }), { params: Promise.resolve({ id: briefId }) });
   assert.equal(chatDisabled.status, 503);
   assert.equal(chatCalls, 0);
@@ -266,7 +267,7 @@ test("message, prompt context, and provider output bounds fail without semantic 
   const sessionId = seedUser(userId);
   const briefId = "bounds-brief";
   seedBrief(userId, briefId);
-  chatRoute.__setTestBriefChatClient({ messages: { create: async () => { chatCalls += 1; throw new Error("must not call"); } } } as any);
+  chatProvider.__setTestBriefChatClient({ messages: { create: async () => { chatCalls += 1; throw new Error("must not call"); } } } as any);
   const oversized = "x".repeat(13 * 1024);
   const response = await chatRoute.POST(fakeRequest(sessionId, { message: oversized }), { params: Promise.resolve({ id: briefId }) });
   assert.equal(response.status, 400);
@@ -307,7 +308,7 @@ test("chat uses newest bounded history chronologically and prunes retention afte
   for (let i = 0; i < 205; i++) insert.run(`history-${i}`, briefId, userId, i % 2 ? "assistant" : "user", `message-${i}`, i);
 
   let supplied: any[] = [];
-  chatRoute.__setTestBriefChatClient({ messages: { create: async (args: any) => {
+  chatProvider.__setTestBriefChatClient({ messages: { create: async (args: any) => {
     supplied = args.messages;
     return { stop_reason: "end_turn", container: null, usage: {}, content: [{ type: "text", text: "bounded reply" }] };
   } } } as any);
