@@ -21,10 +21,15 @@
 set -uo pipefail
 
 BASE_SHA="${1:-}"
-HEAD_SHA="${2:-HEAD}"
+HEAD_SHA="${2:-}"
 
 if [[ -z "$BASE_SHA" ]]; then
   echo "safety-grep: missing BASE_SHA argument" >&2
+  exit 2
+fi
+
+if [[ -z "$HEAD_SHA" ]]; then
+  echo "safety-grep: missing HEAD_SHA argument" >&2
   exit 2
 fi
 
@@ -43,7 +48,10 @@ SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 # Pull the diff between base and head (three-dot: changes on head since
 # merge-base with base).
-DIFF="$(git diff "$BASE_SHA"..."$HEAD_SHA" 2>/dev/null || true)"
+if ! DIFF="$(git diff "$BASE_SHA"..."$HEAD_SHA")"; then
+  echo "safety-grep: failed closed: unable to produce diff for base '$BASE_SHA' and head '$HEAD_SHA'." >&2
+  exit 2
+fi
 if [[ -z "$DIFF" ]]; then
   echo "_No diff between base and head._" >> "$SUMMARY_FILE"
   echo "safety-grep: empty diff; nothing to scan."
