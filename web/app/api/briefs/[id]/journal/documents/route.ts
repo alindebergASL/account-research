@@ -12,7 +12,11 @@ import {
   MAX_DOCUMENT_BYTES,
   MAX_UPLOAD_BODY_BYTES,
 } from "@/lib/journalDocuments";
-import { writeOriginalBytes } from "@/lib/journalDocumentStorage";
+import {
+  persistOriginalBytes,
+  removeOriginalBytesIfUnreferenced,
+  type StoredOriginalBytes,
+} from "@/lib/journalDocumentStorage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -101,27 +105,26 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   let extracted;
-  let storagePath: string | null = null;
+  let bytes: Uint8Array;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    bytes = new Uint8Array(await file.arrayBuffer());
     extracted = await extractJournalDocument({
       filename: file.name || "document.txt",
       mimeType: file.type || "application/octet-stream",
       bytes,
     });
-    // Persist the original bytes (content-addressed) so the file can be viewed
-    // or downloaded later. Best-effort: if storage fails, fall back to the
-    // text-only document rather than failing the whole upload.
-    try {
-      storagePath = writeOriginalBytes(extracted.contentHash, bytes);
-    } catch {
-      storagePath = null;
-    }
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "Document extraction failed" },
       { status: 400 },
     );
+  }
+
+  let stored: StoredOriginalBytes;
+  try {
+    stored = persistOriginalBytes(extracted.contentHash, bytes);
+  } catch {
+    return NextResponse.json({ error: "Original document storage failed" }, { status: 500 });
   }
 
   const body = note || `Uploaded document: ${extracted.filename}`;
@@ -140,11 +143,19 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         journalEntryId: entryId,
         userId: user.id,
         document: extracted,
-        storagePath,
+        storagePath: stored.storagePath,
       });
       return { entryId, documentId };
     })();
   } catch {
+    if (stored.created) {
+      try {
+        removeOriginalBytesIfUnreferenced({ storagePath: stored.storagePath, connection: db() });
+      } catch {
+        // The DB transaction has already rolled back. Cleanup is best effort;
+        // never replace the fixed upload failure with a storage/SQLite detail.
+      }
+    }
     return NextResponse.json({ error: "Document upload failed" }, { status: 500 });
   }
   const documentRow = loadJournalDocument(params.id, persisted.documentId)!;

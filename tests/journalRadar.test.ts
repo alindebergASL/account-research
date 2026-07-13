@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import Database from "../web/node_modules/better-sqlite3";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "journal-radar-"));
 process.env.BRIEF_DB_PATH = path.join(tmp, "test.sqlite");
@@ -12,7 +13,7 @@ process.env.ADMIN_PASSWORD = "Password123!";
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
 const require = createRequire(import.meta.url);
-const { db, initDb } = require("../web/lib/db") as typeof import("../web/lib/db");
+const { db, initDb, repairJournalRadarCheckpointMigration } = require("../web/lib/db") as typeof import("../web/lib/db");
 const auth = require("../web/lib/auth") as typeof import("../web/lib/auth");
 const manifestLib = require("../web/lib/journalRadarManifest") as typeof import("../web/lib/journalRadarManifest");
 const radarLib = require("../web/lib/journalRadar") as typeof import("../web/lib/journalRadar");
@@ -72,6 +73,60 @@ test("migration 031 creates one checkpoint per brief/user with useful index and 
   db().prepare(`INSERT INTO journal_radar_checkpoints VALUES ('cascade-brief-2','cascade-user',1,'{}',?,1,1,1)`).run("b".repeat(64));
   db().prepare("DELETE FROM users WHERE id='cascade-user'").run();
   assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_radar_checkpoints WHERE user_id='cascade-user'").get() as any).n, 0);
+});
+
+function migration031Fixture(): { conn: Database.Database; close: () => void } {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "journal-radar-repair-"));
+  const conn = new Database(path.join(dir, "repair.sqlite"));
+  conn.pragma("foreign_keys = ON");
+  conn.exec(`
+    CREATE TABLE briefs (id TEXT PRIMARY KEY);
+    CREATE TABLE users (id TEXT PRIMARY KEY);
+    CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);
+    INSERT INTO schema_migrations VALUES ('031_journal_radar_checkpoints', 1);
+  `);
+  return { conn, close: () => { conn.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
+test("migration 031 health gate repairs a ledger-marked missing table", () => {
+  const f = migration031Fixture();
+  try {
+    repairJournalRadarCheckpointMigration(f.conn);
+    assert.equal((f.conn.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE id = '031_journal_radar_checkpoints'").get() as any).n, 1);
+    assert.equal((f.conn.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('journal_radar_checkpoints')").get() as any).n, 8);
+  } finally { f.close(); }
+});
+
+test("migration 031 health gate repairs only a missing index", () => {
+  const f = migration031Fixture();
+  try {
+    repairJournalRadarCheckpointMigration(f.conn);
+    f.conn.exec("DROP INDEX idx_journal_radar_checkpoints_user_reviewed");
+    repairJournalRadarCheckpointMigration(f.conn);
+    assert.ok((f.conn.prepare("PRAGMA index_list(journal_radar_checkpoints)").all() as any[])
+      .some((row) => row.name === "idx_journal_radar_checkpoints_user_reviewed"));
+  } finally { f.close(); }
+});
+
+test("migration 031 health gate transactionally rebuilds an empty incompatible partial table", () => {
+  const f = migration031Fixture();
+  try {
+    f.conn.exec("CREATE TABLE journal_radar_checkpoints (brief_id TEXT)");
+    repairJournalRadarCheckpointMigration(f.conn);
+    const pk = f.conn.prepare("PRAGMA table_info(journal_radar_checkpoints)").all() as Array<{ name: string; pk: number }>;
+    assert.deepEqual(pk.filter((row) => row.pk).sort((a, b) => a.pk - b.pk).map((row) => row.name), ["brief_id", "user_id"]);
+  } finally { f.close(); }
+});
+
+test("migration 031 health gate fails closed and preserves a nonempty incompatible table", () => {
+  const f = migration031Fixture();
+  try {
+    f.conn.exec("CREATE TABLE journal_radar_checkpoints (brief_id TEXT); INSERT INTO journal_radar_checkpoints VALUES ('preserve-me')");
+    assert.throws(() => repairJournalRadarCheckpointMigration(f.conn), /nonempty incompatible table/);
+    assert.deepEqual(f.conn.prepare("SELECT * FROM journal_radar_checkpoints").all(), [{ brief_id: "preserve-me" }]);
+    assert.deepEqual((f.conn.prepare("PRAGMA table_info(journal_radar_checkpoints)").all() as any[]).map((row) => row.name), ["brief_id"]);
+    assert.equal((f.conn.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE id = '031_journal_radar_checkpoints'").get() as any).n, 1);
+  } finally { f.close(); }
 });
 
 test("canonical JSON and SHA-256 are stable, sorted, body-free, and bounded", () => {

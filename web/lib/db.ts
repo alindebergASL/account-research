@@ -106,6 +106,111 @@ export function db(): Database.Database {
 
 type Migration = { id: string; up: (c: Database.Database) => void };
 
+const JOURNAL_RADAR_CHECKPOINT_MIGRATION_ID = "031_journal_radar_checkpoints";
+const JOURNAL_RADAR_CHECKPOINT_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS journal_radar_checkpoints (
+    brief_id               TEXT NOT NULL,
+    user_id                TEXT NOT NULL,
+    manifest_schema_version INTEGER NOT NULL CHECK (manifest_schema_version > 0),
+    manifest_json          TEXT NOT NULL,
+    manifest_hash          TEXT NOT NULL CHECK (length(manifest_hash) = 64),
+    reviewed_at            INTEGER NOT NULL CHECK (reviewed_at >= 0),
+    created_at             INTEGER NOT NULL CHECK (created_at >= 0),
+    updated_at             INTEGER NOT NULL CHECK (updated_at >= 0),
+    PRIMARY KEY (brief_id, user_id),
+    FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`;
+const JOURNAL_RADAR_CHECKPOINT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_journal_radar_checkpoints_user_reviewed
+    ON journal_radar_checkpoints(user_id, reviewed_at DESC)`;
+
+type RadarCheckpointHealth = "healthy" | "missing_table" | "incompatible_table" | "missing_index" | "incompatible_index";
+
+function journalRadarCheckpointHealth(conn: Database.Database): RadarCheckpointHealth {
+  const table = conn.prepare(
+    "SELECT type FROM sqlite_master WHERE name = 'journal_radar_checkpoints'",
+  ).get() as { type: string } | undefined;
+  if (!table) return "missing_table";
+  if (table.type !== "table") return "incompatible_table";
+
+  const expectedColumns = [
+    ["brief_id", "TEXT", 1, 1],
+    ["user_id", "TEXT", 1, 2],
+    ["manifest_schema_version", "INTEGER", 1, 0],
+    ["manifest_json", "TEXT", 1, 0],
+    ["manifest_hash", "TEXT", 1, 0],
+    ["reviewed_at", "INTEGER", 1, 0],
+    ["created_at", "INTEGER", 1, 0],
+    ["updated_at", "INTEGER", 1, 0],
+  ];
+  const columns = conn.prepare("PRAGMA table_info(journal_radar_checkpoints)").all() as Array<{
+    name: string; type: string; notnull: number; pk: number;
+  }>;
+  if (columns.length !== expectedColumns.length || columns.some((column, index) => {
+    const expected = expectedColumns[index];
+    return column.name !== expected[0] || column.type.toUpperCase() !== expected[1]
+      || column.notnull !== expected[2] || column.pk !== expected[3];
+  })) return "incompatible_table";
+
+  const foreignKeys = conn.prepare("PRAGMA foreign_key_list(journal_radar_checkpoints)").all() as Array<{
+    table: string; from: string; to: string; on_delete: string;
+  }>;
+  const expectedForeignKeys = new Set(["brief_id:briefs:id:CASCADE", "user_id:users:id:CASCADE"]);
+  if (foreignKeys.length !== expectedForeignKeys.size || foreignKeys.some((foreignKey) =>
+    !expectedForeignKeys.has(`${foreignKey.from}:${foreignKey.table}:${foreignKey.to}:${foreignKey.on_delete.toUpperCase()}`)
+  )) return "incompatible_table";
+
+  const index = (conn.prepare("PRAGMA index_list(journal_radar_checkpoints)").all() as Array<{
+    name: string; unique: number; partial: number;
+  }>).find((row) => row.name === "idx_journal_radar_checkpoints_user_reviewed");
+  if (!index) return "missing_index";
+  if (index.unique !== 0 || index.partial !== 0) return "incompatible_index";
+  const indexColumns = (conn.prepare("PRAGMA index_xinfo(idx_journal_radar_checkpoints_user_reviewed)").all() as Array<{
+    name: string | null; desc: number; key: number;
+  }>).filter((row) => row.key === 1);
+  if (indexColumns.length !== 2
+    || indexColumns[0].name !== "user_id" || indexColumns[0].desc !== 0
+    || indexColumns[1].name !== "reviewed_at" || indexColumns[1].desc !== 1) {
+    return "incompatible_index";
+  }
+  return "healthy";
+}
+
+function assertJournalRadarCheckpointHealthy(conn: Database.Database): void {
+  const health = journalRadarCheckpointHealth(conn);
+  if (health !== "healthy") throw new Error(`migration 031 structural verification failed: ${health}`);
+}
+
+export function repairJournalRadarCheckpointMigration(conn: Database.Database): RadarCheckpointHealth {
+  const markedApplied = conn.prepare("SELECT 1 FROM schema_migrations WHERE id = ?")
+    .get(JOURNAL_RADAR_CHECKPOINT_MIGRATION_ID);
+  if (!markedApplied) throw new Error("migration 031 health repair requires an applied ledger row");
+  const initial = journalRadarCheckpointHealth(conn);
+  if (initial === "healthy") return initial;
+  if (initial === "incompatible_table") {
+    const count = conn.prepare("SELECT COUNT(*) AS n FROM journal_radar_checkpoints").get() as { n: number };
+    if (count.n > 0) throw new Error("migration 031 has a nonempty incompatible table; refusing destructive repair");
+  }
+  conn.transaction(() => {
+    if (initial === "missing_table") {
+      conn.exec(JOURNAL_RADAR_CHECKPOINT_TABLE_SQL);
+      conn.exec(JOURNAL_RADAR_CHECKPOINT_INDEX_SQL);
+    } else if (initial === "incompatible_table") {
+      conn.exec("DROP TABLE journal_radar_checkpoints");
+      conn.exec(JOURNAL_RADAR_CHECKPOINT_TABLE_SQL);
+      conn.exec(JOURNAL_RADAR_CHECKPOINT_INDEX_SQL);
+    } else {
+      if (initial === "incompatible_index") {
+        conn.exec("DROP INDEX idx_journal_radar_checkpoints_user_reviewed");
+      }
+      conn.exec(JOURNAL_RADAR_CHECKPOINT_INDEX_SQL);
+    }
+    assertJournalRadarCheckpointHealthy(conn);
+  })();
+  return initial;
+}
+
 const MIGRATIONS: Migration[] = [
   {
     id: "001_users_must_change_password",
@@ -917,28 +1022,14 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
-    id: "031_journal_radar_checkpoints",
+    id: JOURNAL_RADAR_CHECKPOINT_MIGRATION_ID,
     // Explicit, per-user review checkpoints for the deterministic Journal
     // Change Radar. The frozen manifest is intentionally separate from both
     // brief_json and the advisory cockpit/catch-up read models.
-    up: (c) =>
-      c.exec(`
-        CREATE TABLE IF NOT EXISTS journal_radar_checkpoints (
-          brief_id               TEXT NOT NULL,
-          user_id                TEXT NOT NULL,
-          manifest_schema_version INTEGER NOT NULL CHECK (manifest_schema_version > 0),
-          manifest_json          TEXT NOT NULL,
-          manifest_hash          TEXT NOT NULL CHECK (length(manifest_hash) = 64),
-          reviewed_at            INTEGER NOT NULL CHECK (reviewed_at >= 0),
-          created_at             INTEGER NOT NULL CHECK (created_at >= 0),
-          updated_at             INTEGER NOT NULL CHECK (updated_at >= 0),
-          PRIMARY KEY (brief_id, user_id),
-          FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE,
-          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_journal_radar_checkpoints_user_reviewed
-          ON journal_radar_checkpoints(user_id, reviewed_at DESC);
-      `),
+    up: (c) => {
+      c.exec(JOURNAL_RADAR_CHECKPOINT_TABLE_SQL);
+      c.exec(JOURNAL_RADAR_CHECKPOINT_INDEX_SQL);
+    },
   },
 ];
 
@@ -1182,12 +1273,22 @@ function runMigrations(conn: Database.Database): {
   let skipped = 0;
   for (const m of MIGRATIONS) {
     if (seenStmt.get(m.id)) {
+      if (m.id === JOURNAL_RADAR_CHECKPOINT_MIGRATION_ID) {
+        const repaired = repairJournalRadarCheckpointMigration(conn);
+        if (repaired !== "healthy") {
+          // eslint-disable-next-line no-console
+          console.log(`[db] migration repaired id=${m.id} prior_health=${repaired}`);
+        }
+      }
       skipped++;
       continue;
     }
     try {
       const tx = conn.transaction(() => {
         m.up(conn);
+        if (m.id === JOURNAL_RADAR_CHECKPOINT_MIGRATION_ID) {
+          assertJournalRadarCheckpointHealthy(conn);
+        }
         recordStmt.run(m.id, Date.now());
       });
       tx();

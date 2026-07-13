@@ -7,7 +7,7 @@ set -euo pipefail
 # Exit 0 if no FAIL; exit 1 if any FAIL. WARNs are informational.
 
 BRIEF_DB_PATH="${BRIEF_DB_PATH:-$HOME/account-research/web/data/briefs.sqlite}"
-EXPECTED_MIGRATION="${EXPECTED_LATEST_MIGRATION:-012}"
+EXPECTED_MIGRATION="031_journal_radar_checkpoints"
 REPO_ROOT="${REPO_ROOT:-$HOME/account-research}"
 
 resolve_app_base_url() {
@@ -93,17 +93,29 @@ fi
 if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
   latest="$(sqlite3 "$BRIEF_DB_PATH" 'SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1' 2>/dev/null || echo "")"
   if [[ -n "$latest" ]]; then
-    if [[ "$latest" == *"$EXPECTED_MIGRATION"* ]]; then
+    if [[ "$latest" == "$EXPECTED_MIGRATION" ]]; then
       pass "latest migration $latest"
     else
-      fail "latest migration $latest (expected to contain $EXPECTED_MIGRATION)"
+      fail "latest migration does not exactly match $EXPECTED_MIGRATION"
     fi
   else
     fail "no migrations recorded"
   fi
 fi
 
-# 7. Queued/running jobs
+# 7. Full-data backup/restore readiness (read-only; performs no data operation).
+if [[ -x "$REPO_ROOT/scripts/backup-web-data.sh" ]] \
+  && [[ -x "$REPO_ROOT/scripts/restore-web-data.sh" ]] \
+  && [[ -r "$REPO_ROOT/web/scripts/endgameOperations.ts" ]] \
+  && bash -n "$REPO_ROOT/scripts/backup-web-data.sh" "$REPO_ROOT/scripts/restore-web-data.sh" \
+  && command -v node >/dev/null 2>&1 \
+  && (cd "$REPO_ROOT/web" && node --import tsx -e "import('./scripts/endgameOperations.ts')" >/dev/null 2>&1); then
+  pass "full-data backup/restore tooling ready"
+else
+  fail "full-data backup/restore tooling unavailable"
+fi
+
+# 8. Queued/running jobs
 if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
   qrun="$(sqlite3 "$BRIEF_DB_PATH" "SELECT COUNT(*) FROM research_jobs WHERE status IN ('queued','running')" 2>/dev/null || echo "?")"
   if [[ "$qrun" =~ ^[0-9]+$ ]] && (( qrun > 5 )); then
@@ -113,7 +125,7 @@ if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
   fi
 fi
 
-# 8. Latest failed jobs (last 5)
+# 9. Latest failed jobs (last 5)
 if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
   echo "[health-check] last 5 failed jobs:"
   sqlite3 -separator '|' "$BRIEF_DB_PATH" \
@@ -124,7 +136,7 @@ if [[ -f "$BRIEF_DB_PATH" ]] && command -v sqlite3 >/dev/null 2>&1; then
     || true
 fi
 
-# 9. PM2 log scan, per app
+# 10. PM2 log scan, per app
 scan_app_logs() {
   local name="$1"
   if ! command -v pm2 >/dev/null 2>&1; then return; fi

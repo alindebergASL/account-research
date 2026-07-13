@@ -1754,6 +1754,87 @@ test("document upload persistence is atomic when document insert fails", async (
   }
   assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
   assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
+  const hash = require("node:crypto").createHash("sha256").update("atomic text").digest("hex");
+  assert.equal(require("node:fs").existsSync(path.join(tmp, docStorage.storageRelPathForHash(hash))), false);
+});
+
+test("document upload storage failure fails closed with zero new rows", async () => {
+  const beforeEntries = (db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n;
+  const beforeDocs = (db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n;
+  docStorage.__setTestWriteOriginalBytesFailure("forced storage failure");
+  try {
+    const form = new FormData();
+    form.set("file", new File(["storage failure bytes"], "failure.md", { type: "text/markdown" }));
+    const res = await documentsRoute.POST(
+      makeFormReq({ sessionId: ownerSession, form }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 500);
+    assert.deepEqual(await jsonOf(res), { error: "Original document storage failed" });
+  } finally {
+    docStorage.__setTestWriteOriginalBytesFailure(null);
+  }
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
+});
+
+test("document upload hides cleanup failures after DB rollback and leaves zero rows", async () => {
+  const beforeEntries = (db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n;
+  const beforeDocs = (db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n;
+  db().exec(`CREATE TEMP TRIGGER fail_cleanup_document_insert BEFORE INSERT ON journal_documents BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END;`);
+  docStorage.__setTestRemoveOriginalBytesFailure("raw cleanup/storage/sqlite diagnostic");
+  try {
+    const form = new FormData();
+    form.set("file", new File(["cleanup throw bytes"], "cleanup.md", { type: "text/markdown" }));
+    const res = await documentsRoute.POST(
+      makeFormReq({ sessionId: ownerSession, form }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(res.status, 500);
+    assert.deepEqual(await jsonOf(res), { error: "Document upload failed" });
+  } finally {
+    docStorage.__setTestRemoveOriginalBytesFailure(null);
+    db().exec(`DROP TRIGGER IF EXISTS fail_cleanup_document_insert`);
+  }
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_entries`).get() as any).n, beforeEntries);
+  assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
+});
+
+test("a shared content-addressed blob survives a duplicate upload DB failure", async () => {
+  const bytes = "shared rollback bytes";
+  const first = new FormData();
+  first.set("file", new File([bytes], "first.md", { type: "text/markdown" }));
+  const firstRes = await documentsRoute.POST(
+    makeFormReq({ sessionId: ownerSession, form: first }),
+    { params: { id: "brief-doc" } },
+  );
+  assert.equal(firstRes.status, 200);
+  const hash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  const rel = docStorage.storageRelPathForHash(hash);
+  const absolute = path.join(tmp, rel);
+  assert.equal(require("node:fs").readFileSync(absolute, "utf8"), bytes);
+
+  db().exec(`CREATE TEMP TRIGGER fail_shared_document_insert BEFORE INSERT ON journal_documents BEGIN SELECT RAISE(ABORT, 'forced shared failure'); END;`);
+  try {
+    const duplicate = new FormData();
+    duplicate.set("file", new File([bytes], "second.md", { type: "text/markdown" }));
+    const failed = await documentsRoute.POST(
+      makeFormReq({ sessionId: ownerSession, form: duplicate }),
+      { params: { id: "brief-doc" } },
+    );
+    assert.equal(failed.status, 500);
+  } finally {
+    db().exec("DROP TRIGGER IF EXISTS fail_shared_document_insert");
+  }
+  assert.equal(require("node:fs").readFileSync(absolute, "utf8"), bytes);
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM journal_documents WHERE storage_path = ?").get(rel) as any).n, 1);
+});
+
+test("original-byte cleanup rejects path traversal with a fixed error", () => {
+  assert.throws(
+    () => docStorage.removeOriginalBytesIfUnreferenced({ storagePath: "../briefs.sqlite", connection: db() }),
+    (error: Error) => error.message === docStorage.INVALID_BLOB_PATH_ERROR,
+  );
 });
 
 test("JournalSection exposes document upload controls with text, PDF accept, and AI follow-up affordances", () => {
