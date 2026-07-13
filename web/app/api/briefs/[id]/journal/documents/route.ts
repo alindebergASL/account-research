@@ -13,6 +13,9 @@ import {
   MAX_UPLOAD_BODY_BYTES,
 } from "@/lib/journalDocuments";
 import {
+  __runTestAfterPersistHook,
+  __runTestBeforeDocumentInsertHook,
+  __runTestBeforeUploadTransactionHook,
   persistOriginalBytes,
   removeOriginalBytesIfUnreferenced,
   type StoredOriginalBytes,
@@ -120,41 +123,55 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
-  let stored: StoredOriginalBytes;
-  try {
-    stored = persistOriginalBytes(extracted.contentHash, bytes);
-  } catch {
-    return NextResponse.json({ error: "Original document storage failed" }, { status: 500 });
-  }
-
   const body = note || `Uploaded document: ${extracted.filename}`;
   let persisted: { entryId: string; documentId: string };
+  let originalStorageFailed = false;
   try {
-    persisted = db().transaction(() => {
-      const entryId = insertJournalEntry({
-        briefId: params.id,
-        userId: user.id,
-        authorType: "user",
-        body,
-        replyTo: null,
-      });
-      const documentId = insertJournalDocument({
-        briefId: params.id,
-        journalEntryId: entryId,
-        userId: user.id,
-        document: extracted,
-        storagePath: stored.storagePath,
-      });
-      return { entryId, documentId };
-    })();
-  } catch {
-    if (stored.created) {
+    const persistUpload = db().transaction(() => {
+      let stored: StoredOriginalBytes;
       try {
-        removeOriginalBytesIfUnreferenced({ storagePath: stored.storagePath, connection: db() });
-      } catch {
-        // The DB transaction has already rolled back. Cleanup is best effort;
-        // never replace the fixed upload failure with a storage/SQLite detail.
+        stored = persistOriginalBytes(extracted.contentHash, bytes);
+        __runTestAfterPersistHook();
+      } catch (error) {
+        originalStorageFailed = true;
+        throw error;
       }
+
+      try {
+        const entryId = insertJournalEntry({
+          briefId: params.id,
+          userId: user.id,
+          authorType: "user",
+          body,
+          replyTo: null,
+        });
+        __runTestBeforeDocumentInsertHook();
+        const documentId = insertJournalDocument({
+          briefId: params.id,
+          journalEntryId: entryId,
+          userId: user.id,
+          document: extracted,
+          storagePath: stored.storagePath,
+        });
+        return { entryId, documentId };
+      } catch (error) {
+        if (stored.created) {
+          try {
+            removeOriginalBytesIfUnreferenced({ storagePath: stored.storagePath, connection: db() });
+          } catch {
+            // Cleanup is best effort. Keep the immediate transaction open
+            // until the original DB error is rethrown, and never leak raw
+            // storage or SQLite diagnostics through the route response.
+          }
+        }
+        throw error;
+      }
+    });
+    __runTestBeforeUploadTransactionHook();
+    persisted = persistUpload.immediate();
+  } catch {
+    if (originalStorageFailed) {
+      return NextResponse.json({ error: "Original document storage failed" }, { status: 500 });
     }
     return NextResponse.json({ error: "Document upload failed" }, { status: 500 });
   }

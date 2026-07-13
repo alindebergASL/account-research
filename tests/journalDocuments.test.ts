@@ -1,7 +1,9 @@
 import test from "node:test";
 process.env.PROVIDER_CALLS_ENABLED = "1"; // Explicitly enable only deterministic fake clients in this suite.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -129,6 +131,58 @@ function makeFormReq(opts: { sessionId?: string; form: FormData; contentLength?:
 
 async function jsonOf(res: Response): Promise<any> {
   return await res.json();
+}
+
+async function waitForFile(filePath: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(filePath)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path.basename(filePath)}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function assertFileRemainsAbsent(filePath: string, durationMs: number): Promise<void> {
+  const deadline = Date.now() + durationMs;
+  while (Date.now() < deadline) {
+    assert.equal(
+      existsSync(filePath),
+      false,
+      `${path.basename(filePath)} appeared while the first uploader held the write lock: ${existsSync(filePath) ? readFileSync(filePath, "utf8") : ""}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function spawnUploadRaceWorker(config: Record<string, string>) {
+  const workerPath = path.join(__dirname, "fixtures", "syntheticJournalUploadRaceWorker.ts");
+  const child = spawn(process.execPath, ["--import", "tsx", workerPath, JSON.stringify(config)], {
+    cwd: path.join(__dirname, "../web"),
+    env: {
+      ...process.env,
+      BRIEF_DB_PATH: process.env.BRIEF_DB_PATH,
+      ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+      ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else {
+        const result = existsSync(config.resultPath)
+          ? readFileSync(config.resultPath, "utf8")
+          : "no worker result";
+        reject(new Error(`upload race worker exited code=${code} signal=${signal}\n${stdout}\n${stderr}\n${result}`));
+      }
+    });
+  });
+  void exited.catch(() => {});
+  return { child, exited };
 }
 
 seedUser("owner-doc", "owner-doc@example.com");
@@ -1756,6 +1810,108 @@ test("document upload persistence is atomic when document insert fails", async (
   assert.equal((db().prepare(`SELECT COUNT(*) AS n FROM journal_documents`).get() as any).n, beforeDocs);
   const hash = require("node:crypto").createHash("sha256").update("atomic text").digest("hex");
   assert.equal(require("node:fs").existsSync(path.join(tmp, docStorage.storageRelPathForHash(hash))), false);
+});
+
+test("competing upload cannot persist a shared blob until failed upload cleanup rolls back", async () => {
+  const bytes = "deterministic competing-process rollback bytes";
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const storagePath = docStorage.storageRelPathForHash(hash);
+  const absolute = path.join(tmp, storagePath);
+  assert.equal(existsSync(absolute), false);
+  assert.equal(
+    (db().prepare("SELECT COUNT(*) AS n FROM journal_documents WHERE content_hash = ?").get(hash) as any).n,
+    0,
+  );
+
+  const failingReady = path.join(tmp, "race-failing-ready");
+  const failingStarted = path.join(tmp, "race-failing-started");
+  const failingAttempt = path.join(tmp, "race-failing-attempt");
+  const failingRelease = path.join(tmp, "race-failing-release");
+  const failingResult = path.join(tmp, "race-failing-result.json");
+  const successfulReady = path.join(tmp, "race-successful-persisted");
+  const successfulStarted = path.join(tmp, "race-successful-started");
+  const successfulAttempt = path.join(tmp, "race-successful-attempt");
+  const successfulRelease = path.join(tmp, "race-successful-release");
+  const successfulResult = path.join(tmp, "race-successful-result.json");
+  let failing: ReturnType<typeof spawnUploadRaceWorker> | undefined;
+  let successful: ReturnType<typeof spawnUploadRaceWorker> | undefined;
+
+  try {
+    failing = spawnUploadRaceWorker({
+      role: "failing",
+      sessionId: ownerSession,
+      briefId: "brief-doc",
+      bytes,
+      startedPath: failingStarted,
+      attemptPath: failingAttempt,
+      readyPath: failingReady,
+      releasePath: failingRelease,
+      resultPath: failingResult,
+    });
+    await waitForFile(failingReady);
+    assert.deepEqual(JSON.parse(readFileSync(failingReady, "utf8")), {
+      inTransaction: true,
+      databasePath: process.env.BRIEF_DB_PATH,
+    });
+
+    successful = spawnUploadRaceWorker({
+      role: "successful",
+      sessionId: ownerSession,
+      briefId: "brief-doc",
+      bytes,
+      startedPath: successfulStarted,
+      attemptPath: successfulAttempt,
+      readyPath: successfulReady,
+      releasePath: successfulRelease,
+      resultPath: successfulResult,
+    });
+
+    await waitForFile(successfulStarted);
+    writeFileSync(successfulAttempt, "attempt-immediate", { flag: "wx" });
+    await assertFileRemainsAbsent(successfulReady, 500);
+    writeFileSync(failingRelease, "release", { flag: "wx" });
+    await failing.exited;
+    assert.deepEqual(JSON.parse(readFileSync(failingResult, "utf8")), {
+      status: 500,
+      body: { error: "Document upload failed" },
+    });
+
+    await waitForFile(successfulReady);
+    assert.deepEqual(JSON.parse(readFileSync(successfulReady, "utf8")), {
+      inTransaction: true,
+      databasePath: process.env.BRIEF_DB_PATH,
+    });
+    writeFileSync(successfulRelease, "release", { flag: "wx" });
+    await successful.exited;
+    assert.equal(JSON.parse(readFileSync(successfulResult, "utf8")).status, 200);
+  } finally {
+    if (!existsSync(failingRelease)) writeFileSync(failingRelease, "release");
+    if (!existsSync(successfulRelease)) writeFileSync(successfulRelease, "release");
+    await Promise.allSettled([failing?.exited, successful?.exited].filter(Boolean));
+  }
+
+  const committed = db().prepare(
+    `SELECT id, storage_path, content_hash
+       FROM journal_documents
+      WHERE content_hash = ?`,
+  ).all(hash) as Array<{ id: string; storage_path: string; content_hash: string }>;
+  assert.equal(committed.length, 1);
+  assert.equal(committed[0].storage_path, storagePath);
+  assert.equal(committed[0].content_hash, hash);
+  assert.deepEqual(readFileSync(absolute), Buffer.from(bytes));
+  assert.equal(createHash("sha256").update(readFileSync(absolute)).digest("hex"), hash);
+
+  const referenced = db().prepare(
+    "SELECT id, storage_path, content_hash FROM journal_documents WHERE storage_path IS NOT NULL",
+  ).all() as Array<{ id: string; storage_path: string; content_hash: string }>;
+  for (const document of referenced) {
+    const blob = readFileSync(path.join(tmp, document.storage_path));
+    assert.equal(
+      createHash("sha256").update(blob).digest("hex"),
+      document.content_hash,
+      `document ${document.id} references a missing or mismatched blob`,
+    );
+  }
 });
 
 test("document upload storage failure fails closed with zero new rows", async () => {

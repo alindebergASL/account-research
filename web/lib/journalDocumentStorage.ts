@@ -13,6 +13,9 @@ export const INVALID_BLOB_PATH_ERROR = "Invalid journal document storage path";
 
 let testWriteFailure: string | null = null;
 let testRemoveFailure: string | null = null;
+let testBeforeUploadTransactionHook: (() => void) | null = null;
+let testAfterPersistHook: (() => void) | null = null;
+let testBeforeDocumentInsertHook: (() => void) | null = null;
 
 export function __setTestWriteOriginalBytesFailure(message: string | null): void {
   testWriteFailure = message;
@@ -20,6 +23,28 @@ export function __setTestWriteOriginalBytesFailure(message: string | null): void
 
 export function __setTestRemoveOriginalBytesFailure(message: string | null): void {
   testRemoveFailure = message;
+}
+
+export function __setTestUploadHooks(hooks: {
+  beforeUploadTransaction?: () => void;
+  afterPersist?: () => void;
+  beforeDocumentInsert?: () => void;
+} | null): void {
+  testBeforeUploadTransactionHook = hooks?.beforeUploadTransaction ?? null;
+  testAfterPersistHook = hooks?.afterPersist ?? null;
+  testBeforeDocumentInsertHook = hooks?.beforeDocumentInsert ?? null;
+}
+
+export function __runTestBeforeUploadTransactionHook(): void {
+  testBeforeUploadTransactionHook?.();
+}
+
+export function __runTestAfterPersistHook(): void {
+  testAfterPersistHook?.();
+}
+
+export function __runTestBeforeDocumentInsertHook(): void {
+  testBeforeDocumentInsertHook?.();
 }
 
 // MIME types we are willing to render INLINE in the browser. Everything else is
