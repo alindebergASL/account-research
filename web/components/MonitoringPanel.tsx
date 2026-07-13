@@ -74,7 +74,10 @@ export default function MonitoringPanel({
       const r = await fetch(`/api/briefs/${briefId}/monitor`, {
         cache: "no-store",
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        setError(monitorErrorMessage(r.status, "load"));
+        return;
+      }
       const data = (await r.json()) as MonitorStatus;
       setStatus(data);
       setError(null);
@@ -101,16 +104,20 @@ export default function MonitoringPanel({
   }, [open, onClose]);
 
   async function patch(body: { enabled?: boolean; cadence?: Cadence }) {
-    if (busy || !status) return;
+    if (busy || !status || !canWrite) return;
     setBusy(true);
     setHint(null);
+    setError(null);
     try {
       const r = await fetch(`/api/briefs/${briefId}/monitor`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: body.enabled ?? status.enabled, ...body }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        setError(monitorErrorMessage(r.status, "change"));
+        return;
+      }
       const data = await r.json();
       if (typeof data.enabled === "boolean") onEnabledChange?.(data.enabled);
       if (body.enabled === true && data.queued_job_id) {
@@ -118,21 +125,25 @@ export default function MonitoringPanel({
       }
       await load();
     } catch {
-      setError("Couldn’t update monitoring. Try again.");
+      setError("Monitoring is temporarily unavailable. Try again later.");
     } finally {
       setBusy(false);
     }
   }
 
   async function checkNow() {
-    if (busy) return;
+    if (busy || !canWrite) return;
     setBusy(true);
     setHint(null);
+    setError(null);
     try {
       const r = await fetch(`/api/briefs/${briefId}/monitor/check`, {
         method: "POST",
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        setError(monitorErrorMessage(r.status, "change"));
+        return;
+      }
       const data = await r.json();
       setHint(
         data.queued_job_id
@@ -141,7 +152,7 @@ export default function MonitoringPanel({
       );
       await load();
     } catch {
-      setError("Couldn’t start a check. Try again.");
+      setError("Monitoring is temporarily unavailable. Try again later.");
     } finally {
       setBusy(false);
     }
@@ -159,8 +170,8 @@ export default function MonitoringPanel({
     }
     if (run.outcome === "updated") {
       return (
-        <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--success-bg)] px-2 py-0.5 text-xs font-medium text-[var(--success-text)]">
-          {run.patches_applied} change{run.patches_applied === 1 ? "" : "s"}
+        <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
+          Legacy monitor result
         </span>
       );
     }
@@ -206,6 +217,12 @@ export default function MonitoringPanel({
           <p className="text-sm text-[var(--text-secondary)]">
             An automatic agent checks this account for genuinely new developments. Suggested field changes are queued in Radar for human review and manual incorporation.
           </p>
+
+          {!canWrite && (
+            <p className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-secondary)]">
+              Writer access is required to change monitoring or start a check.
+            </p>
+          )}
 
           {error && (
             <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--risk-bg)] px-3 py-2 text-sm text-[var(--risk-text)]">
@@ -255,7 +272,7 @@ export default function MonitoringPanel({
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                   Cadence
                 </div>
-                <div className="mt-1.5 inline-flex rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm">
+                <div className="mt-1.5 inline-flex flex-wrap rounded-lg border border-[var(--line)] bg-white p-0.5 text-sm">
                   {(Object.keys(CADENCE_LABELS) as Cadence[]).map((c) => (
                     <button
                       key={c}
@@ -322,7 +339,7 @@ export default function MonitoringPanel({
                     {status.runs.map((run) => (
                       <div
                         key={run.id}
-                        className="flex items-start gap-3 border-b border-[var(--border-subtle)] px-3 py-2.5 last:border-0"
+                        className="flex flex-wrap items-start gap-3 border-b border-[var(--border-subtle)] px-3 py-2.5 last:border-0"
                       >
                         <span
                           className="w-16 shrink-0 pt-0.5 text-xs text-[var(--text-muted)]"
@@ -332,12 +349,13 @@ export default function MonitoringPanel({
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm text-ink">
-                            {run.summary ||
-                              (run.outcome === "updated"
-                                ? "Brief updated"
+                            {run.outcome === "candidate_queued"
+                              ? "Suggestions queued for review"
+                              : run.outcome === "updated"
+                                ? "Legacy monitor result"
                                 : run.outcome === "failed"
                                   ? "Check failed"
-                                  : "No new developments")}
+                                  : run.summary || "No new developments"}
                           </p>
                           {run.touched_fields.length > 0 && (
                             <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
@@ -357,4 +375,16 @@ export default function MonitoringPanel({
       </div>
     </div>
   );
+}
+
+function monitorErrorMessage(status: number, action: "load" | "change"): string {
+  if (status === 401 || status === 403 || status === 404) {
+    return action === "change"
+      ? "You don’t have permission to change monitoring."
+      : "Monitoring is unavailable for your permission level.";
+  }
+  if (status === 429) {
+    return "Monitoring is busy right now. Try again shortly.";
+  }
+  return "Monitoring is temporarily unavailable. Try again later.";
 }

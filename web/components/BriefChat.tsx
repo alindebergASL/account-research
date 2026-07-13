@@ -21,13 +21,11 @@ type HermesEvent = {
   created_at: number;
 };
 
-type ChatPatch = { op: "set" | "append"; field: string; value: any };
-
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  patches?: ChatPatch[] | null;
+  candidatesQueued?: number;
   created_at?: number;
   // Local-only flag so we can grey-out optimistic user messages
   pending?: boolean;
@@ -69,13 +67,23 @@ export default function BriefChat({
     if (!open || historyLoaded) return;
     let cancelled = false;
     fetch(`/api/briefs/${briefId}/chat`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { messages: [] }))
+      .then((r) => {
+        if (!r.ok) {
+          if (!cancelled) setError(chatErrorMessage(r.status));
+          return { messages: [] };
+        }
+        return r.json();
+      })
       .then((data) => {
         if (cancelled) return;
         setMessages(data.messages ?? []);
         setHistoryLoaded(true);
       })
-      .catch(() => setHistoryLoaded(true));
+      .catch(() => {
+        if (cancelled) return;
+        setError("Chat is temporarily unavailable. Try again later.");
+        setHistoryLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -144,7 +152,7 @@ export default function BriefChat({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data?.error || `Chat failed (${res.status})`);
+        throw new Error(chatErrorMessage(res.status));
       }
       // Mark user message no longer pending; append assistant reply.
       setMessages((prev) =>
@@ -154,11 +162,10 @@ export default function BriefChat({
             id: `local-${Date.now() + 1}`,
             role: "assistant",
             content: data.reply || "(no reply)",
-            patches:
-              Array.isArray(data.patches_applied) &&
-              data.patches_applied.length > 0
-                ? data.patches_applied
-                : null,
+            candidatesQueued:
+              typeof data.candidates_queued === "number"
+                ? data.candidates_queued
+                : 0,
           }),
       );
     } catch (e: any) {
@@ -175,9 +182,13 @@ export default function BriefChat({
       const res = await fetch(`/api/briefs/${briefId}/chat`, {
         method: "DELETE",
       });
-      if (res.ok) setMessages([]);
+      if (res.ok) {
+        setMessages([]);
+      } else {
+        setError(chatErrorMessage(res.status));
+      }
     } catch {
-      /* swallow */
+      setError("Chat is temporarily unavailable. Try again later.");
     }
   }
 
@@ -234,14 +245,16 @@ export default function BriefChat({
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={clearHistory}
-                    className="p-2 text-muted hover:text-ink rounded-lg hover:bg-[var(--bg)] transition-colors"
-                    title="Clear conversation"
-                  >
-                    <RotateCcw className="size-4" />
-                  </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={clearHistory}
+                      className="p-2 text-muted hover:text-ink rounded-lg hover:bg-[var(--bg)] transition-colors"
+                      title="Clear conversation"
+                    >
+                      <RotateCcw className="size-4" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
@@ -266,7 +279,7 @@ export default function BriefChat({
                     <p className="text-sm text-muted leading-snug">
                       {readOnly
                         ? "Ask questions about anything in the brief. Read-only — your replies won't change the brief."
-                        : "Ask about anything in the brief, or have me find more and add it to the canvas."}
+                        : "Ask about anything in the brief, or have me research suggestions to queue for human review and manual incorporation."}
                     </p>
                     <div className="space-y-1.5">
                       {SAMPLE_PROMPTS.map((p) => (
@@ -380,17 +393,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <div className="rounded-2xl rounded-bl-md px-3.5 py-2 text-sm bg-[var(--bg)] border border-[var(--line)] whitespace-pre-wrap leading-snug">
           {message.content}
         </div>
-        {message.patches && message.patches.length > 0 && (
+        {!!message.candidatesQueued && (
           <div className="ml-1 flex flex-wrap gap-1">
-            {summarizeFields(message.patches).map((label) => (
-              <span
-                key={label}
-                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200"
-              >
-                <Sparkles className="size-2.5" />
-                Updated {label}
-              </span>
-            ))}
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900">
+              <Sparkles className="size-2.5" />
+              {message.candidatesQueued} suggestion{message.candidatesQueued === 1 ? "" : "s"} queued for human review and manual incorporation
+            </span>
           </div>
         )}
       </div>
@@ -398,8 +406,15 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function summarizeFields(patches: ChatPatch[]): string[] {
-  const set = new Set<string>();
-  for (const p of patches) set.add(p.field);
-  return Array.from(set);
+function chatErrorMessage(status: number): string {
+  if (status === 401 || status === 403 || status === 404) {
+    return "Chat is unavailable for your permission level.";
+  }
+  if (status === 429) {
+    return "Chat is busy right now. Try again shortly.";
+  }
+  if (status === 503) {
+    return "Chat is temporarily unavailable. Try again later.";
+  }
+  return "Chat couldn’t complete that request. Try again.";
 }

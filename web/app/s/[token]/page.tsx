@@ -61,8 +61,7 @@ export default function PublicShareView(
         <div className="text-center max-w-sm">
           <h1 className="font-display text-2xl mb-2">Link unavailable</h1>
           <p className="text-sm text-muted">
-            This shared brief is no longer available. The link may have
-            expired or been revoked. Ask whoever sent it for a new one.
+            This shared brief is unavailable. Ask whoever sent it for a new link.
           </p>
         </div>
       </main>

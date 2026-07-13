@@ -128,7 +128,7 @@ test("Brief page restores and pushes URL-addressable top-level views", () => {
   assert.match(source, /onViewBriefBaseline=\{\(\) => navigateView\("brief"\)\}/);
 });
 
-test("Review handoff waits for the explicit status update before navigating to Brief", () => {
+test("Manual-incorporation handoff waits for the explicit status update before navigating to Brief", () => {
   const source = readFileSync(
     path.join(__dirname, "../web/app/brief/[id]/JournalSection.tsx"),
     "utf8",
@@ -136,7 +136,7 @@ test("Review handoff waits for the explicit status update before navigating to B
 
   assert.match(
     source,
-    /async function openBriefToApply\(candidate\?: ReviewCandidate\) \{[\s\S]*await updateCandidateStatus\(candidate\.id, "sent_to_brief_chat"\)[\s\S]*onViewBriefBaseline\?\.\(\);/,
+    /async function openBriefForManualIncorporation\(candidate\?: ReviewCandidate\) \{[\s\S]*await updateCandidateStatus\(candidate\.id, "sent_to_brief_chat"\)[\s\S]*onViewBriefBaseline\?\.\(\);/,
   );
   assert.match(source, /matchingCandidatesInOtherReviewTab/);
 });
